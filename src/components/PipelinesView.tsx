@@ -23,6 +23,7 @@ import { GitLabJob, GitLabPipeline, GitLabProject, JobFailure } from '../types/g
 import { BadgePipelineModal } from './BadgePipelineModal';
 import { api } from '../services/api';
 import { WatchButton } from './WatchButton';
+import { reportError } from '../utils/reportError';
 
 // Statuses that can still change; only these get a Watch button.
 const IN_PROGRESS = new Set(['created', 'waiting_for_resource', 'preparing', 'pending', 'running', 'scheduled']);
@@ -139,7 +140,7 @@ export const PipelinesView: React.FC<PipelinesViewProps> = ({
         }));
       }
     } catch (err) {
-      console.error('Failed loading pipeline jobs:', err);
+      reportError('Could not load pipeline jobs', err);
     } finally {
       setIsLoadingJobs(false);
     }
@@ -484,7 +485,7 @@ export const PipelinesView: React.FC<PipelinesViewProps> = ({
         isOpen={isBadgePipelineOpen}
         onClose={() => setIsBadgePipelineOpen(false)}
         projects={projects}
-        currentProjectId={pipelines.length > 0 ? pipelines[0].project_id : (projects[0]?.id || 901)}
+        currentProjectId={pipelines.length > 0 ? pipelines[0].project_id : (projects[0]?.id || 0)}
       />
     </div>
   );

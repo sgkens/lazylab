@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { GitLabProject, GitLabVariable } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface VariablesViewProps {
   projects: GitLabProject[];
@@ -36,7 +37,7 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
   selectedProjectId,
   onSelectProject
 }) => {
-  const currentProjectId = selectedProjectId || (projects.length > 0 ? projects[0].id : 901);
+  const currentProjectId = selectedProjectId || (projects[0]?.id || 0);
   const [variables, setVariables] = useState<GitLabVariable[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [scopeFilter, setScopeFilter] = useState<'all' | 'project' | 'group'>('all');
@@ -75,12 +76,16 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
     loadVariables();
   }, [currentProjectId]);
 
+  // Group-level variables belong to the project's parent group; personal namespaces have none.
+  const currentProject = projects.find((p) => p.id === currentProjectId);
+  const group = currentProject?.namespace?.kind === 'group' ? currentProject.namespace : null;
+
   const loadVariables = async () => {
     try {
       setIsLoading(true);
       const [projRes, grpRes] = await Promise.all([
         api.getVariables('project', currentProjectId),
-        api.getVariables('group', 101)
+        group ? api.getVariables('group', group.id) : Promise.resolve({ success: true, variables: [] as GitLabVariable[] })
       ]);
       const combined: GitLabVariable[] = [
         ...(projRes.success ? projRes.variables : []),
@@ -88,7 +93,7 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
       ];
       setVariables(combined);
     } catch (err) {
-      console.error('Failed to load variables:', err);
+      reportError('Could not load variables', err);
     } finally {
       setIsLoading(false);
     }
@@ -128,7 +133,7 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
         setVariables(variables.filter((item) => !(item.key === v.key && item.scope_type === v.scope_type)));
       }
     } catch (err) {
-      console.error('Failed to delete variable:', err);
+      reportError('Could not delete variable', err);
     }
   };
 
@@ -137,11 +142,12 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
     if (!formData.key.trim() || !formData.value.trim()) return;
 
     try {
-      const targetScopeId = formData.scope_type === 'project' ? currentProjectId : 101;
+      if (formData.scope_type === 'group' && !group) throw new Error('This project is not in a group');
+      const targetScopeId = formData.scope_type === 'project' ? currentProjectId : group!.id;
       const targetScopeName =
         formData.scope_type === 'project'
           ? (projects.find((p) => p.id === currentProjectId)?.name || 'Current Project')
-          : 'platform (Group)';
+          : `${group?.full_path} (group)`;
 
       const payload: GitLabVariable = {
         ...formData,
@@ -175,7 +181,7 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
         });
       }
     } catch (err) {
-      console.error('Failed to save variable:', err);
+      reportError('Could not save variable', err);
     }
   };
 
@@ -184,11 +190,12 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
     try {
       setIsImporting(true);
       const lines = importText.split('\n');
-      const targetScopeId = importScope === 'project' ? currentProjectId : 101;
+      if (importScope === 'group' && !group) throw new Error('This project is not in a group');
+      const targetScopeId = importScope === 'project' ? currentProjectId : group!.id;
       const targetScopeName =
         importScope === 'project'
           ? (projects.find((p) => p.id === currentProjectId)?.name || 'Current Project')
-          : 'platform (Group)';
+          : `${group?.full_path} (group)`;
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -222,7 +229,7 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
       setIsImportModalOpen(false);
       setImportText('');
     } catch (err) {
-      console.error('Failed to import variables:', err);
+      reportError('Could not import variables', err);
     } finally {
       setIsImporting(false);
     }
@@ -457,7 +464,7 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
                           ) : (
                             <span className="inline-flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/60">
                               <Users className="w-3 h-3 text-purple-400" />
-                              Group: {v.scope_name || 'platform'}
+                              Group: {v.scope_name || group?.full_path || v.scope_id}
                             </span>
                           )}
                         </td>

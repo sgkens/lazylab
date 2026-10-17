@@ -27,6 +27,7 @@ import {
 import { GitLabBadge, GitLabPagesInfo, GitLabProject } from '../types/gitlab';
 import { BadgePipelineModal } from './BadgePipelineModal';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface ProjectSettingsViewProps {
   projects: GitLabProject[];
@@ -45,7 +46,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
   initialSection = 'badges',
   onSectionChange
 }) => {
-  const currentProjectId = selectedProjectId || (projects.length > 0 ? projects[0].id : 901);
+  const currentProjectId = selectedProjectId || (projects[0]?.id || 0);
   const currentProject = projects.find((p) => p.id === currentProjectId) || projects[0];
 
   const [activeSection, setActiveSection] = useState<'general' | 'badges' | 'pages'>(initialSection);
@@ -68,6 +69,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
   const [avatarPreview, setAvatarPreview] = useState<string | null>(currentProject?.avatar_url || null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
 
   // Badges state
   const [badges, setBadges] = useState<GitLabBadge[]>([]);
@@ -84,6 +86,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
   const [isLoadingPages, setIsLoadingPages] = useState(false);
   const [isUpdatingPages, setIsUpdatingPages] = useState(false);
   const [isRedeployingPages, setIsRedeployingPages] = useState(false);
+  const [pagesMessage, setPagesMessage] = useState<string | null>(null);
   const [copiedPagesUrl, setCopiedPagesUrl] = useState(false);
   const [copiedBadgesMarkdown, setCopiedBadgesMarkdown] = useState(false);
 
@@ -99,12 +102,14 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
     loadPages();
   }, [currentProjectId]);
 
+  const group = currentProject?.namespace?.kind === 'group' ? currentProject.namespace : null;
+
   const loadBadges = async () => {
     try {
       setIsLoadingBadges(true);
       const [projBadges, grpBadges] = await Promise.all([
         api.getBadges('project', currentProjectId),
-        api.getBadges('group', 101)
+        group ? api.getBadges('group', group.id) : Promise.resolve({ success: true, badges: [] as GitLabBadge[] })
       ]);
       const combined: GitLabBadge[] = [
         ...(projBadges.success ? projBadges.badges : []),
@@ -112,7 +117,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
       ];
       setBadges(combined);
     } catch (err) {
-      console.error('Failed to load badges:', err);
+      reportError('Could not load badges', err);
     } finally {
       setIsLoadingBadges(false);
     }
@@ -125,8 +130,9 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
       if (res.success) {
         setPagesInfo(res.pages);
       }
-    } catch (err) {
-      console.error('Failed to load pages info:', err);
+    } catch (err: any) {
+      setPagesInfo(null);
+      setPagesMessage(`Could not read Pages settings: ${err.message}`);
     } finally {
       setIsLoadingPages(false);
     }
@@ -155,7 +161,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
         setTimeout(() => setGeneralSaveSuccess(false), 3000);
       }
     } catch (err) {
-      console.error('Failed to update project settings:', err);
+      reportError('Could not update project settings', err);
     } finally {
       setIsSavingGeneral(false);
     }
@@ -178,8 +184,14 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
   };
 
   const processLogoFile = (file: File) => {
+    setLogoError(null);
     if (!file.type.startsWith('image/')) {
-      alert('Please upload a valid image file (PNG, SVG, JPEG, WebP)');
+      setLogoError('Choose an image file (PNG, SVG, JPEG, WebP).');
+      return;
+    }
+    // GitLab rejects avatars over 200 KB.
+    if (file.size > 200 * 1024) {
+      setLogoError('GitLab accepts avatars up to 200 KB.');
       return;
     }
 
@@ -191,12 +203,12 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
       try {
         setIsUploadingLogo(true);
         const res = await api.updateProjectAvatar(currentProjectId, dataUrl);
-        if (res.success && currentProject) {
-          currentProject.avatar_url = dataUrl;
-          if (onProjectUpdated) onProjectUpdated({ ...currentProject, avatar_url: dataUrl });
+        if (res.success && currentProject && onProjectUpdated) {
+          onProjectUpdated({ ...currentProject, avatar_url: res.avatar_url || dataUrl });
         }
-      } catch (err) {
-        console.error('Failed to update avatar:', err);
+      } catch (err: any) {
+        setAvatarPreview(null);
+        setLogoError(`Upload failed: ${err.message}`);
       } finally {
         setIsUploadingLogo(false);
       }
@@ -216,7 +228,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
         image_url: newBadgeImage.trim(),
         kind: newBadgeKind,
         project_id: newBadgeKind === 'project' ? currentProjectId : undefined,
-        group_id: newBadgeKind === 'group' ? 101 : undefined
+        group_id: newBadgeKind === 'group' ? group?.id : undefined
       };
       const res = await api.createBadge(payload);
       if (res.success) {
@@ -227,18 +239,18 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
         setNewBadgeImage('');
       }
     } catch (err) {
-      console.error('Failed to create badge:', err);
+      reportError('Could not create badge', err);
     }
   };
 
   const handleDeleteBadge = async (b: GitLabBadge) => {
     try {
-      const res = await api.deleteBadge(b.kind, b.kind === 'project' ? currentProjectId : 101, b.id);
+      const res = await api.deleteBadge(b.kind, b.kind === 'project' ? currentProjectId : b.group_id ?? group?.id ?? 0, b.id);
       if (res.success) {
         setBadges(badges.filter((item) => item.id !== b.id));
       }
     } catch (err) {
-      console.error('Failed to delete badge:', err);
+      reportError('Could not delete badge', err);
     }
   };
 
@@ -254,7 +266,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
         setPagesInfo(res.pages);
       }
     } catch (err) {
-      console.error('Failed to update pages settings:', err);
+      reportError('Could not update pages settings', err);
     } finally {
       setIsUpdatingPages(false);
     }
@@ -271,13 +283,15 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
   };
 
   const handleRedeployPages = async () => {
+    // Pages deploys from a pipeline: run one on the default branch and watch it.
+    const ref = projects.find((p) => p.id === currentProjectId)?.default_branch || 'main';
     try {
       setIsRedeployingPages(true);
-      // Trigger deploy job retry
-      await api.retryPipeline(pagesInfo?.pipeline_id || 30101, currentProjectId);
-      await loadPages();
-    } catch (err) {
-      console.error('Failed to trigger Pages redeployment:', err);
+      setPagesMessage(null);
+      const res = await api.runPipeline(currentProjectId, ref, [], true);
+      setPagesMessage(`Pipeline #${res.pipeline.id} started on ${ref}. You will be notified when it finishes.`);
+    } catch (err: any) {
+      setPagesMessage(`Could not start a pipeline: ${err.message}`);
     } finally {
       setIsRedeployingPages(false);
     }
@@ -443,6 +457,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
                       className="hidden"
                     />
                   </label>
+                  {logoError && <p className="text-[11px] text-rose-300">{logoError}</p>}
                 </div>
               </div>
 
@@ -780,13 +795,19 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="text-sm font-bold text-white">Pages Deployment Status</h3>
-                          <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
-                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                            Deployed & Active
-                          </span>
+                          {pagesInfo?.status === 'deployed' ? (
+                            <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                              Deployed
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-zinc-900 text-zinc-400 border border-zinc-800">
+                              Not deployed
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-zinc-400 font-mono mt-0.5">
-                          Published from branch main via pipeline #{pagesInfo?.pipeline_id || 30101}
+                          {pagesInfo?.deployed_at ? `Last deployed ${new Date(pagesInfo.deployed_at).toLocaleString()}` : 'No deployment recorded'}
                         </p>
                       </div>
                     </div>
@@ -799,7 +820,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
                         title="Trigger Pages deployment pipeline job"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${isRedeployingPages ? 'animate-spin text-orange-400' : ''}`} />
-                        <span>{isRedeployingPages ? 'Deploying...' : 'Re-deploy'}</span>
+                        <span>{isRedeployingPages ? 'Starting…' : 'Run Pages pipeline'}</span>
                       </button>
 
                       {pagesInfo?.url && (
@@ -843,18 +864,20 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
                     </div>
                   )}
 
+                  {pagesMessage && <p className="mt-3 text-xs text-zinc-300">{pagesMessage}</p>}
+
                   {/* Metrics Row */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
                     <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
                       <span className="text-zinc-500 block">Deployed At</span>
                       <span className="font-mono text-zinc-200">
-                        {pagesInfo?.deployed_at ? new Date(pagesInfo.deployed_at).toLocaleDateString() : 'Recent'}
+                        {pagesInfo?.deployed_at ? new Date(pagesInfo.deployed_at).toLocaleString() : 'Never'}
                       </span>
                     </div>
                     <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
                       <span className="text-zinc-500 block">Total Site Size</span>
                       <span className="font-mono text-zinc-200">
-                        {pagesInfo?.size_bytes ? `${(pagesInfo.size_bytes / (1024 * 1024)).toFixed(1)} MB` : '14.8 MB'}
+                        {pagesInfo?.size_bytes ? `${(pagesInfo.size_bytes / (1024 * 1024)).toFixed(1)} MB` : 'Not reported'}
                       </span>
                     </div>
                     <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
@@ -866,7 +889,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
                     <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
                       <span className="text-zinc-500 block">Access Control</span>
                       <span className="font-semibold text-zinc-300">
-                        {pagesInfo?.access_control ? 'Restricted' : 'Public Web'}
+                        {pagesInfo?.access_control ? 'Project members' : 'Public'}
                       </span>
                     </div>
                   </div>

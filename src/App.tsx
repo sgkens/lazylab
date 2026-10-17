@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AuthScreen } from './components/AuthScreen';
 import { VaultView, VaultSection } from './components/VaultView';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -122,6 +122,8 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   const [isWalOpen, setIsWalOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAgentSkillOpen, setIsAgentSkillOpen] = useState(false);
+  // MR to open in the MR drawer (set from global search).
+  const [focusMr, setFocusMr] = useState<GitLabMergeRequest | null>(null);
   const [settingsSection, setSettingsSection] = useState<'general' | 'badges' | 'pages'>('badges');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -165,9 +167,12 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     }
   }, [theme]);
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+    // A newer toast restarts the timer instead of being cleared by the older one.
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMessage(null), msg.startsWith('Could not') ? 6000 : 3500);
   };
 
   // Initial load
@@ -247,6 +252,13 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   );
 
   /** Desktop notification when the tab is in the background; the toast covers the foreground case. */
+  // Failed actions anywhere in the UI (see utils/reportError) surface as a toast.
+  useEffect(() => {
+    const onError = (e: Event) => showToast((e as CustomEvent<string>).detail);
+    window.addEventListener('lazylab:error', onError);
+    return () => window.removeEventListener('lazylab:error', onError);
+  }, []);
+
   const announce = (n: LazyNotification) => {
     showToast(`${n.title}${n.body ? ` · ${n.body}` : ''}`);
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
@@ -821,6 +833,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenWal={() => setIsWalOpen(true)}
         onOpenSearch={() => setIsSearchOpen(true)}
+        onOpenAgentSkill={() => setIsAgentSkillOpen(true)}
         workItemsCount={workItems.length}
         mrsCount={mergeRequests.length}
         pipelinesCount={pipelines.length}
@@ -892,6 +905,15 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
             onOpenCreateItem={() => setIsCreateWorkItemOpen(true)}
             onOpenCreateMilestone={() => setActiveTab('milestones')}
             onOpenRegisterRunner={() => setIsRegisterRunnerOpen(true)}
+            onOpenBadges={() => {
+              setSettingsSection('badges');
+              setActiveTab('repo_settings');
+            }}
+            onOpenGeneral={() => {
+              setSettingsSection('general');
+              setActiveTab('repo_settings');
+            }}
+            onOpenAgentSkill={() => setIsAgentSkillOpen(true)}
           />
         )}
 
@@ -924,6 +946,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
             onToggleState={handleToggleMRState}
             onApproveMR={handleApproveMR}
             onUnapproveMR={handleUnapproveMR}
+            focusMr={focusMr}
           />
         )}
 
@@ -993,8 +1016,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
             onSectionChange={setSettingsSection}
             onProjectUpdated={(updated) => {
               setProjects(projects.map((p) => (p.id === updated.id ? updated : p)));
-              setToastMessage(`Updated repository settings for ${updated.name}`);
-              setTimeout(() => setToastMessage(null), 3000);
+              showToast(`Updated repository settings for ${updated.name}`);
             }}
           />
         )}
@@ -1086,19 +1108,33 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         }}
       />
 
+      <AgentSkillModal
+        isOpen={isAgentSkillOpen}
+        onClose={() => setIsAgentSkillOpen(false)}
+        projects={projects}
+        defaultProjectId={selectedProjectId}
+        onToast={showToast}
+        onOpenTokens={() => {
+          setIsAgentSkillOpen(false);
+          setVaultSection('agent');
+          setActiveTab('vault');
+        }}
+      />
+
       {/* Global Search & Command Switcher Modal */}
       <GlobalSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        onNavigateTab={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'repo_settings') {
-            setSettingsSection('badges');
-          }
-        }}
+        onNavigateTab={setActiveTab}
+        onSelectSettingsSection={setSettingsSection}
+        onOpenAgentSkill={() => setIsAgentSkillOpen(true)}
         onSelectWorkItem={(item) => {
           setActiveTab('work_items');
           setSelectedWorkItem(item);
+        }}
+        onSelectMR={(mr) => {
+          setActiveTab('merge_requests');
+          setFocusMr(mr);
         }}
         workItems={workItems}
         mergeRequests={mergeRequests}

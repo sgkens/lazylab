@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { GitLabProject, GitLabBadge } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 export interface BadgePipelineModalProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
   onBadgesUpdated,
   onShowToast
 }) => {
-  const [projectId, setProjectId] = useState<number>(initialProjectId || projects[0]?.id || 901);
+  const [projectId, setProjectId] = useState<number>(initialProjectId || projects[0]?.id || 0);
   const [selectedTargets, setSelectedTargets] = useState<{
     main: boolean;
     develop: boolean;
@@ -157,7 +158,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
     if (selectedTargets.tags) activeTargets.push('tags');
 
     if (activeTargets.length === 0) {
-      alert('Please select at least one branch/tag target.');
+      reportError('Badges', new Error('select at least one branch or tag'));
       return;
     }
 
@@ -184,8 +185,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         }, 1200);
       }
     } catch (err: any) {
-      console.error('Failed to configure pipeline badges:', err);
-      alert(err.message || 'Failed to apply pipeline badges.');
+      reportError('Could not apply pipeline badges', err);
     } finally {
       setIsApplying(false);
     }

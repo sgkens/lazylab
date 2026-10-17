@@ -283,6 +283,17 @@ export const api = {
       post({ projectId, watch })
     ),
 
+  uploadFile: async (projectId: number, file: File) => {
+    const res = await fetch(`/api/projects/${projectId}/uploads`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+      body: file
+    });
+    const data = await res.json().catch(() => ({ success: false, error: res.status === 413 ? 'File is larger than 10 MB' : `HTTP ${res.status}` }));
+    if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`);
+    return data as { success: true; markdown: string; url: string };
+  },
+
   getJobFailure: (projectId: number, jobId: number) =>
     request<{ success: boolean; failure: JobFailure }>(`/projects/${projectId}/jobs/${jobId}/failure`),
 
@@ -368,12 +379,6 @@ export const api = {
   // API & Cache Metrics
   getMetrics: () => request<{ success: boolean; metrics: import('../types/gitlab').MetricsSummary }>('/metrics'),
 
-  simulateMetricHit: (type: 'api' | 'cache' = 'api', endpoint?: string) =>
-    request<{ success: boolean; metrics: import('../types/gitlab').MetricsSummary }>('/metrics/simulate-hit', {
-      method: 'POST',
-      body: JSON.stringify({ type, endpoint })
-    }),
-
   resetMetrics: () =>
     request<{ success: boolean; metrics: MetricsSummary }>('/metrics/reset', {
       method: 'POST'
@@ -405,6 +410,12 @@ export const api = {
   getReleases: (projectId: number, force = false) =>
     request<{ success: boolean; releases: GitLabRelease[] }>(`/projects/${projectId}/releases${force ? '?force=true' : ''}`),
 
+  getReleaseNotes: (projectId: number, to: string, from?: string) =>
+    request<{
+      success: boolean;
+      notes: { from: string | null; to: string; markdown: string; bump: 'major' | 'minor' | 'patch' | null; nextVersion: string | null; commitCount: number };
+    }>(`/projects/${projectId}/release-notes?to=${encodeURIComponent(to)}${from ? `&from=${encodeURIComponent(from)}` : ''}`),
+
   createRelease: (projectId: number, payload: { tag_name: string; name: string; description: string; ref?: string }) =>
     request<{ success: boolean; release: GitLabRelease }>(`/projects/${projectId}/releases`, {
       method: 'POST',
@@ -419,8 +430,8 @@ export const api = {
     request<{ success: boolean; jobs: RunnerJob[] }>(`/runners/${runnerId}/jobs`),
 
   // CI/CD Pipeline Editor & Visualizer
-  getCiConfig: (projectId: number) =>
-    request<{ success: boolean; config: CiConfig }>(`/projects/${projectId}/ci-config`),
+  getCiConfig: (projectId: number, ref?: string) =>
+    request<{ success: boolean; config: CiConfig }>(`/projects/${projectId}/ci-config${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`),
 
   saveCiConfig: (projectId: number, content: string, commit_message: string, branch = 'main') =>
     request<{ success: boolean; branch: string; commit_id: string }>(`/projects/${projectId}/ci-config`, {
@@ -428,11 +439,8 @@ export const api = {
       body: JSON.stringify({ content, commit_message, branch })
     }),
 
-  lintCiConfig: (content: string) =>
-    request<{ success: boolean; lint: CiLintResult }>('/ci-lint', {
-      method: 'POST',
-      body: JSON.stringify({ content })
-    }),
+  lintCiConfig: (content: string, projectId?: number, remote = false) =>
+    request<{ success: boolean; lint: CiLintResult }>('/ci-lint', post({ content, projectId, remote })),
 
   // CI/CD Variables
   getVariables: (scope: 'project' | 'group' | 'instance', id?: number) => {

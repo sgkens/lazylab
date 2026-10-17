@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { RefreshCw, CheckCircle, Database } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { CheckCircle, Database, RefreshCw } from 'lucide-react';
 
 interface SyncProgressBarProps {
   isSyncing: boolean;
@@ -7,69 +7,44 @@ interface SyncProgressBarProps {
   walEntriesCount?: number;
 }
 
-export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({
-  isSyncing,
-  lastSyncTime,
-  walEntriesCount = 0
-}) => {
-  const [progress, setProgress] = useState(0);
-  const [stageText, setStageText] = useState('Synchronized');
-  const [showFinishedNotice, setShowFinishedNotice] = useState(false);
+/**
+ * Shown while a refresh runs and briefly after it ends. The refresh is a single request with no
+ * progress reporting, so the bar is indeterminate and the only figure shown is the elapsed time.
+ */
+export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ isSyncing, lastSyncTime, walEntriesCount = 0 }) => {
+  const [finishedIn, setFinishedIn] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const startedAt = useRef<number | null>(null);
 
   useEffect(() => {
-    let interval: any;
-
     if (isSyncing) {
-      setProgress(15);
-      setStageText('Connecting to GitLab API & checking WAL journal...');
-      setShowFinishedNotice(false);
-
-      interval = setInterval(() => {
-        setProgress((prev) => {
-          if (prev < 40) {
-            setStageText('Revalidating Work Items, MRs & Milestones...');
-            return prev + 15;
-          } else if (prev < 75) {
-            setStageText('Fetching Pipelines, Fleet Runners & Packages...');
-            return prev + 12;
-          } else if (prev < 92) {
-            setStageText('Committing WAL journal & updating in-memory index...');
-            return prev + 5;
-          }
-          return prev;
-        });
-      }, 250);
-    } else {
-      if (progress > 0) {
-        setProgress(100);
-        setStageText('Sync complete · SQLite WAL journal in-sync');
-        setShowFinishedNotice(true);
-        const timer = setTimeout(() => {
-          setProgress(0);
-          setShowFinishedNotice(false);
-        }, 1800);
-        return () => clearTimeout(timer);
-      }
+      startedAt.current = Date.now();
+      setFinishedIn(null);
+      setElapsed(0);
+      const tick = setInterval(() => setElapsed(Date.now() - (startedAt.current ?? Date.now())), 200);
+      return () => clearInterval(tick);
     }
-
-    return () => clearInterval(interval);
+    if (startedAt.current !== null) {
+      setFinishedIn(Date.now() - startedAt.current);
+      startedAt.current = null;
+      const hide = setTimeout(() => setFinishedIn(null), 2000);
+      return () => clearTimeout(hide);
+    }
   }, [isSyncing]);
 
-  if (!isSyncing && progress === 0 && !showFinishedNotice) {
-    return null;
-  }
+  if (!isSyncing && finishedIn === null) return null;
 
   return (
-    <div className="w-full bg-zinc-950/90 border-b border-zinc-800/80 shrink-0 text-xs font-mono relative overflow-hidden transition-all duration-300">
-      {/* Animated gradient progress track */}
-      <div className="w-full bg-zinc-900 h-1 relative">
-        <div
-          className="h-full bg-gradient-to-r from-orange-500 via-amber-400 to-emerald-400 transition-all duration-300 ease-out shadow-[0_0_8px_rgba(249,115,22,0.6)]"
-          style={{ width: `${progress}%` }}
-        />
+    <div className="w-full bg-zinc-950/90 border-b border-zinc-800/80 shrink-0 text-xs font-mono relative overflow-hidden">
+      <div className="w-full bg-zinc-900 h-1 relative overflow-hidden">
+        {isSyncing ? (
+          <div className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-orange-400 to-transparent animate-[lazylab-slide_1.2s_ease-in-out_infinite]" />
+        ) : (
+          <div className="h-full w-full bg-emerald-500/70" />
+        )}
       </div>
+      <style>{`@keyframes lazylab-slide { from { left: -33%; } to { left: 100%; } }`}</style>
 
-      {/* Sync Step Micro-Bar */}
       <div className="flex items-center justify-between px-6 py-1 text-[11px] text-zinc-400">
         <div className="flex items-center gap-2">
           {isSyncing ? (
@@ -78,16 +53,17 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({
             <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" />
           )}
           <span className={isSyncing ? 'text-zinc-200' : 'text-emerald-400 font-semibold'}>
-            {stageText}
+            {isSyncing
+              ? `Refreshing from GitLab… ${(elapsed / 1000).toFixed(1)}s`
+              : `Refreshed in ${((finishedIn ?? 0) / 1000).toFixed(1)}s`}
           </span>
         </div>
-
         <div className="flex items-center gap-3 text-zinc-500">
-          <span className="flex items-center gap-1">
+          {lastSyncTime && !isSyncing && <span>at {new Date(lastSyncTime).toLocaleTimeString()}</span>}
+          <span className="flex items-center gap-1" title="Entries in the local cache journal">
             <Database className="w-3 h-3 text-emerald-500" />
-            <span>WAL logs: {walEntriesCount}</span>
+            <span>journal: {walEntriesCount}</span>
           </span>
-          <span className="tabular-nums font-bold text-zinc-300">{Math.round(progress)}%</span>
         </div>
       </div>
     </div>

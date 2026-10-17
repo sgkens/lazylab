@@ -162,6 +162,7 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
           <div>
             <label className="block text-zinc-400 font-medium mb-1">Description (Markdown & Attachments)</label>
             <MarkdownEditor
+                  projectId={projectId}
               value={description}
               onChange={setDescription}
               placeholder="Write description with checklist (- [ ]), code blocks, or drop screenshots..."

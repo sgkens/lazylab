@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Cpu, Copy, Check, Terminal, X, ShieldAlert } from 'lucide-react';
 import { GitLabProject } from '../types/gitlab';
+import { reportError } from '../utils/reportError';
 
 interface RegisterRunnerModalProps {
   isOpen: boolean;
@@ -72,7 +73,7 @@ export const RegisterRunnerModal: React.FC<RegisterRunnerModalProps> = ({
         command: res.registerCommand
       });
     } catch (err) {
-      console.error('Failed to register runner:', err);
+      reportError('Could not register runner', err);
     } finally {
       setIsSubmitting(false);
     }

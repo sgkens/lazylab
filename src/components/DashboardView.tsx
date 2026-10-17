@@ -20,7 +20,8 @@ import {
   Server,
   Award,
   Bot,
-  Settings
+  Settings,
+  Boxes
 } from 'lucide-react';
 import {
   GitLabMilestone,
@@ -32,6 +33,7 @@ import {
   MetricsSummary
 } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface DashboardViewProps {
   workItems: GitLabWorkItem[];
@@ -65,7 +67,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenAgentSkill
 }) => {
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
-  const [isSimulating, setIsSimulating] = useState(false);
   const [hoveredBucketIndex, setHoveredBucketIndex] = useState<number | null>(null);
 
   const fetchMetrics = async () => {
@@ -85,21 +86,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  const handleSimulate = async (type: 'api' | 'cache') => {
-    setIsSimulating(true);
-    try {
-      const endpoint = type === 'api' ? 'GET /projects/sync' : 'GET /projects (cached)';
-      const res = await api.simulateMetricHit(type, endpoint);
-      if (res.success && res.metrics) {
-        setMetrics(res.metrics);
-      }
-    } catch (err) {
-      console.error('Simulation error:', err);
-    } finally {
-      setIsSimulating(false);
-    }
-  };
-
   const handleResetMetrics = async () => {
     try {
       const res = await api.resetMetrics();
@@ -107,7 +93,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         setMetrics(res.metrics);
       }
     } catch (err) {
-      console.error('Reset metrics error:', err);
+      reportError('Could not reset metrics', err);
     }
   };
 
@@ -232,7 +218,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={() => onNavigateTab('packages')}
               className="px-2.5 py-1 rounded bg-zinc-800/80 hover:bg-zinc-750 text-zinc-300 hover:text-white border border-zinc-700/60 transition-colors flex items-center gap-1.5 font-medium"
             >
-              <span className="text-amber-400">📦</span>
+              <Boxes className="w-3.5 h-3.5 text-amber-400" />
               <span>Packages & Releases</span>
             </button>
             {onOpenBadges && (
@@ -377,32 +363,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </p>
             </div>
 
-            {/* Live Interactive Simulator Controls */}
+            {/* Metrics controls */}
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleSimulate('api')}
-                disabled={isSimulating}
-                className="px-2.5 py-1 text-xs font-medium text-orange-200 bg-orange-950/80 hover:bg-orange-900 border border-orange-800 rounded transition-colors flex items-center gap-1.5"
-                title="Simulate a remote GitLab API fetch call"
-              >
-                <Zap className="w-3.5 h-3.5 text-orange-400" />
-                <span>Simulate API Hit</span>
-              </button>
-
-              <button
-                onClick={() => handleSimulate('cache')}
-                disabled={isSimulating}
-                className="px-2.5 py-1 text-xs font-medium text-cyan-200 bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-800 rounded transition-colors flex items-center gap-1.5"
-                title="Simulate a zero-latency SQLite WAL cache hit"
-              >
-                <Database className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Simulate Cache Hit</span>
-              </button>
-
               <button
                 onClick={handleResetMetrics}
                 className="px-2.5 py-1 text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded transition-colors"
-                title="Reset local metrics window"
+                title="Reset the counters and the 30-minute window"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>

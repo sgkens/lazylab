@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { GitLabProject, GitLabRunner, RunnerJob } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface RunnersViewProps {
   runners: GitLabRunner[];
@@ -91,7 +92,7 @@ export const RunnersView: React.FC<RunnersViewProps> = ({
         setRunnerJobs((prev) => ({ ...prev, [runnerId]: res.jobs }));
       }
     } catch (err) {
-      console.error('Failed to load runner jobs:', err);
+      reportError('Could not load runner jobs', err);
     } finally {
       setIsLoadingJobs((prev) => ({ ...prev, [runnerId]: false }));
     }
@@ -372,7 +373,7 @@ export const RunnersView: React.FC<RunnersViewProps> = ({
                               key={job.id}
                               onClick={() => {
                                 if (onViewJobTrace) {
-                                  onViewJobTrace(job.project_id || 901, job.id, job.name);
+                                  if (job.project_id) onViewJobTrace(job.project_id, job.id, job.name);
                                 }
                               }}
                               className="p-2 rounded bg-zinc-950 hover:bg-zinc-900 border border-zinc-800/80 cursor-pointer transition-colors flex items-center justify-between text-xs font-mono group"

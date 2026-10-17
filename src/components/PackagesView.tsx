@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { GitLabPackage, GitLabProject, PackageType } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface PackagesViewProps {
   projects: GitLabProject[];
@@ -57,9 +58,22 @@ export const PackagesView: React.FC<PackagesViewProps> = ({
         setPackages(res.packages);
       }
     } catch (err) {
-      console.error('Failed to load packages:', err);
+      reportError('Could not load packages', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // List responses carry no files; the drawer loads them (and install details) from the package endpoint.
+  const openPackage = async (pkg: GitLabPackage) => {
+    setSelectedPackage(pkg);
+    try {
+      const res = await api.getPackageDetails(pkg.project_id, pkg.id);
+      if (res.success && res.package) {
+        setSelectedPackage((cur) => (cur && cur.id === pkg.id ? { ...pkg, ...res.package } : cur));
+      }
+    } catch {
+      // keep the list data
     }
   };
 
@@ -96,7 +110,7 @@ export const PackagesView: React.FC<PackagesViewProps> = ({
 
   const handleExportSbom = () => {
     const sbom = {
-      generator: 'LabWI Package Manager',
+      generator: 'lazylab',
       exported_at: new Date().toISOString(),
       project_id: selectedProjectId || 'all',
       packages_count: filteredPackages.length,
@@ -268,7 +282,7 @@ export const PackagesView: React.FC<PackagesViewProps> = ({
               return (
                 <div
                   key={pkg.id}
-                  onClick={() => setSelectedPackage(pkg)}
+                  onClick={() => openPackage(pkg)}
                   className="bg-zinc-900/80 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900 rounded-xl p-4 cursor-pointer transition-all flex flex-col justify-between group shadow-sm"
                 >
                   <div>

@@ -45,7 +45,7 @@ export type ActiveTab =
   | 'labels'
   | 'vault';
 
-export type NavCategory = 'plan' | 'cicd' | 'registry' | 'settings';
+export type NavCategory = 'plan' | 'cicd' | 'registry' | 'settings' | 'none';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -100,7 +100,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     if (['pipelines', 'pipeline_editor', 'runners', 'ci_variables'].includes(activeTab)) return 'cicd';
     if (['packages', 'releases_tags'].includes(activeTab)) return 'registry';
     if (activeTab === 'repo_settings') return 'settings';
-    return 'plan';
+    return 'none';
   });
 
   React.useEffect(() => {
@@ -112,6 +112,9 @@ export const Navbar: React.FC<NavbarProps> = ({
       setNavCategory('registry');
     } else if (activeTab === 'repo_settings') {
       setNavCategory('settings');
+    } else {
+      // Vault and other pages outside the four groups: no group is highlighted.
+      setNavCategory('none');
     }
   }, [activeTab]);
 

@@ -25,6 +25,7 @@ import { renderMarkdownToHtml } from '../utils/markdown';
 import { GitLabLabel, GitLabMergeRequest, GitLabNote, GitLabProject } from '../types/gitlab';
 import { MarkdownEditor } from './MarkdownEditor';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface MergeRequestsViewProps {
   mergeRequests: GitLabMergeRequest[];
@@ -41,6 +42,8 @@ interface MergeRequestsViewProps {
   onToggleState: (iid: number, projectId: number, currentState: 'opened' | 'closed') => void;
   onApproveMR: (iid: number, projectId: number) => void;
   onUnapproveMR: (iid: number, projectId: number) => void;
+  /** Opens this MR in the drawer (from global search). */
+  focusMr?: GitLabMergeRequest | null;
 }
 
 export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
@@ -52,7 +55,8 @@ export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
   onUpdateLabels,
   onToggleState,
   onApproveMR,
-  onUnapproveMR
+  onUnapproveMR,
+  focusMr
 }) => {
   const [stateFilter, setStateFilter] = useState<'all' | 'opened' | 'merged' | 'closed'>('opened');
   const [selectedMR, setSelectedMR] = useState<GitLabMergeRequest | null>(null);
@@ -66,6 +70,7 @@ export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
 
   // MR Comments state
   const [mrNotes, setMrNotes] = useState<GitLabNote[]>([]);
+  const [commentError, setCommentError] = useState<string | null>(null);
   const [newCommentBody, setNewCommentBody] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [activeLabelMenuIid, setActiveLabelMenuIid] = useState<number | null>(null);
@@ -81,19 +86,33 @@ export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
     }));
   };
 
+  useEffect(() => {
+    if (!focusMr) return;
+    setSelectedMR(focusMr);
+    if (stateFilter !== 'all' && focusMr.state !== stateFilter) setStateFilter('all');
+  }, [focusMr]);
+
+  // Keep the drawer in step with list updates (draft, labels, state, approval).
+  useEffect(() => {
+    if (!selectedMR) return;
+    const fresh = mergeRequests.find((m) => m.id === selectedMR.id);
+    if (fresh && fresh !== selectedMR) setSelectedMR(fresh);
+  }, [mergeRequests]);
+
   // Fetch MR notes on drawer select
   useEffect(() => {
+    setCommentError(null);
     if (selectedMR) {
       api.getMergeRequestNotes(selectedMR.project_id, selectedMR.iid)
         .then((res) => {
           if (res.success) setMrNotes(res.notes);
         })
-        .catch((err) => console.error('Failed fetching MR notes:', err));
+        .catch((err) => reportError('Could not load MR comments', err));
     } else {
       setMrNotes([]);
       setNewCommentBody('');
     }
-  }, [selectedMR]);
+  }, [selectedMR?.id]);
 
   const handleSendComment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,8 +125,8 @@ export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
         setMrNotes((prev) => [...prev, res.note]);
         setNewCommentBody('');
       }
-    } catch (err) {
-      console.error('Failed to post MR note:', err);
+    } catch (err: any) {
+      setCommentError(err.message || 'Comment failed');
     } finally {
       setIsSubmittingComment(false);
     }
@@ -548,6 +567,42 @@ export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
               )}
             </div>
 
+            {/* Labels */}
+            <div>
+              <label className="text-xs font-semibold text-zinc-400 block mb-1.5">Labels</label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {selectedMR.labels.map((lbl) => (
+                  <span key={lbl} className="text-xs px-2 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-800 flex items-center gap-1.5">
+                    <span>{lbl}</span>
+                    <button
+                      title={`Remove ${lbl}`}
+                      onClick={() => onUpdateLabels(selectedMR.iid, selectedMR.project_id, selectedMR.labels, lbl, true)}
+                      className="text-zinc-500 hover:text-red-400 font-bold"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) onUpdateLabels(selectedMR.iid, selectedMR.project_id, selectedMR.labels, e.target.value, false);
+                  }}
+                  className="bg-zinc-900 border border-zinc-800 text-zinc-400 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-emerald-500"
+                  aria-label="Add label"
+                >
+                  <option value="">+ label</option>
+                  {labels
+                    .filter((l) => !selectedMR.labels.includes(l.name))
+                    .map((l) => (
+                      <option key={l.id} value={l.name}>
+                        {l.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+
             {/* Description */}
             <div>
               <label className="text-xs font-semibold text-zinc-400 block mb-1">Description</label>
@@ -582,13 +637,15 @@ export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
               {/* Add comment */}
               <form onSubmit={handleSendComment} className="space-y-2">
                 <MarkdownEditor
+                  projectId={selectedMR.project_id}
                   value={newCommentBody}
                   onChange={setNewCommentBody}
                   placeholder="Leave a review comment..."
                   minHeight="70px"
                   allowAttachments={true}
                 />
-                <div className="flex items-center justify-end">
+                <div className="flex items-center justify-end gap-3">
+                  {commentError && <span className="text-[11px] text-rose-300 mr-auto">{commentError}</span>}
                   <button
                     type="submit"
                     disabled={isSubmittingComment || !newCommentBody.trim()}
@@ -613,11 +670,39 @@ export const MergeRequestsView: React.FC<MergeRequestsViewProps> = ({
                 <span>Direct Merge into {selectedMR.target_branch}</span>
               </button>
 
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() =>
+                    selectedMR.approved
+                      ? onUnapproveMR(selectedMR.iid, selectedMR.project_id)
+                      : onApproveMR(selectedMR.iid, selectedMR.project_id)
+                  }
+                  className="py-1.5 px-3 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 transition-colors"
+                >
+                  {selectedMR.approved ? 'Revoke approval' : 'Approve'}
+                </button>
+                <button
+                  onClick={() => onToggleDraft(selectedMR.iid, selectedMR.project_id, selectedMR.draft)}
+                  className="py-1.5 px-3 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 transition-colors"
+                >
+                  {selectedMR.draft ? 'Mark ready' : 'Mark as draft'}
+                </button>
+                <button
+                  onClick={() => onToggleState(selectedMR.iid, selectedMR.project_id, 'opened')}
+                  className="py-1.5 px-3 rounded text-xs font-medium bg-zinc-900 hover:bg-rose-950 text-rose-300 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+          {selectedMR.state === 'closed' && (
+            <div className="pt-4 mt-4 border-t border-zinc-800">
               <button
-                onClick={() => onToggleDraft(selectedMR.iid, selectedMR.project_id, selectedMR.draft)}
+                onClick={() => onToggleState(selectedMR.iid, selectedMR.project_id, 'closed')}
                 className="w-full py-1.5 px-3 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 transition-colors"
               >
-                {selectedMR.draft ? 'Remove Draft (Ready to Review)' : 'Mark as Draft'}
+                Reopen
               </button>
             </div>
           )}
