@@ -67,7 +67,8 @@ export const MilestonesView: React.FC<MilestonesViewProps> = ({
       {/* Milestones Cards Grid */}
       <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {milestones.map((m) => {
-          const pct = m.completion_percentage ?? 60;
+          // Undefined when GitLab issue statistics were unavailable.
+          const pct = m.completion_percentage;
           return (
             <div
               key={m.id}
@@ -80,7 +81,7 @@ export const MilestonesView: React.FC<MilestonesViewProps> = ({
                     <h3 className="text-sm font-semibold text-white">{m.title}</h3>
                   </div>
                   <span className="text-xs font-bold font-mono text-amber-400 tabular-nums">
-                    {pct}%
+                    {pct === undefined ? 'n/a' : `${pct}%`}
                   </span>
                 </div>
 
@@ -101,7 +102,7 @@ export const MilestonesView: React.FC<MilestonesViewProps> = ({
                 <div className="w-full bg-zinc-800 h-2 rounded-full overflow-hidden mt-4">
                   <div
                     className="bg-amber-500 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${pct}%` }}
+                    style={{ width: `${pct ?? 0}%` }}
                   />
                 </div>
               </div>
@@ -109,11 +110,11 @@ export const MilestonesView: React.FC<MilestonesViewProps> = ({
               <div className="pt-3 mt-4 border-t border-zinc-800/80 flex items-center justify-between text-[11px] font-mono text-zinc-500">
                 <span className="flex items-center gap-1 text-emerald-400">
                   <CheckCircle className="w-3 h-3" />
-                  <span>{m.closed_issues_count ?? 0} closed</span>
+                  <span>{m.closed_issues_count ?? '–'} closed</span>
                 </span>
                 <span className="flex items-center gap-1 text-zinc-400">
                   <Clock className="w-3 h-3" />
-                  <span>{m.open_issues_count ?? 0} open</span>
+                  <span>{m.open_issues_count ?? '–'} open</span>
                 </span>
               </div>
             </div>

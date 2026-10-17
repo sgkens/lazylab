@@ -643,7 +643,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </span>
                       </div>
                       <span className="text-xs font-bold font-mono text-amber-400 tabular-nums">
-                        {m.completion_percentage ?? 60}%
+                        {m.completion_percentage === undefined ? 'n/a' : `${m.completion_percentage}%`}
                       </span>
                     </div>
 
@@ -651,13 +651,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <div className="w-full bg-zinc-800 h-2 rounded-full overflow-hidden mt-2">
                       <div
                         className="bg-amber-500 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${m.completion_percentage ?? 60}%` }}
+                        style={{ width: `${m.completion_percentage ?? 0}%` }}
                       />
                     </div>
 
                     <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 mt-2">
-                      <span>{m.closed_issues_count ?? 0} closed</span>
-                      <span>{m.open_issues_count ?? 0} remaining</span>
+                      <span>{m.closed_issues_count ?? '–'} closed</span>
+                      <span>{m.open_issues_count ?? '–'} remaining</span>
                     </div>
                   </div>
                 ))
