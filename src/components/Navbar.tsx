@@ -222,10 +222,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline">Settings</span>
           </button>
 
-          {/* Connection Token Settings Modal */}
+          {/* Connection and sync settings (profiles themselves live in the vault) */}
           <button
             onClick={onOpenSettings}
-            title="GitLab Connection & Token Configuration"
+            title="Connection and sync"
             className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
           >
             <Settings className="w-4 h-4" />
@@ -565,10 +565,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 onClick={onOpenSettings}
                 className="px-2.5 py-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
-                title="Configure GitLab Host and Personal Access Token"
+                title="Active GitLab connection and background refresh"
               >
                 <Key className="w-3.5 h-3.5 text-amber-400" />
-                <span>GitLab Token & Connection</span>
+                <span>Connection and sync</span>
               </button>
             </>
           )}

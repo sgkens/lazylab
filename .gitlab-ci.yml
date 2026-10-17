@@ -1,0 +1,40 @@
+# lazylab CI: builds the documentation site in docs/ and publishes it with GitLab Pages.
+# The app itself is not built here; see docs/src/reference/development.md for local checks.
+
+stages:
+  - docs
+
+default:
+  image: oven/bun:1.3.11
+
+.docs-build:
+  stage: docs
+  cache:
+    key:
+      files: [docs/bun.lock]
+    paths: [docs/node_modules]
+  script:
+    # CI_PAGES_URL is https://<user>.gitlab.io/lazylab, or a unique domain with no path.
+    # Its path becomes Eleventy's prefix so links and assets resolve in both cases.
+    - export DOCS_PATH_PREFIX="$(echo "${CI_PAGES_URL:-}" | sed -E 's#^https?://[^/]+##; s#/*$#/#')"
+    - echo "Building docs with path prefix ${DOCS_PATH_PREFIX}"
+    - cd docs
+    - bun install --frozen-lockfile
+    - bun run build
+    - rm -rf "$CI_PROJECT_DIR/public" && mv _site "$CI_PROJECT_DIR/public"
+
+# Merge requests that touch the docs: build only, so a broken page fails the MR.
+docs:build:
+  extends: .docs-build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [docs/**/*]
+
+# Default branch: publish docs/_site as the Pages site.
+pages:
+  extends: .docs-build
+  artifacts:
+    paths: [public]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: [docs/**/*, .gitlab-ci.yml]

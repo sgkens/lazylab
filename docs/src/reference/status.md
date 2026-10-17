@@ -31,6 +31,10 @@ Every button, menu and form in the UI was traced to a server route and a GitLab 
 | Avatar upload (live) | Changed demo data only | Uploads to GitLab |
 | Errors | Most failed actions only logged to the console | A toast names the failed action |
 | Sync bar | A timer drove a fake percentage | Indeterminate bar with elapsed time |
+| Failed list reads | The server returned `[]`, so a GitLab outage looked like an empty project | The request fails; the toast names each source that failed and the other lists still load |
+| Masked variables | Values were sent to the browser in the list and the live update stream | Left out; fetched one at a time on Reveal, Copy or Clone |
+| Subtask toggle | The drawer kept the old description; a failed save left the checkbox changed | The drawer shows GitLab's updated item; a failure undoes the checkbox |
+| Settings modal | A second form for GitLab host and token, next to Vault → GitLab profiles | Sync settings only, with a link to the vault |
 
 ## Status by feature
 

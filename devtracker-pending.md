@@ -328,12 +328,12 @@ Docs:
 Verified: 66 tests; headless Chromium audit flow (agent modal, dashboard, search → MR drawer, MR labels/approve/close, work item label, release notes, tag compare, CI editor lint source); earlier UI and triage flows; curl for uploads (413 over 10 MB), skill.md, badge id validation, release notes, removed simulator (404); docs link check (0 broken), screenshots at desktop and 390 px.
 
 Follow-ups:
-- [ ] AUDIT-15 Server list calls still swallow errors and return `[]` (UI cannot tell empty from failed)
-- [ ] AUDIT-16 Masked variable values reach the browser
-- [ ] AUDIT-17 Work item drawer description not refreshed after a subtask toggle
-- [ ] AUDIT-18 Settings modal duplicates Vault → GitLab profiles; fold into the vault
-- [ ] DOCS-3 GitLab Pages job for the docs site (`DOCS_PATH_PREFIX=/lazylab/`)
-- [ ] DOCS-4 LICENSE file (none chosen yet)
+- [x] AUDIT-15 Server list calls swallowed errors and returned `[]` → list reads throw; auto-fetch refreshes sources independently; App loads each source on its own and names the failed ones; group variables/badges failures no longer hide project rows; job trace no longer returns a placeholder log
+- [x] AUDIT-16 Masked variable values reached the browser → redacted in list, save response and SSE (`server/variables.ts`); `GET /api/variables/value` reads one on Reveal/Copy/Clone (no-store, journaled); export comments them out; PUT targets the environment scope
+- [x] AUDIT-17 Work item drawer description not refreshed after a subtask toggle → toggle/add return the updated item; failed toggle reverts; comments no longer reload on every item update
+- [x] AUDIT-18 Settings modal duplicated Vault → GitLab profiles → modal is connection summary + refresh settings with a link to the vault; `/auth/verify|save|clear` removed
+- [x] DOCS-3 `.gitlab-ci.yml`: `docs:build` on MRs, `pages` on the default branch; prefix derived from `CI_PAGES_URL`
+- [x] DOCS-4 MIT `LICENSE`; `license` in both package.json files; README and development page link it
 
 ## Epic SEC: hardening follow-ups
 

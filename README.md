@@ -80,7 +80,7 @@ lazylab listens on `127.0.0.1` by default. To use it from a laptop, put it behin
 
 ## Documentation
 
-The documentation site is in [`docs/`](docs/). It is built with Eleventy and Nunjucks.
+The documentation site is in [`docs/`](docs/). It is built with Eleventy and Nunjucks, and the `pages` job in [`.gitlab-ci.yml`](.gitlab-ci.yml) publishes it with GitLab Pages when `docs/` changes on the default branch.
 
 | Topic | Page |
 |---|---|
@@ -143,3 +143,7 @@ Conventions:
 - **Branches:** feature branches merge into `develop`; `main` stays stable.
 
 See [Development](docs/src/reference/development.md) for details.
+
+## License
+
+[MIT](LICENSE)

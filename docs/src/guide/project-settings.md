@@ -12,11 +12,27 @@ abstract: The Settings section edits a project's description, topics, visibility
 
 **CI/CD → Variables** lists project variables and the variables of the project's parent group. Projects in a personal namespace have no group variables.
 
-- Create, edit, clone and delete variables. Variables can be protected, masked or raw, have an environment scope, and be of type file.
+- Create, clone and delete variables. Saving a key that already exists in the same environment scope updates it. Variables can be protected, masked or raw, have an environment scope, and be of type file.
 - **Bulk import** reads `KEY=value` lines (comments and blank lines are skipped) and saves each one.
-- **Export** downloads or copies the visible variables as a `.env` file.
+- **Export** downloads or copies the visible variables as a `.env` file. Masked variables appear as a comment without their value.
+- If the group's variables cannot be read, for example because you are not a maintainer of the group, the project's variables still show and a message names the failure.
 
-Masked values are returned to the browser so they can be revealed and copied. Keep the lazylab session as private as the GitLab token.
+### Masked values
+
+The list response and the live update stream never contain masked values. **Reveal**, **Copy** and **Clone** fetch one value from `GET /api/variables/value`, which reads that single variable from GitLab, is not cached, and writes a `READ_VARIABLE` entry to the change journal.
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant L as lazylab
+  participant G as GitLab
+  B->>L: GET /api/variables?scope=project&id=7
+  L->>G: GET /projects/7/variables
+  L-->>B: masked rows with value "" and value_hidden
+  B->>L: GET /api/variables/value?key=DEPLOY_TOKEN (Reveal)
+  L->>G: GET /projects/7/variables/DEPLOY_TOKEN?filter[environment_scope]=*
+  L-->>B: one value, Cache-Control no-store
+```
 
 ## Badges
 

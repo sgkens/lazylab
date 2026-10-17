@@ -96,20 +96,6 @@ export const api = {
   getInbox: (force = false) =>
     request<{ success: boolean; inbox: Inbox }>(`/inbox${force ? '?force=true' : ''}`),
 
-  verifyToken: (host: string, token: string) =>
-    request<{ success: boolean; user: any }>('/auth/verify', {
-      method: 'POST',
-      body: JSON.stringify({ host, token })
-    }),
-
-  saveAuth: (host: string, token: string) =>
-    request<{ success: boolean; host: string; isDemo: boolean; user: any }>('/auth/save', {
-      method: 'POST',
-      body: JSON.stringify({ host, token })
-    }),
-
-  clearAuth: () => request<{ success: boolean; isDemo: boolean }>('/auth/clear', { method: 'POST' }),
-
   updateAutoFetch: (intervalSec: number) =>
     request<{ success: boolean; autoFetchIntervalSec: number }>('/config/autofetch', {
       method: 'POST',
@@ -177,13 +163,13 @@ export const api = {
     }),
 
   addSubTask: (projectId: number, issueIid: number, title: string) =>
-    request<{ success: boolean; subtask: SubTask }>(`/work_items/${issueIid}/subtasks`, {
+    request<{ success: boolean; subtask: SubTask; workItem: GitLabWorkItem }>(`/work_items/${issueIid}/subtasks`, {
       method: 'POST',
       body: JSON.stringify({ projectId, title })
     }),
 
   toggleSubTask: (projectId: number, issueIid: number, subtaskId: number, completed: boolean) =>
-    request<{ success: boolean; subtasks: SubTask[] }>(`/work_items/${issueIid}/subtasks/${subtaskId}`, {
+    request<{ success: boolean; subtasks: SubTask[]; workItem: GitLabWorkItem }>(`/work_items/${issueIid}/subtasks/${subtaskId}`, {
       method: 'PATCH',
       body: JSON.stringify({ projectId, completed })
     }),
@@ -448,6 +434,11 @@ export const api = {
     params.set('scope', scope);
     if (id) params.set('id', String(id));
     return request<{ success: boolean; variables: GitLabVariable[] }>(`/variables?${params.toString()}`);
+  },
+
+  getVariableValue: (scope: 'project' | 'group' | 'instance', id: number, key: string, environmentScope = '*') => {
+    const params = new URLSearchParams({ scope, id: String(id), key, environment_scope: environmentScope });
+    return request<{ success: boolean; value: string }>(`/variables/value?${params.toString()}`);
   },
 
   saveVariable: (payload: GitLabVariable) =>

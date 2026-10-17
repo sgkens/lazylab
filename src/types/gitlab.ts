@@ -442,6 +442,8 @@ export interface GitLabVariable {
   scope_type: 'project' | 'group' | 'instance';
   scope_id: number;
   scope_name?: string;
+  /** Masked values are left out of list responses; fetch one with api.getVariableValue. */
+  value_hidden?: boolean;
 }
 
 // 6. Badges

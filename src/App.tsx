@@ -35,6 +35,7 @@ import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { SyncProgressBar } from './components/SyncProgressBar';
 import { AgentSkillModal } from './components/AgentSkillModal';
 import { api, notifyApi, sessionApi } from './services/api';
+import { reportError } from './utils/reportError';
 import { SessionState } from './types/vault';
 import {
   AppStatus,
@@ -177,35 +178,27 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
 
   // Initial load
   const loadInitialData = useCallback(async (force = false) => {
+    setIsSyncing(true);
     try {
-      setIsSyncing(true);
-      const [statusRes, projectsRes, labelsRes, milestonesRes] = await Promise.all([
-        api.getStatus(),
-        api.getProjects(force),
-        api.getLabels(undefined, force),
-        api.getMilestones(undefined, force)
-      ]);
-
-      setStatus(statusRes);
-      setProjects(projectsRes.projects || []);
-      setLabels(labelsRes.labels || []);
-      setMilestones(milestonesRes.milestones || []);
-
-      // Preload data for Dashboard & Tabs
-      const [wRes, mRes, pRes, rRes] = await Promise.all([
-        api.getWorkItems(selectedProjectId || undefined, 'all', force),
-        api.getMergeRequests(selectedProjectId || undefined, 'all', force),
-        api.getPipelines(selectedProjectId || undefined, force),
-        api.getRunners(force)
-      ]);
-
-      setWorkItems(wRes.workItems || []);
-      setMergeRequests(mRes.mergeRequests || []);
-      setPipelines(pRes.pipelines || []);
-      setRunners(rRes.runners || []);
-    } catch (err: any) {
-      console.error('Failed loading initial data:', err);
-      showToast(err.message || 'Error syncing data');
+      // Each source loads on its own: a failed one keeps its previous data and is named in the toast,
+      // instead of one error blanking every list.
+      const pid = selectedProjectId || undefined;
+      const sources: [string, () => Promise<void>][] = [
+        ['status', async () => setStatus(await api.getStatus())],
+        ['projects', async () => setProjects((await api.getProjects(force)).projects || [])],
+        ['labels', async () => setLabels((await api.getLabels(undefined, force)).labels || [])],
+        ['milestones', async () => setMilestones((await api.getMilestones(undefined, force)).milestones || [])],
+        ['work items', async () => setWorkItems((await api.getWorkItems(pid, 'all', force)).workItems || [])],
+        ['merge requests', async () => setMergeRequests((await api.getMergeRequests(pid, 'all', force)).mergeRequests || [])],
+        ['pipelines', async () => setPipelines((await api.getPipelines(pid, force)).pipelines || [])],
+        ['runners', async () => setRunners((await api.getRunners(force)).runners || [])]
+      ];
+      const results = await Promise.allSettled(sources.map(([, load]) => load()));
+      const failed = sources.map(([name], i) => ({ name, r: results[i] })).filter((x) => x.r.status === 'rejected');
+      if (failed.length > 0) {
+        const first = (failed[0].r as PromiseRejectedResult).reason;
+        reportError(`Could not load ${failed.map((f) => f.name).join(', ')}`, first);
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -317,7 +310,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         setLabels(res.labels || []);
       }
     } catch (err: any) {
-      console.error('Failed loading tab data:', err);
+      reportError(`Could not load ${tab.replace('_', ' ')}`, err);
     }
   };
 
@@ -440,26 +433,32 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     }
   };
 
+  // Live subtasks are checklist lines in the description, so the server's item replaces the local one:
+  // description, subtask ids and counts all change together.
+  const applyWorkItem = (updated: GitLabWorkItem) => {
+    const same = (item: GitLabWorkItem) => item.iid === updated.iid && item.project_id === updated.project_id;
+    setWorkItems((prev) => prev.map((item) => (same(item) ? { ...item, ...updated } : item)));
+    setSelectedWorkItem((prev) => (prev && same(prev) ? { ...prev, ...updated } : prev));
+  };
+
+  const setSubtaskCompleted = (projectId: number, issueIid: number, subtaskId: number, completed: boolean) => {
+    const update = (item: GitLabWorkItem) =>
+      item.iid === issueIid && item.project_id === projectId
+        ? { ...item, subtasks: (item.subtasks || []).map((s) => (s.id === subtaskId ? { ...s, completed } : s)) }
+        : item;
+    setWorkItems((prev) => prev.map(update));
+    setSelectedWorkItem((prev) => (prev ? update(prev) : null));
+  };
+
   const handleAddSubTask = async (projectId: number, issueIid: number, title: string) => {
     try {
       const res = await api.addSubTask(projectId, issueIid, title);
-      if (res.success && res.subtask) {
-        setWorkItems((prev) =>
-          prev.map((item) =>
-            item.iid === issueIid && item.project_id === projectId
-              ? { ...item, subtasks: [...(item.subtasks || []), res.subtask] }
-              : item
-          )
-        );
-        if (selectedWorkItem && selectedWorkItem.iid === issueIid && selectedWorkItem.project_id === projectId) {
-          setSelectedWorkItem((prev) =>
-            prev ? { ...prev, subtasks: [...(prev.subtasks || []), res.subtask] } : null
-          );
-        }
+      if (res.success && res.workItem) {
+        applyWorkItem(res.workItem);
         showToast(`Subtask added to #${issueIid}`);
       }
     } catch (err: any) {
-      showToast(`Failed adding subtask: ${err.message}`);
+      reportError('Could not add subtask', err);
     }
   };
 
@@ -469,35 +468,13 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     subtaskId: number,
     completed: boolean
   ) => {
-    setWorkItems((prev) =>
-      prev.map((item) =>
-        item.iid === issueIid && item.project_id === projectId
-          ? {
-              ...item,
-              subtasks: (item.subtasks || []).map((s) =>
-                s.id === subtaskId ? { ...s, completed } : s
-              )
-            }
-          : item
-      )
-    );
-    if (selectedWorkItem && selectedWorkItem.iid === issueIid && selectedWorkItem.project_id === projectId) {
-      setSelectedWorkItem((prev) =>
-        prev
-          ? {
-              ...prev,
-              subtasks: (prev.subtasks || []).map((s) =>
-                s.id === subtaskId ? { ...s, completed } : s
-              )
-            }
-          : null
-      );
-    }
-
+    setSubtaskCompleted(projectId, issueIid, subtaskId, completed);
     try {
-      await api.toggleSubTask(projectId, issueIid, subtaskId, completed);
+      const res = await api.toggleSubTask(projectId, issueIid, subtaskId, completed);
+      if (res.workItem) applyWorkItem(res.workItem);
     } catch (err: any) {
-      showToast(`Failed toggling subtask: ${err.message}`);
+      setSubtaskCompleted(projectId, issueIid, subtaskId, !completed);
+      reportError('Could not update subtask', err);
     }
   };
 
@@ -1075,6 +1052,11 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         onClose={() => setIsSettingsOpen(false)}
         status={status}
         onStatusUpdated={() => loadInitialData(true)}
+        onOpenProfiles={() => {
+          setIsSettingsOpen(false);
+          setVaultSection('profiles');
+          setActiveTab('vault');
+        }}
       />
 
       <WalMonitorModal

@@ -47,5 +47,5 @@ Back up `vault.json` and remember the password. The cache can be deleted at any 
 ## In-app settings
 
 - **Vault → Notifications:** push channels and notification rules.
-- **Settings modal (key icon):** auto-refresh interval, cache purge, the active GitLab connection.
+- **Settings modal (gear icon):** background refresh interval, **Refresh now**, and the active GitLab connection. Hosts and tokens are managed in **Vault → GitLab profiles**; the modal links there.
 - **Vault → Account:** change password, signed-in devices.

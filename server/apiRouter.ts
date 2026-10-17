@@ -3,6 +3,7 @@ import path from 'path';
 import express, { Router, Request, Response } from 'express';
 import { cacheDb } from './cacheDb.js';
 import { GitLabClient } from './gitlabClient.js';
+import { redactVariable } from './variables.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
 import { getInbox } from './inbox.js';
@@ -48,13 +49,20 @@ async function runAutoFetch() {
     lastSyncTime = Date.now();
     // Refresh core caches
     const projects = await gitlabClient.getProjects(true);
+    // Each refresh is independent: one failing source must not stop the others or the inbox.
     // Milestones are not forced: each one costs an extra issues_statistics call, so their 2 min TTL applies.
-    await gitlabClient.getMilestones(undefined, false);
-    await gitlabClient.getWorkItems(undefined, 'all', true);
-    await gitlabClient.getMergeRequests(undefined, 'all', true);
-    await gitlabClient.getPipelines(undefined, true);
-    const runners = await gitlabClient.getRunners(true);
-    watchManager.onRunners(runners);
+    const refreshes = await Promise.allSettled([
+      gitlabClient.getMilestones(undefined, false),
+      gitlabClient.getWorkItems(undefined, 'all', true),
+      gitlabClient.getMergeRequests(undefined, 'all', true),
+      gitlabClient.getPipelines(undefined, true)
+    ]);
+    for (const r of refreshes) if (r.status === 'rejected') console.warn('Auto-fetch refresh failed:', r.reason?.message ?? r.reason);
+    try {
+      watchManager.onRunners(await gitlabClient.getRunners(true));
+    } catch (err: any) {
+      console.warn('Auto-fetch runners failed:', err?.message ?? err);
+    }
     const inbox = await getInbox(gitlabClient, true);
     broadcastEvent('inbox_updated', { counts: inbox.counts, generatedAt: inbox.generatedAt });
     await watchManager.onInbox(inbox);
@@ -139,51 +147,6 @@ apiRouter.get('/status', async (_req: Request, res: Response) => {
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-apiRouter.post('/auth/verify', async (req: Request, res: Response) => {
-  try {
-    const { host, token } = req.body;
-    if (!token) {
-      return res.status(400).json({ success: false, error: 'Token is required' });
-    }
-    const testClient = new GitLabClient(host || 'https://gitlab.com', token);
-    const user = await testClient.getCurrentUser();
-    res.json({ success: true, user });
-  } catch (err: any) {
-    res.status(401).json({ success: false, error: err.message });
-  }
-});
-
-// Saves host+token as a vault profile (updating the profile for the same host if one exists) and activates it.
-apiRouter.post('/auth/save', async (req: Request, res: Response) => {
-  try {
-    const { host, token } = req.body;
-    const cleanHost = (host || 'https://gitlab.com').replace(/\/+$/, '');
-    const cleanToken = typeof token === 'string' ? token.trim() : '';
-    if (!cleanToken) {
-      return res.status(400).json({ success: false, error: 'Token is required' });
-    }
-
-    const user = await new GitLabClient(cleanHost, cleanToken).getCurrentUser();
-    const existing = vault.listProfiles().find((p) => p.host === cleanHost);
-    const profile = vault.upsertProfile({ id: existing?.id, name: existing?.name || new URL(cleanHost).host, host: cleanHost, token: cleanToken });
-    vault.setActiveProfile(profile.id);
-
-    res.json({ success: true, host: cleanHost, isDemo: false, user });
-  } catch (err: any) {
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
-
-// Deactivates the current profile (demo mode). Stored profiles are kept in the vault.
-apiRouter.post('/auth/clear', async (_req: Request, res: Response) => {
-  try {
-    vault.setActiveProfile(null);
-    res.json({ success: true, isDemo: true });
-  } catch (err: any) {
-    res.status(400).json({ success: false, error: err.message });
   }
 });
 
@@ -332,9 +295,9 @@ apiRouter.post('/work_items/:iid/subtasks', async (req: Request, res: Response) 
     if (!projectId || !title) {
       return res.status(400).json({ success: false, error: 'projectId and title are required' });
     }
-    const subtask = await gitlabClient.addSubTask(Number(projectId), issueIid, title);
+    const { subtask, workItem } = await gitlabClient.addSubTask(Number(projectId), issueIid, title);
     broadcastEvent('work_item_updated', { iid: issueIid, subtask });
-    res.json({ success: true, subtask });
+    res.json({ success: true, subtask, workItem });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -348,9 +311,9 @@ apiRouter.patch('/work_items/:iid/subtasks/:subtaskId', async (req: Request, res
     if (!projectId) {
       return res.status(400).json({ success: false, error: 'projectId is required' });
     }
-    const subtasks = await gitlabClient.toggleSubTask(Number(projectId), issueIid, subtaskId, Boolean(completed));
+    const workItem = await gitlabClient.toggleSubTask(Number(projectId), issueIid, subtaskId, Boolean(completed));
     broadcastEvent('work_item_updated', { iid: issueIid, subtaskId, completed });
-    res.json({ success: true, subtasks });
+    res.json({ success: true, subtasks: workItem.subtasks ?? [], workItem });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -951,8 +914,24 @@ apiRouter.get('/variables', async (req: Request, res: Response) => {
   try {
     const scope = (req.query.scope as any) || 'project';
     const id = req.query.id ? Number(req.query.id) : undefined;
-    const variables = await gitlabClient.getVariables(scope, id);
+    const variables = (await gitlabClient.getVariables(scope, id)).map(redactVariable);
     res.json({ success: true, variables });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/variables/value', async (req: Request, res: Response) => {
+  try {
+    const scope = req.query.scope === 'group' ? 'group' : 'project';
+    const id = Number(req.query.id);
+    const key = String(req.query.key || '');
+    if (!id || !key) return res.status(400).json({ success: false, error: 'id and key are required' });
+    const environmentScope = String(req.query.environment_scope || '*');
+    const variable = await gitlabClient.getVariable(scope, id, key, environmentScope);
+    cacheDb.logWal('READ_VARIABLE', `${scope}:${key}`, 'variables', `Revealed ${scope} variable "${key}" (${environmentScope})`);
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, value: variable.value });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -960,7 +939,7 @@ apiRouter.get('/variables', async (req: Request, res: Response) => {
 
 apiRouter.post('/variables', async (req: Request, res: Response) => {
   try {
-    const variable = await gitlabClient.saveVariable(req.body);
+    const variable = redactVariable(await gitlabClient.saveVariable(req.body));
     broadcastEvent('variable_saved', variable);
     res.json({ success: true, variable });
   } catch (err: any) {
