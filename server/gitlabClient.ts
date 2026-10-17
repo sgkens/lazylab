@@ -2,11 +2,14 @@ import { cacheDb } from './cacheDb.js';
 import { metricsManager } from './metricsManager.js';
 import { parseGitLabCiYaml } from './yamlParser.js';
 import { mapLimit } from './concurrency.js';
+import { extractFailure, FailureExcerpt } from './triage.js';
 
 // GitLab has no instance-wide list endpoint for milestones, pipelines, labels or packages,
 // so "all projects" views fan out over the most recently active member projects.
 const AGGREGATE_PROJECT_LIMIT = 15;
 const AGGREGATE_CONCURRENCY = 4;
+const MAX_TRACE_CHARS = 2_000_000;
+const MAX_PIPELINE_FAILURES = 5;
 
 export interface GitLabUser {
   id: number;
@@ -163,6 +166,7 @@ export interface GitLabJob {
   project_id: number;
   runner?: { id: number; description: string; active: boolean; is_shared: boolean };
   web_url?: string;
+  allow_failure?: boolean;
 }
 
 export interface GitLabRunner {
@@ -268,12 +272,47 @@ export interface JobTrace {
   status: string;
   duration?: number;
   trace: string;
+  failure_reason?: string;
+  web_url?: string;
   runner?: {
     id: number;
     description: string;
     ip_address?: string;
   };
   artifacts?: { filename: string; size: number }[];
+}
+
+export interface JobFailure {
+  job_id: number;
+  project_id: number;
+  pipeline_id?: number;
+  job_name: string;
+  stage: string;
+  status: string;
+  web_url?: string;
+  excerpt: FailureExcerpt;
+}
+
+export interface PipelineVariableInput {
+  key: string;
+  value: string;
+  variable_type?: 'env_var' | 'file';
+}
+
+/** A variable declared in .gitlab-ci.yml, used to prefill the run-pipeline form. */
+export interface DeclaredVariable {
+  key: string;
+  value: string;
+  description?: string;
+  options?: string[];
+}
+
+export interface GitLabBranch {
+  name: string;
+  default: boolean;
+  protected: boolean;
+  commit_sha?: string;
+  committed_date?: string;
 }
 
 export interface RunnerJob {
@@ -1233,6 +1272,8 @@ RUNS tests/visualizerDag.test.ts ...
     job_name: 'unit:concurrency',
     stage: 'unit-test',
     status: 'failed',
+    failure_reason: 'script_failure',
+    web_url: 'https://gitlab.com/infra/k8s-operator/-/jobs/7021',
     duration: 62,
     runner: { id: 1003, description: 'runner-arm64-graviton3-builder', ip_address: '10.240.18.99' },
     trace: `\x1b[36mRunning with gitlab-runner 17.4.1 on runner-arm64-graviton3-builder\x1b[0m
@@ -2633,7 +2674,7 @@ export class GitLabClient {
     return mapMergeRequest(data);
   }
 
-  async getPipelineJobs(projectId: number, pipelineId: number): Promise<{ stages: string[]; jobs: GitLabJob[] }> {
+  async getPipelineJobs(projectId: number, pipelineId: number, force = false): Promise<{ stages: string[]; jobs: GitLabJob[] }> {
     if (this.isDemoMode) {
       const jobs = DEMO_JOBS[pipelineId] || [];
       const stageSet = new Set<string>();
@@ -2642,11 +2683,11 @@ export class GitLabClient {
     }
 
     const cacheKey = `jobs:${projectId}:${pipelineId}`;
-    const cached = cacheDb.get<{ stages: string[]; jobs: GitLabJob[] }>(cacheKey);
+    const cached = force ? null : cacheDb.get<{ stages: string[]; jobs: GitLabJob[] }>(cacheKey);
     if (cached) return cached.data;
 
     try {
-      const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/pipelines/${pipelineId}/jobs`);
+      const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/pipelines/${pipelineId}/jobs?per_page=100`);
       const jobs: GitLabJob[] = data.map((j) => ({
         id: j.id,
         name: j.name,
@@ -2663,7 +2704,8 @@ export class GitLabClient {
           active: j.runner.active,
           is_shared: j.runner.is_shared
         } : undefined,
-        web_url: j.web_url
+        web_url: j.web_url,
+        allow_failure: Boolean(j.allow_failure)
       }));
 
       const stageSet = new Set<string>();
@@ -2722,6 +2764,25 @@ export class GitLabClient {
     cacheDb.clear('jobs');
     cacheDb.logWal('PLAY_JOB', String(jobId), 'jobs', `Manual job #${jobId} triggered`);
     return res.data;
+  }
+
+  /** Retries a finished job. GitLab creates a new job; its id is returned. `play` only works on manual jobs. */
+  async retryJob(projectId: number, jobId: number): Promise<{ id: number; name: string; status: string; web_url?: string }> {
+    if (this.isDemoMode) {
+      for (const list of Object.values(DEMO_JOBS)) {
+        const found = list.find((j) => j.id === jobId);
+        if (found) {
+          found.status = 'running';
+          cacheDb.logWal('RETRY_JOB', String(jobId), 'jobs', `Retried job #${jobId}`);
+          return { id: found.id, name: found.name, status: 'running', web_url: found.web_url };
+        }
+      }
+      throw new Error(`Job ${jobId} not found`);
+    }
+    const { data } = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}/retry`, { method: 'POST' });
+    cacheDb.clear('jobs');
+    cacheDb.logWal('RETRY_JOB', String(jobId), 'jobs', `Retried job #${jobId} as #${data.id}`);
+    return { id: data.id, name: data.name, status: data.status, web_url: data.web_url };
   }
 
   // 8. Runners (Registration, Assignment, Stop/Pause)
@@ -3199,7 +3260,9 @@ Execution finished in 38s
       const traceRes = await fetch(`${this.host}/api/v4/projects/${projectId}/jobs/${jobId}/trace`, {
         headers: this.token ? { 'PRIVATE-TOKEN': this.token } : {}
       });
-      const rawText = await traceRes.text();
+      let rawText = await traceRes.text();
+      // Keep the tail of very large logs: the failure is at the end and the UI cannot render megabytes.
+      if (rawText.length > MAX_TRACE_CHARS) rawText = rawText.slice(-MAX_TRACE_CHARS);
       return {
         job_id: jobId,
         project_id: projectId,
@@ -3207,6 +3270,8 @@ Execution finished in 38s
         stage: jobInfo.data.stage,
         status: jobInfo.data.status,
         duration: jobInfo.data.duration,
+        failure_reason: jobInfo.data.failure_reason,
+        web_url: jobInfo.data.web_url,
         trace: rawText || 'No log output captured for this job.',
         runner: jobInfo.data.runner
       };
@@ -3220,6 +3285,143 @@ Execution finished in 38s
         trace: 'Failed to retrieve job trace log from GitLab API.'
       };
     }
+  }
+
+  // TRIAGE: failure excerpts and running pipelines
+  async getJobFailure(projectId: number, jobId: number): Promise<JobFailure> {
+    const trace = await this.getJobTrace(projectId, jobId);
+    if (trace.status === 'unknown') throw new Error(`Job ${jobId} could not be read`);
+    let pipelineId: number | undefined;
+    if (this.isDemoMode) {
+      pipelineId = Object.values(DEMO_JOBS).flat().find((j) => j.id === jobId)?.pipeline_id;
+    }
+    return {
+      job_id: jobId,
+      project_id: projectId,
+      pipeline_id: pipelineId,
+      job_name: trace.job_name,
+      stage: trace.stage,
+      status: trace.status,
+      web_url: trace.web_url,
+      excerpt: extractFailure(trace.trace, { failureReason: trace.failure_reason })
+    };
+  }
+
+  /** Excerpts for the failed jobs of a pipeline (allowed failures excluded), earliest stage first. */
+  async getPipelineFailures(projectId: number, pipelineId: number): Promise<JobFailure[]> {
+    const { stages, jobs } = await this.getPipelineJobs(projectId, pipelineId, true);
+    const failed = jobs
+      .filter((j) => j.status === 'failed' && !j.allow_failure)
+      .sort((a, b) => stages.indexOf(a.stage) - stages.indexOf(b.stage))
+      .slice(0, MAX_PIPELINE_FAILURES);
+    const results = await mapLimit(failed, 3, (j) => this.getJobFailure(projectId, j.id));
+    return results.flatMap((r, i) =>
+      r.status === 'fulfilled' ? [{ ...r.value, pipeline_id: pipelineId, web_url: r.value.web_url ?? failed[i].web_url }] : []
+    );
+  }
+
+  async getBranches(projectId: number, search = ''): Promise<GitLabBranch[]> {
+    if (this.isDemoMode) {
+      const project = DEMO_PROJECTS.find((p) => p.id === projectId);
+      const names = new Set<string>([project?.default_branch || 'main']);
+      DEMO_PIPELINES.filter((p) => p.project_id === projectId).forEach((p) => names.add(p.ref));
+      DEMO_MRS.filter((m) => m.project_id === projectId).forEach((m) => m.source_branch && names.add(m.source_branch));
+      return [...names]
+        .filter((n) => n.toLowerCase().includes(search.toLowerCase()))
+        .map((name) => ({ name, default: name === (project?.default_branch || 'main'), protected: name === 'main' }));
+    }
+    const q = search ? `&search=${encodeURIComponent(search)}` : '';
+    const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/repository/branches?per_page=50${q}`);
+    return data.map((b) => ({
+      name: b.name,
+      default: Boolean(b.default),
+      protected: Boolean(b.protected),
+      commit_sha: b.commit?.short_id,
+      committed_date: b.commit?.committed_date
+    }));
+  }
+
+  /**
+   * Variables declared under `variables:` in .gitlab-ci.yml for a ref, with descriptions and options.
+   * Uses the GraphQL `ciConfigVariables` field that the GitLab "Run pipeline" page uses. Best effort:
+   * returns [] when GraphQL is unavailable or the config has not been evaluated yet.
+   */
+  async getDeclaredVariables(projectId: number, ref: string): Promise<DeclaredVariable[]> {
+    if (this.isDemoMode) {
+      if (projectId !== 901) return [];
+      return [
+        { key: 'DEPLOY_ENV', value: 'staging', description: 'Target environment for deploy jobs', options: ['staging', 'production', 'preview'] },
+        { key: 'SKIP_E2E', value: 'false', description: 'Skip the end-to-end suite' },
+        { key: 'LOG_LEVEL', value: 'info' }
+      ];
+    }
+    try {
+      const { data: project } = await this.fetchApi<any>(`/projects/${projectId}`);
+      const res = await fetch(`${this.host}/api/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+        body: JSON.stringify({
+          query: 'query($p: ID!, $r: String!) { project(fullPath: $p) { ciConfigVariables(ref: $r) { key value valueOptions description } } }',
+          variables: { p: project.path_with_namespace, r: ref }
+        })
+      });
+      if (!res.ok) return [];
+      const body: any = await res.json();
+      const vars: any[] = body?.data?.project?.ciConfigVariables || [];
+      return vars.map((v) => ({
+        key: v.key,
+        value: v.value ?? '',
+        description: v.description || undefined,
+        options: Array.isArray(v.valueOptions) && v.valueOptions.length ? v.valueOptions : undefined
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  async createPipeline(projectId: number, ref: string, variables: PipelineVariableInput[] = []): Promise<GitLabPipeline> {
+    if (this.isDemoMode) {
+      const project = DEMO_PROJECTS.find((p) => p.id === projectId);
+      const id = Math.max(...DEMO_PIPELINES.map((p) => p.id)) + 1;
+      const now = new Date().toISOString();
+      const pipeline: GitLabPipeline = {
+        id,
+        project_id: projectId,
+        project_name: project?.name,
+        status: 'pending',
+        ref,
+        sha: Math.random().toString(16).slice(2, 18).padEnd(16, '0'),
+        web_url: `${project?.web_url || 'https://gitlab.com/demo'}/-/pipelines/${id}`,
+        created_at: now,
+        updated_at: now,
+        user: { name: DEMO_USER.name, username: DEMO_USER.username, avatar_url: DEMO_USER.avatar_url }
+      };
+      DEMO_PIPELINES.unshift(pipeline);
+      cacheDb.logWal('CREATE_PIPELINE', String(id), 'pipelines', `Started pipeline #${id} on ${ref} (${variables.length} variables)`);
+      return pipeline;
+    }
+
+    const { data: p } = await this.fetchApi<any>(`/projects/${projectId}/pipeline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ref,
+        variables: variables.map((v) => ({ key: v.key, value: v.value, variable_type: v.variable_type || 'env_var' }))
+      })
+    });
+    cacheDb.clear('pipelines');
+    cacheDb.logWal('CREATE_PIPELINE', String(p.id), 'pipelines', `Started pipeline #${p.id} on ${ref} (${variables.length} variables)`);
+    return {
+      id: p.id,
+      project_id: p.project_id || projectId,
+      status: p.status,
+      ref: p.ref,
+      sha: p.sha,
+      web_url: p.web_url,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      user: p.user ? { name: p.user.name, username: p.user.username, avatar_url: p.user.avatar_url } : undefined
+    };
   }
 
   async getRunnerJobs(runnerId: number): Promise<RunnerJob[]> {
