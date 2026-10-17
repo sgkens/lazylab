@@ -162,9 +162,14 @@ export class TokenExpiryMonitor {
 
     // Project, group and deploy tokens of the projects the active profile aggregates.
     const client = this.getActiveClient();
+    // Demo tokens are sample data: shown in the UI, never sent as warnings to real push channels.
+    const demoKeys = new Set<string>();
     try {
       const { tokens: resourceTokens, errors: resourceErrors } = await client.getResourceTokens();
-      for (const t of resourceTokens) tokens.push({ ...t, days_left: daysLeft(t.expires_at, now) });
+      for (const t of resourceTokens) {
+        tokens.push({ ...t, days_left: daysLeft(t.expires_at, now) });
+        if (client.isDemo()) demoKeys.add(t.key);
+      }
       errors.push(...resourceErrors);
     } catch (err: any) {
       errors.push(`projects: ${err?.message ?? err}`);
@@ -172,7 +177,7 @@ export class TokenExpiryMonitor {
 
     tokens.sort((a, b) => (a.days_left ?? Infinity) - (b.days_left ?? Infinity));
     this.overview = { tokens, errors, checkedAt: now };
-    this.sendWarnings(tokens);
+    this.sendWarnings(tokens.filter((t) => !demoKeys.has(t.key)));
     return this.overview;
   }
 
