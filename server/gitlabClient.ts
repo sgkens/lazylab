@@ -2764,14 +2764,14 @@ export class GitLabClient {
   }
 
   /** Retries a finished job. GitLab creates a new job; its id is returned. `play` only works on manual jobs. */
-  async retryJob(projectId: number, jobId: number): Promise<{ id: number; name: string; status: string; web_url?: string }> {
+  async retryJob(projectId: number, jobId: number): Promise<{ id: number; name: string; status: string; web_url?: string; pipeline_id?: number }> {
     if (this.isDemoMode) {
       for (const list of Object.values(DEMO_JOBS)) {
         const found = list.find((j) => j.id === jobId);
         if (found) {
           found.status = 'running';
           cacheDb.logWal('RETRY_JOB', String(jobId), 'jobs', `Retried job #${jobId}`);
-          return { id: found.id, name: found.name, status: 'running', web_url: found.web_url };
+          return { id: found.id, name: found.name, status: 'running', web_url: found.web_url, pipeline_id: found.pipeline_id };
         }
       }
       throw new Error(`Job ${jobId} not found`);
@@ -2779,7 +2779,7 @@ export class GitLabClient {
     const { data } = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}/retry`, { method: 'POST' });
     cacheDb.clear('jobs');
     cacheDb.logWal('RETRY_JOB', String(jobId), 'jobs', `Retried job #${jobId} as #${data.id}`);
-    return { id: data.id, name: data.name, status: data.status, web_url: data.web_url };
+    return { id: data.id, name: data.name, status: data.status, web_url: data.web_url, pipeline_id: data.pipeline?.id };
   }
 
   // 8. Runners (Registration, Assignment, Stop/Pause)

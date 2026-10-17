@@ -360,6 +360,33 @@ export const TOOLS: ToolDef[] = [
     }
   },
   {
+    name: 'get_pipeline',
+    title: 'Get pipeline',
+    description: 'One pipeline with its status and the status of each job, for following a pipeline until it finishes.',
+    inputSchema: { type: 'object', properties: { project, pipeline_id: { type: 'integer' } }, required: ['project', 'pipeline_id'] },
+    readOnly: true,
+    run: async (args, { client }) => {
+      const projectId = await resolveProject(client, args.project);
+      const [p, { stages, jobs }] = await Promise.all([
+        client.getPipeline(projectId, args.pipeline_id),
+        client.getPipelineJobs(projectId, args.pipeline_id, true)
+      ]);
+      return {
+        id: p.id,
+        project_id: projectId,
+        status: p.status,
+        ref: p.ref,
+        sha: p.sha,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+        duration: p.duration ?? null,
+        web_url: p.web_url,
+        stages,
+        jobs: jobs.map((j) => ({ id: j.id, name: j.name, stage: j.stage, status: j.status, allow_failure: Boolean(j.allow_failure), duration: j.duration ?? null }))
+      };
+    }
+  },
+  {
     name: 'get_pipeline_failures',
     title: 'Why a pipeline failed',
     description:
