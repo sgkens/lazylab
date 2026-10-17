@@ -3,6 +3,7 @@ import { cacheDb } from './cacheDb.js';
 import { GitLabClient } from './gitlabClient.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
+import { getInbox } from './inbox.js';
 
 export const apiRouter = Router();
 
@@ -40,11 +41,14 @@ async function runAutoFetch() {
     lastSyncTime = Date.now();
     // Refresh core caches
     const projects = await gitlabClient.getProjects(true);
-    await gitlabClient.getMilestones(undefined, true);
+    // Milestones are not forced: each one costs an extra issues_statistics call, so their 2 min TTL applies.
+    await gitlabClient.getMilestones(undefined, false);
     await gitlabClient.getWorkItems(undefined, 'all', true);
     await gitlabClient.getMergeRequests(undefined, 'all', true);
     await gitlabClient.getPipelines(undefined, true);
     await gitlabClient.getRunners(true);
+    const inbox = await getInbox(gitlabClient, true);
+    broadcastEvent('inbox_updated', { counts: inbox.counts, generatedAt: inbox.generatedAt });
 
     broadcastEvent('sync_completed', {
       timestamp: lastSyncTime,
@@ -191,6 +195,16 @@ apiRouter.get('/events', (req: Request, res: Response) => {
   req.on('close', () => {
     sseClients.delete(res);
   });
+});
+
+// My work inbox
+apiRouter.get('/inbox', async (req: Request, res: Response) => {
+  try {
+    const inbox = await getInbox(gitlabClient, req.query.force === 'true');
+    res.json({ success: true, inbox });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 2. Projects
@@ -1086,6 +1100,7 @@ Send \`Authorization: Bearer <token>\` with an agent token issued from the lazyl
    - **Verification**: How it was verified.
 
 ## Endpoints Summary
+- **GET** \`/api/agent/inbox\` - What needs the user: review requests, own MRs with pipeline state, assigned issues, To-Dos
 - **GET** \`/api/agent/work-items\` - List work items
 - **GET** \`/api/agent/work-items/:iid\` - Get specific work item & comments
 - **POST** \`/api/agent/work-items\` - Create new work item
@@ -1128,6 +1143,7 @@ apiRouter.get('/agent/skill', (_req: Request, res: Response) => {
     ],
     markdown_url: '/api/agent/skill.md',
     endpoints: {
+      inbox: 'GET /api/agent/inbox',
       work_items: {
         list: 'GET /api/agent/work-items',
         get: 'GET /api/agent/work-items/:iid',
@@ -1217,6 +1233,16 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
       }
     ]
   });
+});
+
+// Inbox: what needs the user, across projects
+apiRouter.get('/agent/inbox', async (req: Request, res: Response) => {
+  try {
+    const inbox = await getInbox(gitlabClient, req.query.force === 'true');
+    res.json({ success: true, ...inbox });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 2. Work Items: List

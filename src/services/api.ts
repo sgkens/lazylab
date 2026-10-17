@@ -23,6 +23,7 @@ import {
   GitLabPagesInfo,
   MetricsSummary
 } from '../types/gitlab';
+import { Inbox } from '../types/inbox';
 import { DeviceSession, SessionState, VaultEntryKind, VaultSummary } from '../types/vault';
 
 const post = (body?: unknown): RequestInit => ({ method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
@@ -85,6 +86,9 @@ export const vaultApi = {
 
 export const api = {
   getStatus: () => request<AppStatus>('/status'),
+
+  getInbox: (force = false) =>
+    request<{ success: boolean; inbox: Inbox }>(`/inbox${force ? '?force=true' : ''}`),
 
   verifyToken: (host: string, token: string) =>
     request<{ success: boolean; user: any }>('/auth/verify', {
@@ -480,6 +484,11 @@ export const api = {
       es.addEventListener('metrics_updated', (e: any) => {
         try {
           onEvent('metrics_updated', JSON.parse(e.data));
+        } catch {}
+      });
+      es.addEventListener('inbox_updated', (e: any) => {
+        try {
+          onEvent('inbox_updated', JSON.parse(e.data));
         } catch {}
       });
       es.addEventListener('sync_completed', (e: any) => {

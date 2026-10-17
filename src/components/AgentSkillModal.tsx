@@ -71,6 +71,7 @@ Create an automated test suite verifying SQLite WAL roll-forward and replay cons
    - Verification: Exactly how it was tested.
 
 ## REST Endpoints (Authorization: Bearer <agent token>)
+- Inbox (what needs the user, across projects): GET /api/agent/inbox
 - List Work Items: GET /api/agent/work-items?state=all
 - Create Work Item: POST /api/agent/work-items (Body: { title, description, labels: string[], assignee_ids?: number[] })
 - Update Work Item: PUT /api/agent/work-items/:iid (Body: { title?, description?, labels?: string[], state_event?: 'close' | 'reopen' })
