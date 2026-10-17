@@ -75,7 +75,7 @@ flowchart LR
 ### Roadmap
 
 1. **Foundation, blocks everything else:** GL-1, GL-14, GL-15, GL-2, CACHE-1/2/4, BUILD-3. Cross-project views are wrong while list calls hit non-existent endpoints and swallow errors.
-2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, ~~TRIAGE-1/6~~, ENV-4, ~~AGENT-1~~.
+2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, ~~TRIAGE-1/6~~, ~~ENV-4~~, ~~AGENT-1~~.
 3. **Away from the browser:** CLI-1/2/4, ENV-1/2, REPO-1..4.
 4. **Chores at scale:** REL, FLEET, DEPLOY, REG, RL.
 
@@ -335,12 +335,49 @@ Follow-ups:
 - [x] DOCS-3 `.gitlab-ci.yml`: `docs:build` on MRs, `pages` on the default branch; prefix derived from `CI_PAGES_URL`
 - [x] DOCS-4 MIT `LICENSE`; `license` in both package.json files; README and development page link it
 
+## Done 2026-10-17 (eighth pass): token expiry (ENV-4)
+
+```mermaid
+flowchart LR
+  U[vault unlocked / profile changed / every 6 h] --> C[TokenExpiryMonitor.check]
+  C --> P[each vault profile: GET /personal_access_tokens/self]
+  C --> R[active profile, aggregated projects: access_tokens, deploy_tokens, group access_tokens]
+  P & R --> D[daysLeft, calendar days UTC]
+  D --> W{threshold 14 / 7 / 3 / 1 / expired crossed?}
+  W -- yes, not warned before --> N[notification + push channels] --> V[(vault: expiryWarned)]
+```
+
+- [x] ENV-4a `server/tokenExpiry.ts`: `daysLeft`, `thresholdFor`, `dueWarnings`, `TokenExpiryMonitor` (unlock, profile change, 6 h timer, shared in-flight run)
+- [x] ENV-4b Client: `getPersonalAccessTokenSelf`, `rotatePersonalAccessTokenSelf`, `getResourceTokens` (403/404 skipped as "not a maintainer"; other failures listed)
+- [x] ENV-4c Warnings once per threshold, remembered in the vault (`notify.expiryWarned`, pruned to live tokens); new rule `tokenExpiry` (default on); failure level at 3 days or less
+- [x] ENV-4d `GET /api/tokens/expiry`, `POST /api/tokens/personal/:profileId/rotate` (future date required; new token saved before anything else; if the vault save fails the response carries the new token and the UI shows it with a copy button)
+- [x] ENV-4e Vault → GitLab profiles: expiry badge per profile, Rotate form with expiry date; Token expiry card for project, group and deploy tokens with links to GitLab
+
+Verified: 79 tests (thresholds, calendar-day counting, warn-once, rule off); headless Chromium in demo mode (overview, warning text, rotate validation 400/404, card and badges, Check now, rule toggle); rotation end to end against a fake GitLab that revokes the old token (3-day warning at failure level, rotate in the UI, vault holds the new token, active client still authenticates).
+Not verified: live GitLab (`/personal_access_tokens/self` needs 16.0+, rotate 16.10+); the vault-save-failure rescue path.
+
+Follow-ups:
+- [ ] ENV-6 Rotate project and group access tokens (`POST /projects/:id/access_tokens/:token_id/rotate`) and update vault CI secrets that hold them
+- [ ] ENV-7 MCP tool `get_expiring_tokens` so agents can report expiring tokens
+- [ ] ENV-8 Expiry for tokens stored as vault entries (runner tokens, CI secrets) where GitLab exposes it
+
+### Errors noted this pass
+
+| # | Error | Cause | Status |
+|---|---|---|---|
+| E1 | Browser check expected "5d left" for a token expiring 5 calendar days out, got 4 | `daysLeft` counted hours to 00:00 UTC on `expires_at`, not calendar days as GitLab shows them | Fixed: calendar days; `expires_at` today counts as expired |
+| E2 | Follow-up browser flow failed on 3 console errors | The flow's own probes of the removed `/api/auth/*` routes logged expected 404s | Fixed in the test: errors checked before the probes and cleared after |
+| E3 | AUDIT-15 test: `getMergeRequests` resolved instead of rejecting | The first pass removed `catch {}` blocks but missed a `catch (err) { console.error; return [] }` variant | Fixed; remaining catches reviewed (404 handling, lint fallback, GraphQL fallback are intended) |
+| E4 | `git merge` on WSL: `fatal: stash failed` | Auto-stash on the `/mnt/g` filesystem fails intermittently | Workaround: `-c merge.autoStash=false` and retry; merge succeeds |
+| E5 | Container logs the plain-HTTP warning with the default loopback port mapping | Inside the container the server listens on `0.0.0.0` | Open: suppress when `LAZYLAB_IN_CONTAINER` is set and the published port is loopback-only, or reword |
+| E6 | Tracker listed done work as open (GL-3..16, UI-1/2/3/5, BUILD-7, REL-1/2, SEC-4) | Earlier passes recorded fixes in their own sections only | Fixed: items ticked with a note where the result differs from the original plan |
+
 ## Epic SEC: hardening follow-ups
 
 - [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
 - [ ] SEC-2 Step-up re-authentication (password prompt) before reveal, agent token creation and profile changes
 - [ ] SEC-3 Revoke a single device session (today only lock-all)
-- [ ] SEC-4 Variables view: stop returning masked/protected values to the browser; "save to vault" action that creates a CI secret
+- [~] SEC-4 Variables view: stop returning masked values to the browser (done, AUDIT-16); "save to vault" action that creates a CI secret (open)
 - [ ] SEC-5 Vault backup/export (still encrypted) and a printable recovery key; today a forgotten password means data loss
 - [ ] SEC-6 Agent token scopes (read-only / write), expiry, last-used timestamp
 - [ ] SEC-7 Audit trail for vault reads and pushes in the journal
@@ -356,20 +393,20 @@ Follow-ups:
 
 - [x] GL-1 Remove the non-existent global endpoints (`/groups/all/milestones`, `/pipelines`, `/labels`, `/packages`). Aggregate per-project over the membership list, or require a project
 - [ ] GL-2 Pagination via `Link` / `x-next-page` headers for projects, issues, MRs, pipelines
-- [ ] GL-3 Map create/update responses through the same normaliser as the list calls (work items, MRs)
-- [ ] GL-4 Send `draft` on MR update; fetch `/approvals` for the approval state
-- [ ] GL-5 Allow clearing `title`/`description` (use `!== undefined`, not truthiness)
+- [x] GL-3 Map create/update responses through the same normaliser as the list calls (work items, MRs)
+- [x] GL-4 Send `draft` on MR update; fetch `/approvals` for the approval state (done as the `Draft:` title prefix and `approved_by_usernames[]=me`, seventh pass)
+- [x] GL-5 Allow clearing `title`/`description` (use `!== undefined`, not truthiness)
 - [x] GL-6 Runner register: use the returned token in `registerCommand`; surface API errors instead of returning a fake runner
-- [ ] GL-7 CI config: read from the project's `default_branch`. Never fall back to demo YAML in live mode; return a "no file" state instead
-- [ ] GL-8 CI lint: call `POST /projects/:id/ci/lint`; keep the local parser only for the graph preview
-- [ ] GL-9 Variables: remove the demo default group id; upsert by checking existence (404) instead of PUT on any error
-- [ ] GL-10 Badges: remove the demo default id 901; build image URLs from the configured host; drop the hardcoded release version
-- [ ] GL-11 Project avatar: implement the multipart `PUT /projects/:id` upload, or remove the feature
-- [ ] GL-12 Note attachments: upload via `POST /projects/:id/uploads` and insert the returned markdown
-- [ ] GL-13 Pages: remove fabricated defaults and the demo fallback
+- [x] GL-7 CI config: read from the project's `default_branch`. Never fall back to demo YAML in live mode; return a "no file" state instead
+- [x] GL-8 CI lint: call `POST /projects/:id/ci/lint`; keep the local parser only for the graph preview
+- [~] GL-9 Variables: remove the demo default group id (done); upsert by checking existence (404) instead of PUT on any error (open: still POST, then PUT on any failure)
+- [x] GL-10 Badges: remove the demo default id 901; build image URLs from the configured host; drop the hardcoded release version
+- [x] GL-11 Project avatar: implement the multipart `PUT /projects/:id` upload, or remove the feature
+- [x] GL-12 Note attachments: upload via `POST /projects/:id/uploads` and insert the returned markdown
+- [x] GL-13 Pages: remove fabricated defaults and the demo fallback
 - [x] GL-14 Milestone stats: compute from issues, or show "n/a"; no fake numbers
-- [ ] GL-15 Return errors from list calls (typed error payload) instead of `[]`; show them in the UI
-- [ ] GL-16 Agent API: `GET /:iid` fetches the single item directly; require `projectId` or a configured default project
+- [x] GL-15 Return errors from list calls (typed error payload) instead of `[]`; show them in the UI
+- [x] GL-16 Agent API: `GET /:iid` fetches the single item directly; require `projectId` or a configured default project
 
 ## Epic CACHE: local storage layer
 
@@ -382,11 +419,11 @@ Follow-ups:
 
 ## Epic UI: honest UI
 
-- [ ] UI-1 Remove fake metric seeds and random history in `metricsManager`; start from zero
-- [ ] UI-2 Remove the "Simulate API/Cache hit" buttons and `/api/metrics/simulate-hit`, or move them behind demo mode
-- [ ] UI-3 Drive the sync progress bar from real SSE progress events
+- [x] UI-1 Remove fake metric seeds and random history in `metricsManager`; start from zero
+- [x] UI-2 Remove the "Simulate API/Cache hit" buttons and `/api/metrics/simulate-hit`, or move them behind demo mode
+- [x] UI-3 Drive the sync progress bar from real SSE progress events (superseded: indeterminate bar with elapsed time, seventh pass)
 - [ ] UI-4 Visible demo-mode banner on every view
-- [ ] UI-5 Package details view uses `getPackageDetails` (or remove the unused API)
+- [x] UI-5 Package details view uses `getPackageDetails` (or remove the unused API)
 - [ ] UI-6 Create-MR form in the UI (server support exists)
 
 ## Epic LOCAL: local-first / offline assets
@@ -400,10 +437,10 @@ Follow-ups:
 - [x] BUILD-1 `git init`, `main` + `develop` branches, first commit of the imported baseline
 - [ ] BUILD-2 Vite `manualChunks`: split `react`/`react-dom`, `lucide-react`, and the heavy views (pipeline editor, dashboard)
 - [~] BUILD-3 `bun test` setup: unit tests for `yamlParser`, `cacheDb`, response normalisers; route tests against the demo client
-- [ ] BUILD-4 CI pipeline: lint, test, build, docker build
+- [~] BUILD-4 CI pipeline: lint, test, build, docker build (`.gitlab-ci.yml` exists with docs jobs only)
 - [ ] BUILD-5 Container `HEALTHCHECK` on `/api/status` (needs a lightweight health route that does not call GitLab)
 - [ ] BUILD-6 Split `gitlabClient.ts` (3.4k lines): demo dataset into `server/demo/`, one module per GitLab resource
-- [ ] BUILD-7 Single source for the agent skill text: serve `/api/agent/skill.md` from `skills/.claude/lazylab-agent/SKILL.md` and have `AgentSkillModal` fetch it
+- [x] BUILD-7 Single source for the agent skill text: serve `/api/agent/skill.md` from `skills/.claude/lazylab-agent/SKILL.md` and have `AgentSkillModal` fetch it
 
 ## Epic INBOX: my work across projects and hosts
 
@@ -454,7 +491,7 @@ Follow-ups:
 - [ ] ENV-1 `lazy env pull`: render a project's CI variables (masked ones from the vault) and named vault secrets into `.env` for a given `environment_scope`
 - [ ] ENV-2 `lazy run -- <cmd>`: inject the same set as environment variables without writing a file
 - [ ] ENV-3 Secret fan-out and rotation: one vault secret pushed to N projects; updating it re-pushes every recorded target
-- [ ] ENV-4 Token expiry tracking: PAT (`GET /personal_access_tokens/self`), project/group/deploy tokens; warn N days ahead via WATCH; rotate the PAT (`POST /personal_access_tokens/self/rotate`) and update the vault profile
+- [x] ENV-4 Token expiry tracking: PAT (`GET /personal_access_tokens/self`), project/group/deploy tokens; warn N days ahead via WATCH; rotate the PAT (`POST /personal_access_tokens/self/rotate`) and update the vault profile
 - [ ] ENV-5 Drift check: vault CI secrets vs variables present in GitLab (presence and flags, not values)
 
 ## Epic AGENT: agents as first-class clients
@@ -467,8 +504,8 @@ Follow-ups:
 
 ## Epic REL: releases from Conventional Commits
 
-- [ ] REL-1 Next version from commits since the last tag (`feat` → minor, `fix` → patch, `!`/`BREAKING CHANGE` → major), with preview
-- [ ] REL-2 Changelog grouped by type, editable before publishing
+- [x] REL-1 Next version from commits since the last tag (`feat` → minor, `fix` → patch, `!`/`BREAKING CHANGE` → major), with preview
+- [x] REL-2 Changelog grouped by type, editable before publishing
 - [ ] REL-3 One action: tag + release + notes on the chosen ref
 - [ ] REL-4 Release checks: pipeline green on the ref, milestone closed, no open MRs targeting the milestone
 
