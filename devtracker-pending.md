@@ -183,7 +183,7 @@ flowchart LR
 
 ## Epic BUILD: build, quality, release
 
-- [ ] BUILD-1 `git init`, `main` + `develop` branches, first commit of the imported baseline
+- [x] BUILD-1 `git init`, `main` + `develop` branches, first commit of the imported baseline
 - [ ] BUILD-2 Vite `manualChunks`: split `react`/`react-dom`, `lucide-react`, and the heavy views (pipeline editor, dashboard)
 - [ ] BUILD-3 `bun test` setup: unit tests for `yamlParser`, `cacheDb`, response normalisers; route tests against the demo client
 - [ ] BUILD-4 CI pipeline: lint, test, build, docker build
