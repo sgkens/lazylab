@@ -1,4 +1,6 @@
-import { Router, Request, Response } from 'express';
+import { readFileSync } from 'fs';
+import path from 'path';
+import express, { Router, Request, Response } from 'express';
 import { cacheDb } from './cacheDb.js';
 import { GitLabClient } from './gitlabClient.js';
 import { metricsManager } from './metricsManager.js';
@@ -703,27 +705,6 @@ apiRouter.get('/metrics', (_req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/metrics/simulate-hit', (req: Request, res: Response) => {
-  try {
-    const type = req.body.type === 'api' ? 'api' : 'cache';
-    const endpoint = req.body.endpoint || (type === 'api' ? 'GET /projects/sync' : 'GET /projects (cached)');
-    if (type === 'api') {
-      const mockHeaders = new Headers();
-      mockHeaders.set('ratelimit-limit', '2000');
-      const currentRemain = metricsManager.getSummary().rateLimit.remaining;
-      mockHeaders.set('ratelimit-remaining', String(Math.max(0, currentRemain - 1)));
-      metricsManager.recordApiHit(endpoint, 200, Math.floor(Math.random() * 80) + 40, mockHeaders);
-    } else {
-      metricsManager.recordCacheHit(endpoint, Math.random() * 1.5 + 0.3);
-    }
-    const updated = metricsManager.getSummary();
-    broadcastEvent('metrics_updated', updated);
-    res.json({ success: true, metrics: updated });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 apiRouter.post('/metrics/reset', (_req: Request, res: Response) => {
   try {
     metricsManager.reset();
@@ -807,6 +788,36 @@ apiRouter.post('/projects/:projectId/releases', async (req: Request, res: Respon
     });
     broadcastEvent('release_created', release);
     res.json({ success: true, release });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Attachments for issue/MR descriptions and comments. Raw body; the file name travels in X-Filename.
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+apiRouter.post(
+  '/projects/:projectId/uploads',
+  express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES }),
+  async (req: Request, res: Response) => {
+    try {
+      const filename = decodeURIComponent(String(req.headers['x-filename'] || '')).replace(/[\\/]/g, '_').trim();
+      if (!filename) return res.status(400).json({ success: false, error: 'X-Filename header is required' });
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ success: false, error: 'Empty file' });
+      const contentType = String(req.headers['content-type'] || 'application/octet-stream');
+      const upload = await gitlabClient.uploadFile(Number(req.params.projectId), filename, contentType, req.body);
+      res.json({ success: true, ...upload });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+apiRouter.get('/projects/:projectId/release-notes', async (req: Request, res: Response) => {
+  try {
+    const to = String(req.query.to || '').trim();
+    if (!to) return res.status(400).json({ success: false, error: 'to is required (branch, tag or sha)' });
+    const notes = await gitlabClient.getReleaseNotes(Number(req.params.projectId), to, req.query.from ? String(req.query.from) : undefined);
+    res.json({ success: true, notes });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -903,7 +914,7 @@ apiRouter.get('/runners/:runnerId/jobs', async (req: Request, res: Response) => 
 // CI/CD Pipeline Editor & Visualizer Endpoints
 apiRouter.get('/projects/:projectId/ci-config', async (req: Request, res: Response) => {
   try {
-    const config = await gitlabClient.getCiConfig(Number(req.params.projectId));
+    const config = await gitlabClient.getCiConfig(Number(req.params.projectId), req.query.ref ? String(req.query.ref) : undefined);
     res.json({ success: true, config });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -925,9 +936,10 @@ apiRouter.post('/projects/:projectId/ci-config', async (req: Request, res: Respo
 
 apiRouter.post('/ci-lint', async (req: Request, res: Response) => {
   try {
-    const { content } = req.body;
+    const { content, projectId, remote } = req.body;
     if (!content) return res.status(400).json({ success: false, error: 'content is required' });
-    const result = await gitlabClient.lintCiConfig(content);
+    // Remote (GitLab) lint only on request: the editor lints locally on every keystroke.
+    const result = await gitlabClient.lintCiConfig(content, remote && projectId ? Number(projectId) : undefined);
     res.json({ success: true, lint: result });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -973,7 +985,8 @@ apiRouter.delete('/variables', async (req: Request, res: Response) => {
 apiRouter.get('/badges', async (req: Request, res: Response) => {
   try {
     const kind = (req.query.kind as any) || 'project';
-    const id = Number(req.query.id || 901);
+    const id = Number(req.query.id);
+    if (!id) return res.status(400).json({ success: false, error: 'id is required' });
     const badges = await gitlabClient.getBadges(kind, id);
     res.json({ success: true, badges });
   } catch (err: any) {
@@ -994,7 +1007,8 @@ apiRouter.post('/badges', async (req: Request, res: Response) => {
 apiRouter.delete('/badges/:badgeId', async (req: Request, res: Response) => {
   try {
     const kind = (req.query.kind as any) || 'project';
-    const id = Number(req.query.id || 901);
+    const id = Number(req.query.id);
+    if (!id) return res.status(400).json({ success: false, error: 'id is required' });
     const badgeId = Number(req.params.badgeId);
     await gitlabClient.deleteBadge(kind, id, badgeId);
     broadcastEvent('badge_deleted', { badgeId });
@@ -1176,40 +1190,6 @@ apiRouter.patch('/projects/:projectId/pages', async (req: Request, res: Response
 // Auth: bearer agent token from the vault, or a browser session (see server/session.ts)
 // ============================================================================
 
-const AGENT_SKILL_MARKDOWN = `# LazyLab AI Agent Integration Skill
-
-## Purpose
-Enables coding agents to create, inspect, and update Work Items (Issues) and Merge Requests through the lazylab REST API.
-
-## Authentication
-Send \`Authorization: Bearer <token>\` with an agent token issued from the lazylab Vault view. The vault must be unlocked (someone logged in since the last restart).
-
-## Content Discipline & Tone Rules
-1. **Zero Slop & Zero Jargon**: Eliminate buzzwords ("supercharge", "leverage", "delight", "cutting-edge"). Write direct, technical English.
-2. **Concise & Direct**: Keep descriptions actionable and easy to scan for human engineers.
-3. **Standard Work Item Structure**:
-   - **Summary**: 1-2 sentences stating the problem or goal.
-   - **What Changed / What's Added**: Bulleted list of code or behavior adjustments.
-   - **Features List**: Explicit bullet points if new features or APIs were introduced.
-   - **Acceptance Criteria**: Concrete checkboxes (- [ ] criterion).
-4. **Standard Merge Request Structure**:
-   - **Title**: Imperative and scoped (e.g. \`[agent-api] Add no-auth work items and merge requests routes\`).
-   - **Overview**: High-level motivation.
-   - **Key Changes**: Itemized list of modifications.
-   - **Verification**: How it was verified.
-
-## Endpoints Summary
-- **GET** \`/api/agent/inbox\` - What needs the user: review requests, own MRs with pipeline state, assigned issues, To-Dos
-- **GET / POST** \`/api/agent/watches\` - List watches / watch a pipeline, job or MR (body: kind, projectId, targetId); the user is notified when it finishes
-- **GET** \`/api/agent/work-items\` - List work items
-- **GET** \`/api/agent/work-items/:iid\` - Get specific work item & comments
-- **POST** \`/api/agent/work-items\` - Create new work item
-- **PUT / PATCH** \`/api/agent/work-items/:iid\` - Update work item (description, content, labels, assignees, state)
-- **GET** \`/api/agent/merge-requests\` - List merge requests
-- **GET** \`/api/agent/merge-requests/:iid\` - Get specific merge request details
-- **POST** \`/api/agent/merge-requests\` - Create new merge request
-- **PUT / PATCH** \`/api/agent/merge-requests/:iid\` - Update merge request (title, description, labels, state)
-`;
 
 // Helper to determine active project ID
 async function resolveAgentProjectId(requestedId?: any): Promise<number> {
@@ -1224,8 +1204,14 @@ async function resolveAgentProjectId(requestedId?: any): Promise<number> {
 
 // 1. Agent Skill & Documentation
 apiRouter.get('/agent/skill.md', (_req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-  res.send(AGENT_SKILL_MARKDOWN);
+  // One source of truth: the skill shipped in skills/ (copied into the Docker image).
+  try {
+    const md = readFileSync(path.resolve(process.cwd(), 'skills/.claude/lazylab-agent/SKILL.md'), 'utf8');
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.send(md);
+  } catch {
+    res.status(404).json({ success: false, error: 'skills/.claude/lazylab-agent/SKILL.md not found next to the server' });
+  }
 });
 
 apiRouter.get('/agent/skill', (_req: Request, res: Response) => {

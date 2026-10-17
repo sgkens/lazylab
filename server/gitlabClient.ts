@@ -3,6 +3,7 @@ import { metricsManager } from './metricsManager.js';
 import { parseGitLabCiYaml } from './yamlParser.js';
 import { mapLimit } from './concurrency.js';
 import { extractFailure, FailureExcerpt } from './triage.js';
+import { buildReleaseNotes, CommitLike, ReleaseNotes } from './releaseNotes.js';
 
 // GitLab has no instance-wide list endpoint for milestones, pipelines, labels or packages,
 // so "all projects" views fan out over the most recently active member projects.
@@ -26,6 +27,8 @@ export interface GitLabProject {
   name_with_namespace: string;
   path: string;
   path_with_namespace: string;
+  /** Present in list responses (`simple=true`); `kind` is "group" or "user". */
+  namespace?: { id: number; name: string; path: string; kind: 'group' | 'user'; full_path: string };
   default_branch: string;
   visibility: 'private' | 'internal' | 'public';
   web_url: string;
@@ -331,6 +334,9 @@ export interface CiConfig {
   content: string;
   branch: string;
   updated_at?: string;
+  last_commit_id?: string;
+  /** The ref has no .gitlab-ci.yml yet. */
+  missing?: boolean;
 }
 
 export interface CiLintResult {
@@ -347,6 +353,8 @@ export interface CiLintResult {
     when?: string;
     allow_failure?: boolean;
   }[];
+  /** Who decided validity: GitLab's linter or the local parser. */
+  source?: 'gitlab' | 'local';
 }
 
 export interface GitLabVariable {
@@ -410,6 +418,7 @@ const DEMO_PROJECTS: GitLabProject[] = [
     name_with_namespace: 'Platform Engineering / gitlab-orchestrator',
     path: 'gitlab-orchestrator',
     path_with_namespace: 'platform/gitlab-orchestrator',
+    namespace: { id: 101, name: 'Platform Engineering', path: 'platform', kind: 'group', full_path: 'platform' },
     default_branch: 'main',
     visibility: 'private',
     web_url: 'https://gitlab.com/platform/gitlab-orchestrator',
@@ -426,6 +435,7 @@ const DEMO_PROJECTS: GitLabProject[] = [
     name_with_namespace: 'Infrastructure / k8s-operator',
     path: 'k8s-operator',
     path_with_namespace: 'infra/k8s-operator',
+    namespace: { id: 102, name: 'Infrastructure', path: 'infra', kind: 'group', full_path: 'infra' },
     default_branch: 'master',
     visibility: 'internal',
     web_url: 'https://gitlab.com/infra/k8s-operator',
@@ -442,6 +452,7 @@ const DEMO_PROJECTS: GitLabProject[] = [
     name_with_namespace: 'Core Services / api-gateway',
     path: 'api-gateway',
     path_with_namespace: 'services/api-gateway',
+    namespace: { id: 103, name: 'Core Services', path: 'services', kind: 'group', full_path: 'services' },
     default_branch: 'main',
     visibility: 'private',
     web_url: 'https://gitlab.com/services/api-gateway',
@@ -2074,7 +2085,7 @@ export class GitLabClient {
 
     cacheDb.clear('work_items');
     cacheDb.logWal('CREATE_ITEM', String(data.id), 'work_items', `Created issue #${data.iid}`);
-    return data;
+    return mapWorkItem(data);
   }
 
   async updateWorkItem(projectId: number, issueIid: number, payload: {
@@ -2134,13 +2145,13 @@ export class GitLabClient {
     }
 
     const bodyObj: any = {};
-    if (payload.title) bodyObj.title = payload.title;
-    if (payload.description) bodyObj.description = payload.description;
+    if (payload.title !== undefined) bodyObj.title = payload.title;
+    if (payload.description !== undefined) bodyObj.description = payload.description;
     if (payload.state_event) bodyObj.state_event = payload.state_event;
     if (payload.labels) bodyObj.labels = payload.labels.join(',');
     if (payload.add_labels) bodyObj.add_labels = payload.add_labels.join(',');
     if (payload.remove_labels) bodyObj.remove_labels = payload.remove_labels.join(',');
-    if (payload.milestone_id !== undefined) bodyObj.milestone_id = payload.milestone_id;
+    if (payload.milestone_id !== undefined) bodyObj.milestone_id = payload.milestone_id ?? 0; // 0 unassigns
     if (payload.assignee_ids !== undefined) bodyObj.assignee_ids = payload.assignee_ids;
 
     const { data } = await this.fetchApi<any>(`/projects/${projectId}/issues/${issueIid}`, {
@@ -2151,7 +2162,7 @@ export class GitLabClient {
 
     cacheDb.clear('work_items');
     cacheDb.logWal('UPDATE_ITEM', String(data.id), 'work_items', `Updated issue #${issueIid}`);
-    return data;
+    return mapWorkItem(data);
   }
 
   // Subtasks helper
@@ -2192,7 +2203,8 @@ export class GitLabClient {
   async addSubTask(projectId: number, issueIid: number, title: string): Promise<SubTask> {
     if (this.isDemoMode) {
       const item = DEMO_WORK_ITEMS.find(i => i.project_id === projectId && i.iid === issueIid);
-      if (item) {
+      if (!item) throw new Error(`Work item #${issueIid} not found`);
+      {
         if (!item.subtasks) item.subtasks = [];
         const newSub: SubTask = {
           id: Math.floor(Date.now() / 1000),
@@ -2208,9 +2220,10 @@ export class GitLabClient {
 
     const item = await this.fetchApi<any>(`/projects/${projectId}/issues/${issueIid}`);
     const currentDesc = item.data.description || '';
-    const newDesc = `${currentDesc}\n- [ ] ${title}`;
+    const newDesc = `${currentDesc}${currentDesc && !currentDesc.endsWith('\n') ? '\n' : ''}- [ ] ${title}`;
     await this.updateWorkItem(projectId, issueIid, { description: newDesc });
-    return { id: Math.floor(Date.now() / 1000), title, completed: false, parent_iid: issueIid };
+    // Live subtask ids are 1-based positions among checkbox lines (see mapWorkItem).
+    return { id: mapWorkItem({ ...item.data, description: newDesc }).subtasks!.length, title, completed: false, parent_iid: issueIid };
   }
 
   // 5. Notes & Comments
@@ -2376,6 +2389,17 @@ export class GitLabClient {
     try {
       const { data, etag } = await this.fetchApi<any[]>(endpoint);
       const mrs: GitLabMergeRequest[] = data.map(mapMergeRequest);
+      // List responses carry no approval data; one filtered call marks the MRs the user has approved.
+      try {
+        const me = await this.getCurrentUser();
+        const { data: mine } = await this.fetchApi<any[]>(
+          `/projects/${projectId}/merge_requests?per_page=100&state=opened&approved_by_usernames[]=${encodeURIComponent(me.username)}`
+        );
+        const approved = new Set(mine.map((m) => m.iid));
+        for (const mr of mrs) mr.approved = approved.has(mr.iid);
+      } catch {
+        // leave approved as mapped
+      }
 
       cacheDb.set(cacheKey, 'merge_requests', String(projectId), mrs, etag, 60000);
       return mrs;
@@ -2493,10 +2517,16 @@ export class GitLabClient {
     }
 
     const bodyObj: any = {};
-    if (payload.title) bodyObj.title = payload.title;
-    if (payload.description) bodyObj.description = payload.description;
+    if (payload.title !== undefined) bodyObj.title = payload.title;
+    if (payload.description !== undefined) bodyObj.description = payload.description;
     if (payload.state_event) bodyObj.state_event = payload.state_event;
     if (payload.labels) bodyObj.labels = payload.labels.join(',');
+    // The MR API has no draft flag: GitLab derives draft status from a "Draft:" title prefix.
+    if (payload.draft !== undefined) {
+      const base = bodyObj.title ?? (await this.getMergeRequest(projectId, mrIid)).title;
+      const stripped = String(base).replace(/^\s*(\[draft\]|\(draft\)|draft:|draft\s*-|wip:)\s*/i, '');
+      bodyObj.title = payload.draft ? `Draft: ${stripped}` : stripped;
+    }
 
     const { data } = await this.fetchApi<any>(`/projects/${projectId}/merge_requests/${mrIid}`, {
       method: 'PUT',
@@ -2506,7 +2536,7 @@ export class GitLabClient {
 
     cacheDb.clear('merge_requests');
     cacheDb.logWal('UPDATE_MR', String(data.id), 'merge_requests', `Updated MR !${mrIid}`);
-    return data;
+    return mapMergeRequest(data);
   }
 
   async approveMergeRequest(projectId: number, mrIid: number): Promise<any> {
@@ -3202,6 +3232,37 @@ export class GitLabClient {
     }
   }
 
+  /**
+   * Release notes for `to` (a branch, tag or sha) from the commits since `from`, which defaults to the
+   * newest tag (GitLab orders tags by last update). Commits are read with the compare API.
+   */
+  async getReleaseNotes(projectId: number, to: string, from?: string): Promise<ReleaseNotes> {
+    let base: string | null = from || null;
+    if (!base) {
+      const tags = await this.getTags(projectId, true);
+      base = tags.find((t) => t.name !== to)?.name ?? null;
+    }
+    let commits: CommitLike[];
+    if (this.isDemoMode) {
+      commits = [
+        { short_id: '7a9c8f1e', title: 'feat(cache): expire entries on TTL' },
+        { short_id: '8f4b2a3d', title: 'feat(pipelines): show why a pipeline failed' },
+        { short_id: '99e2a14c', title: 'fix(runners): keep paused state after refresh' },
+        { short_id: '55d8a94b', title: 'docs: describe the MCP server' },
+        { short_id: '3c1d0e77', title: 'chore: bump dependencies' }
+      ];
+    } else if (base) {
+      const { data } = await this.fetchApi<any>(
+        `/projects/${projectId}/repository/compare?from=${encodeURIComponent(base)}&to=${encodeURIComponent(to)}&straight=false`
+      );
+      commits = (data.commits || []).reverse();
+    } else {
+      const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/repository/commits?ref_name=${encodeURIComponent(to)}&per_page=100`);
+      commits = data;
+    }
+    return buildReleaseNotes(commits, base, to);
+  }
+
   async createRelease(projectId: number, payload: { tag_name: string; name: string; description: string; ref?: string }): Promise<GitLabRelease> {
     if (this.isDemoMode) {
       const newRel: GitLabRelease = {
@@ -3295,6 +3356,23 @@ Execution finished in 38s
         trace: 'Failed to retrieve job trace log from GitLab API.'
       };
     }
+  }
+
+  /**
+   * Uploads a file to the project so issues, MRs and comments can link it. Returns GitLab's markdown,
+   * which is relative to the project and renders inside GitLab. Demo mode inlines the file instead.
+   */
+  async uploadFile(projectId: number, filename: string, contentType: string, data: Buffer): Promise<{ markdown: string; url: string }> {
+    if (this.isDemoMode) {
+      const url = `data:${contentType || 'application/octet-stream'};base64,${data.toString('base64')}`;
+      const markdown = contentType.startsWith('image/') ? `![${filename}](${url})` : `[${filename}](${url})`;
+      return { markdown, url };
+    }
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(data)], { type: contentType || 'application/octet-stream' }), filename);
+    const { data: up } = await this.fetchApi<any>(`/projects/${projectId}/uploads`, { method: 'POST', body: form });
+    cacheDb.logWal('UPLOAD', String(projectId), 'uploads', `Uploaded ${filename} (${data.length} bytes)`);
+    return { markdown: up.markdown, url: up.full_path || up.url };
   }
 
   // TRIAGE: failure excerpts and running pipelines
@@ -3458,90 +3536,100 @@ Execution finished in 38s
   }
 
   // 13. CI/CD Pipeline Editor & Visualizer
-  async getCiConfig(projectId: number): Promise<CiConfig> {
+  private async defaultBranch(projectId: number): Promise<string> {
+    const cached = (await this.getProjects().catch(() => [])).find((p) => p.id === projectId);
+    if (cached?.default_branch) return cached.default_branch;
+    const { data } = await this.fetchApi<any>(`/projects/${projectId}`);
+    return data.default_branch || 'main';
+  }
+
+  /** Reads .gitlab-ci.yml from `ref` (default branch when omitted). A missing file returns empty content. */
+  async getCiConfig(projectId: number, ref?: string): Promise<CiConfig> {
     if (this.isDemoMode) {
       const content = DEMO_CI_CONFIGS[projectId] || DEMO_CI_CONFIGS[901];
-      return {
-        projectId,
-        content,
-        branch: 'main',
-        updated_at: new Date().toISOString()
-      };
+      return { projectId, content, branch: ref || 'main', updated_at: new Date().toISOString() };
     }
 
+    const branch = ref || (await this.defaultBranch(projectId));
     try {
-      const { data } = await this.fetchApi<any>(`/projects/${projectId}/repository/files/.gitlab-ci.yml?ref=main`);
-      const decoded = Buffer.from(data.content, 'base64').toString('utf-8');
+      const { data } = await this.fetchApi<any>(`/projects/${projectId}/repository/files/.gitlab-ci.yml?ref=${encodeURIComponent(branch)}`);
       return {
         projectId,
-        content: decoded,
-        branch: 'main',
-        updated_at: new Date().toISOString()
+        content: Buffer.from(data.content, 'base64').toString('utf-8'),
+        branch,
+        last_commit_id: data.last_commit_id
       };
-    } catch {
-      return {
-        projectId,
-        content: DEMO_CI_CONFIGS[901],
-        branch: 'main'
-      };
+    } catch (err: any) {
+      // Never fall back to sample YAML: a save would commit it to the real repository.
+      if (/\(404\)/.test(err.message)) return { projectId, content: '', branch, missing: true };
+      throw err;
     }
   }
 
   async saveCiConfig(projectId: number, payload: { content: string; commit_message: string; branch?: string }): Promise<{ success: boolean; branch: string; commit_id: string }> {
-    const branch = payload.branch || 'main';
-    const commitId = Math.random().toString(36).substring(2, 10);
-
     if (this.isDemoMode) {
+      const branch = payload.branch || 'main';
       DEMO_CI_CONFIGS[projectId] = payload.content;
       cacheDb.logWal('COMMIT_CI_CONFIG', String(projectId), 'ci_editor', `Committed .gitlab-ci.yml: "${payload.commit_message}"`);
-      return { success: true, branch, commit_id: commitId };
+      return { success: true, branch, commit_id: 'demo' };
     }
 
-    try {
-      // Check if file exists to decide POST or PUT
-      let method = 'PUT';
+    const defaultBranch = await this.defaultBranch(projectId);
+    const branch = payload.branch || defaultBranch;
+    const enc = encodeURIComponent;
+    const exists = async (path: string) => {
       try {
-        await this.fetchApi(`/projects/${projectId}/repository/files/.gitlab-ci.yml?ref=${branch}`);
-      } catch {
-        method = 'POST';
+        await this.fetchApi(path);
+        return true;
+      } catch (err: any) {
+        if (/\(404\)/.test(err.message)) return false;
+        throw err;
       }
+    };
+    const branchExists = await exists(`/projects/${projectId}/repository/branches/${enc(branch)}`);
+    const fileExists = await exists(`/projects/${projectId}/repository/files/.gitlab-ci.yml?ref=${enc(branchExists ? branch : defaultBranch)}`);
 
-      await this.fetchApi(`/projects/${projectId}/repository/files/.gitlab-ci.yml`, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch,
-          content: payload.content,
-          commit_message: payload.commit_message
-        })
-      });
-      cacheDb.logWal('COMMIT_CI_CONFIG', String(projectId), 'ci_editor', `Committed .gitlab-ci.yml: "${payload.commit_message}"`);
-      return { success: true, branch, commit_id: commitId };
-    } catch (err: any) {
-      throw new Error(`Failed to commit .gitlab-ci.yml: ${err.message || err}`);
-    }
+    await this.fetchApi(`/projects/${projectId}/repository/files/.gitlab-ci.yml`, {
+      method: fileExists ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        branch,
+        // A new branch is created from the default branch.
+        ...(branchExists ? {} : { start_branch: defaultBranch }),
+        content: payload.content,
+        commit_message: payload.commit_message
+      })
+    });
+    const { data: head } = await this.fetchApi<any>(`/projects/${projectId}/repository/branches/${enc(branch)}`);
+    cacheDb.logWal('COMMIT_CI_CONFIG', String(projectId), 'ci_editor', `Committed .gitlab-ci.yml: "${payload.commit_message}"`);
+    return { success: true, branch, commit_id: head.commit?.id || '' };
   }
 
-  async lintCiConfig(content: string): Promise<CiLintResult> {
+  /**
+   * Local parse for the stage/job graph. With `projectId` in live mode GitLab's
+   * POST /projects/:id/ci/lint decides validity (includes, extends, rules) and the local errors are dropped.
+   */
+  async lintCiConfig(content: string, projectId?: number): Promise<CiLintResult> {
+    let local: CiLintResult;
     try {
       const result = parseGitLabCiYaml(content);
-      return {
-        valid: result.errors.length === 0,
-        errors: result.errors,
-        warnings: result.warnings,
-        stages: result.stages,
-        jobs: result.jobs
-      };
+      local = { valid: result.errors.length === 0, errors: result.errors, warnings: result.warnings, stages: result.stages, jobs: result.jobs, source: 'local' };
     } catch (err: any) {
-      return {
-        valid: false,
-        errors: [`YAML Parsing Syntax Error: ${err.message}`],
-        warnings: [],
-        stages: ['build', 'test', 'deploy'],
-        jobs: []
-      };
+      local = { valid: false, errors: [`YAML syntax error: ${err.message}`], warnings: [], stages: [], jobs: [], source: 'local' };
+    }
+    if (this.isDemoMode || !projectId) return local;
+    try {
+      const { data } = await this.fetchApi<any>(`/projects/${projectId}/ci/lint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content })
+      });
+      return { ...local, valid: Boolean(data.valid), errors: data.errors || [], warnings: data.warnings || [], source: 'gitlab' };
+    } catch (err: any) {
+      return { ...local, warnings: [...local.warnings, `GitLab lint unavailable, showing the local check: ${err.message}`] };
     }
   }
+
 
   // 14. CI/CD Variables (Personal / Group / Project scoped)
   async getVariables(scope: 'project' | 'group' | 'instance', id?: number): Promise<GitLabVariable[]> {
@@ -3555,10 +3643,11 @@ Execution finished in 38s
       return DEMO_VARIABLES;
     }
 
+    if (!id) throw new Error(`${scope} id is required`);
     try {
       const endpoint = scope === 'project'
         ? `/projects/${id}/variables`
-        : `/groups/${id || 101}/variables`;
+        : `/groups/${id}/variables`;
       const { data } = await this.fetchApi<any[]>(endpoint);
       return data.map(v => ({
         key: v.key,
@@ -3768,40 +3857,55 @@ Execution finished in 38s
       return { success: true, avatar_url: avatarDataUrl };
     }
 
-    // In remote mode, save locally in WAL / project settings or via avatar upload API
-    const p = DEMO_PROJECTS.find(proj => proj.id === projectId);
-    if (p) p.avatar_url = avatarDataUrl;
-    cacheDb.logWal('UPDATE_AVATAR', String(projectId), 'projects', `Uploaded project logo`);
-    return { success: true, avatar_url: avatarDataUrl };
+    // PUT /projects/:id accepts the avatar as a multipart file.
+    const match = /^data:([^;]+);base64,(.+)$/.exec(avatarDataUrl);
+    if (!match) throw new Error('Avatar must be a base64 data URL');
+    const [, type, b64] = match;
+    const ext = type.split('/')[1]?.replace('svg+xml', 'svg') || 'png';
+    const form = new FormData();
+    form.append('avatar', new Blob([new Uint8Array(Buffer.from(b64, 'base64'))], { type }), `avatar.${ext}`);
+    const { data } = await this.fetchApi<any>(`/projects/${projectId}`, { method: 'PUT', body: form });
+    cacheDb.clear('projects');
+    cacheDb.logWal('UPDATE_AVATAR', String(projectId), 'projects', `Uploaded project avatar`);
+    return { success: true, avatar_url: data.avatar_url };
   }
 
   // 17. GitLab Pages Details & Metadata
+  /** GitLab 16.8+ `GET /projects/:id/pages`. A 404 means Pages has never been deployed for the project. */
   async getPagesInfo(projectId: number): Promise<GitLabPagesInfo> {
     if (this.isDemoMode) {
       return DEMO_PAGES[projectId] || DEMO_PAGES[901];
     }
 
+    let data: any;
     try {
-      const { data } = await this.fetchApi<any>(`/projects/${projectId}/pages`);
-      const domainsRes = await this.fetchApi<any[]>(`/projects/${projectId}/pages/domains`);
-      return {
-        is_enabled: Boolean(data.is_enabled ?? true),
-        url: data.url || `https://${projectId}.gitlab.io`,
-        status: data.is_enabled ? 'deployed' : 'not_configured',
-        deployed_at: data.deployed_at || new Date().toISOString(),
-        size_bytes: data.size_bytes || 12400000,
-        https_only: Boolean(data.https_only),
-        access_control: Boolean(data.access_control),
-        domains: (domainsRes.data || []).map(d => ({
-          domain: d.domain,
-          auto_ssl_enabled: Boolean(d.auto_ssl_enabled),
-          certificate_expiration: d.certificate?.expiration,
-          verified: Boolean(d.verified)
-        }))
-      };
-    } catch {
-      return DEMO_PAGES[901];
+      ({ data } = await this.fetchApi<any>(`/projects/${projectId}/pages`));
+    } catch (err: any) {
+      if (/\(404\)/.test(err.message)) {
+        return { is_enabled: false, url: '', status: 'not_configured', https_only: false, access_control: false, domains: [] };
+      }
+      throw err;
     }
+    const [project, domains] = await Promise.all([
+      this.fetchApi<any>(`/projects/${projectId}`).then((r) => r.data).catch(() => null),
+      this.fetchApi<any[]>(`/projects/${projectId}/pages/domains`).then((r) => r.data).catch(() => [])
+    ]);
+    const deployments: any[] = Array.isArray(data.deployments) ? data.deployments : [];
+    const latest = [...deployments].sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)))[0];
+    return {
+      is_enabled: true,
+      url: data.url || '',
+      status: deployments.length ? 'deployed' : 'not_configured',
+      deployed_at: latest?.created_at,
+      https_only: Boolean(data.force_https),
+      access_control: project?.pages_access_level === 'private',
+      domains: (domains || []).map((d) => ({
+        domain: d.domain,
+        auto_ssl_enabled: Boolean(d.auto_ssl_enabled),
+        certificate_expiration: d.certificate?.expiration,
+        verified: Boolean(d.verified)
+      }))
+    };
   }
 
   async updatePagesSettings(projectId: number, settings: { https_only?: boolean }): Promise<GitLabPagesInfo> {
@@ -3814,13 +3918,13 @@ Execution finished in 38s
       return current;
     }
 
-    const { data } = await this.fetchApi<any>(`/projects/${projectId}/pages`, {
+    await this.fetchApi<any>(`/projects/${projectId}/pages`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings)
+      body: JSON.stringify({ pages_https_only: settings.https_only })
     });
     cacheDb.logWal('UPDATE_PAGES', String(projectId), 'pages', `Updated GitLab Pages HTTPS settings`);
-    return data;
+    return this.getPagesInfo(projectId);
   }
 }
 

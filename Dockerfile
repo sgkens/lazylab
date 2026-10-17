@@ -25,6 +25,7 @@ RUN bun install --frozen-lockfile --production
 
 COPY server.ts ./
 COPY server ./server
+COPY skills ./skills
 COPY --from=build /app/dist ./dist
 
 RUN mkdir -p /data && chown -R bun:bun /data
