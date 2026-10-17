@@ -73,14 +73,81 @@ export interface AgentToken {
   createdAt: string;
 }
 
+// ---- notifications (server/watch.ts owns the behaviour; the vault only stores it) ----
+
+export type NotifyChannelType = 'ntfy' | 'gotify' | 'webhook';
+
+export interface NotifyChannel {
+  id: string;
+  type: NotifyChannelType;
+  name: string;
+  /** ntfy: server base URL; gotify: server base URL; webhook: full POST URL (may embed a secret). */
+  url: string;
+  /** ntfy topic. */
+  topic?: string;
+  /** ntfy access token or gotify application token. */
+  token?: string;
+  /** webhook body shape. */
+  format?: 'json' | 'slack' | 'discord';
+  /** 'failures' delivers only failure-level notifications. */
+  events: 'all' | 'failures';
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface NotifyRules {
+  /** Auto-watch the running pipeline of each of my open MRs. */
+  myMrPipelines: boolean;
+  /** Notify when a new review request appears. */
+  reviewRequests: boolean;
+  /** Notify when an MR I review gets new commits. */
+  reReview: boolean;
+  /** Notify when a runner goes offline. */
+  runnerOffline: boolean;
+}
+
+export interface WatchRecord {
+  id: string;
+  kind: 'pipeline' | 'job' | 'merge_request';
+  project_id: number;
+  /** Pipeline id, job id, or MR iid. */
+  target_id: number;
+  label: string;
+  web_url: string;
+  source: 'manual' | 'auto' | 'agent';
+  /** GitLab profile the ids belong to; null in demo mode. */
+  profileId: string | null;
+  createdAt: string;
+}
+
+export interface NotifySettings {
+  channels: NotifyChannel[];
+  rules: NotifyRules;
+  watches: WatchRecord[];
+}
+
+export const defaultNotifyRules = (): NotifyRules => ({
+  myMrPipelines: true,
+  reviewRequests: true,
+  reReview: true,
+  runnerOffline: true
+});
+
 interface VaultPayload {
   profiles: GitLabProfile[];
   activeProfileId: string | null;
   entries: VaultEntry[];
   agentTokens: AgentToken[];
+  notify: NotifySettings;
 }
 
-const emptyPayload = (): VaultPayload => ({ profiles: [], activeProfileId: null, entries: [], agentTokens: [] });
+const emptyPayload = (): VaultPayload => ({
+  profiles: [],
+  activeProfileId: null,
+  entries: [],
+  agentTokens: [],
+  notify: { channels: [], rules: defaultNotifyRules(), watches: [] }
+});
 
 function deriveKey(password: string, salt: Buffer, p = KDF_PARAMS): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -274,6 +341,7 @@ class Vault extends EventEmitter {
   deleteProfile(id: string) {
     const p = this.requireOpen();
     p.profiles = p.profiles.filter((pr) => pr.id !== id);
+    if (p.notify) p.notify.watches = p.notify.watches.filter((w) => w.profileId !== id);
     const wasActive = p.activeProfileId === id;
     if (wasActive) p.activeProfileId = null;
     this.persist();
@@ -326,6 +394,23 @@ class Vault extends EventEmitter {
     const p = this.requireOpen();
     p.entries = p.entries.filter((e) => e.id !== id);
     this.persist();
+  }
+
+  // ---- notification settings ---------------------------------------------
+
+  /** Read-only view of the notification settings. Callers must not mutate it; use updateNotify. */
+  getNotify(): NotifySettings {
+    const n = this.requireOpen().notify;
+    // Vaults created before notifications existed, or before a rule was added.
+    n.rules = { ...defaultNotifyRules(), ...n.rules };
+    return n;
+  }
+
+  /** Applies `fn` to the notification settings and persists the vault. */
+  updateNotify<T>(fn: (settings: NotifySettings) => T): T {
+    const result = fn(this.getNotify());
+    this.persist();
+    return result;
   }
 
   // ---- agent API tokens ---------------------------------------------------

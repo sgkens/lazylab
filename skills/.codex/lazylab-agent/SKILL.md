@@ -35,6 +35,8 @@ Base URL: `$LAZYLAB_URL/api/agent`. All bodies are `application/json`.
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/watches` | Active watches for the current GitLab profile |
+| POST | `/watches` | Watch a `pipeline`, `job` or `merge_request`. Body: `kind`, `projectId`, `targetId` (pipeline id, job id or MR iid). The user is notified when it finishes; use this after pushing instead of polling |
 | GET | `/inbox` | What needs the user across projects: `items[]` with `bucket` (`action`\|`waiting`\|`assigned`), `reason`, `kind`, `web_url`; plus `counts` and `errors[]`. Start here when asked what to work on |
 | GET | `/work-items?projectId=&state=opened\|closed\|all` | List work items (first 50) |
 | GET | `/work-items/:iid?projectId=` | One work item plus notes |
