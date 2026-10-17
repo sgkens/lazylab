@@ -56,10 +56,6 @@ Base URL: `$LAZYLAB_URL/api/agent`. All bodies are `application/json`.
 
 Responses are `{ "success": true, ... }` or `{ "success": false, "error": "..." }` with a 4xx/5xx status.
 
-Known limits (see `devtracker-pending.md` in the lazylab repo):
-- `GET /:iid` only finds items within the first 50 returned by the list call.
-- `draft` on merge request update is ignored against a real GitLab instance; prefix the title with `Draft: ` instead.
-
 ## Examples
 
 Shell: bash, with `LAZYLAB_URL` and `LAZYLAB_TOKEN` exported. Add `-k` to curl only if the user confirms lazylab uses its self-signed certificate.

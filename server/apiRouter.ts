@@ -1433,8 +1433,7 @@ apiRouter.get('/agent/work-items/:iid', async (req: Request, res: Response) => {
   try {
     const issueIid = Number(req.params.iid);
     const projectId = await resolveAgentProjectId(req.query.projectId);
-    const items = await gitlabClient.getWorkItems(projectId, 'all', false);
-    const item = items.find((i) => i.iid === issueIid);
+    const item = await gitlabClient.getWorkItem(projectId, issueIid).catch(() => null);
     if (!item) {
       return res.status(404).json({ success: false, error: `Work item #${issueIid} not found` });
     }
@@ -1527,8 +1526,7 @@ apiRouter.get('/agent/merge-requests/:iid', async (req: Request, res: Response) 
   try {
     const mrIid = Number(req.params.iid);
     const projectId = await resolveAgentProjectId(req.query.projectId);
-    const mrs = await gitlabClient.getMergeRequests(projectId, 'all', false);
-    const mr = mrs.find((m) => m.iid === mrIid);
+    const mr = await gitlabClient.getMergeRequest(projectId, mrIid).catch(() => null);
     if (!mr) {
       return res.status(404).json({ success: false, error: `Merge request !${mrIid} not found` });
     }
