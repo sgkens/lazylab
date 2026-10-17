@@ -1,0 +1,25 @@
+# lazylab stack.
+# Loopback-only by default. To reach it from another machine on your LAN set
+# LAZYLAB_BIND=0.0.0.0 in .env AND either LAZYLAB_TLS=on or an HTTPS proxy
+# (see README "Access from another machine").
+services:
+  lazylab:
+    build: .
+    image: lazylab:local
+    container_name: lazylab
+    restart: unless-stopped
+    ports:
+      - "${LAZYLAB_BIND:-127.0.0.1}:${LAZYLAB_PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Fixed inside the container; the host-side address is controlled by LAZYLAB_BIND above.
+      HOST: 0.0.0.0
+      PORT: "3000"
+      LAZYLAB_DATA_DIR: /data
+    volumes:
+      - lazylab-data:/data
+
+volumes:
+  lazylab-data:
