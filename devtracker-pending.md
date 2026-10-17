@@ -96,18 +96,18 @@ Classification of the live (token configured) code path. With no token everythin
 | Sync | auto-fetch timer + SSE `/api/events` | WIRED | Since 2026-10-17 (third pass): fans out over the 15 most recently active member projects and refreshes the per-project cache keys; also refreshes the inbox |
 | Projects | list | WIRED | Capped at 50, no pagination |
 | Projects | update settings | WIRED | |
-| Projects | avatar upload | STUB | In live mode it mutates the demo array; GitLab is never called |
+| Projects | avatar upload | WIRED | Seventh pass: multipart `PUT /projects/:id`; 200 KB limit checked in the UI |
 | Milestones | list | WIRED | Third pass: per-project fan-out; active milestones only; counts from `issues_statistics`, "n/a" when unavailable |
 | Milestones | create | WIRED | |
 | Work items | list | WIRED | Capped at 50 per project. All-projects view fans out over member projects (was `/issues?scope=all`, which includes every public project on gitlab.com) |
-| Work items | create / update | PARTIAL | Returns the raw GitLab object, not mapped to `GitLabWorkItem` (no `work_item_type`, `subtasks`). Update drops an empty `title`/`description` because of a truthy check |
-| Work items | subtasks (checkbox lines) | PARTIAL | IDs are positional; toggle returns `[]`; demo-mode addSubTask on a missing item falls through to a live fetch and throws |
+| Work items | create / update | WIRED | Seventh pass: results mapped; empty strings kept; milestone 0 unassigns |
+| Work items | subtasks (checkbox lines) | PARTIAL | IDs are positional (an added subtask now gets its position). Toggle returns `[]`; the drawer's description is not refreshed after a toggle |
 | Notes | list / create (issues and MRs) | WIRED | |
-| Notes | attachments | STUB | The file is inlined as a base64 data URL in the note body and never uploaded via `/projects/:id/uploads`. `express.json()` 100 kb limit rejects most files |
-| MRs | list | PARTIAL | `approved` is derived from `approved_by`, which the list endpoint does not return, so it is always false live. List responses carry no pipeline; only the inbox fetches single MRs for `head_pipeline`. All-projects view fans out like work items |
+| Notes | attachments | WIRED | Seventh pass: `POST /api/projects/:id/uploads` (raw body, 10 MB) proxies to GitLab `/projects/:id/uploads`; GitLab's relative Markdown link does not render in lazylab's own preview |
+| MRs | list | PARTIAL | `approved` = approved by me, from one `approved_by_usernames[]` call per project (seventh pass). List responses carry no pipeline; only the inbox fetches single MRs for `head_pipeline` |
 | MRs | approve / unapprove / merge | WIRED | |
-| MRs | update | PARTIAL | `draft` is ignored live |
-| MRs | create | WIRED | Agent API only; no UI |
+| MRs | update | WIRED | Seventh pass: `draft` sets or strips the `Draft:` title prefix; result mapped |
+| MRs | create | WIRED | Agent API, MCP and Agent access → Try it; no dedicated form |
 | Pipelines | list | WIRED | Third pass: per-project fan-out, newest 50 |
 | Pipelines | jobs, retry, cancel, play job, run with variables | WIRED | Fifth pass: `POST /projects/:id/pipeline`; job retry uses `/jobs/:id/retry` (the log view used `play`, which only works on manual jobs) |
 | Jobs | trace, failure excerpt | WIRED | Whole log per request (tail capped at 2 MB), no incremental tail; errors are masked as a fake trace. Failed jobs return a failure excerpt with the trace |
@@ -119,13 +119,13 @@ Classification of the live (token configured) code path. With no token everythin
 | Packages | list | WIRED | Third pass: per-project fan-out |
 | Packages | details | WIRED | Server and client function exist, but no UI calls them |
 | Tags / releases | list / create | WIRED | Not yet exercised against a live instance |
-| CI editor | read `.gitlab-ci.yml` | PARTIAL | `ref=main` is hardcoded (ignores `default_branch`). On any error it returns the **demo YAML**, which a save would then commit to the real repo |
-| CI editor | save | WIRED | Returned `commit_id` is random |
-| CI editor | lint | STUB | Local naive line parser; does not call GitLab `/projects/:id/ci/lint` |
-| Variables | list / save / delete | PARTIAL | Group scope defaults to demo id 101. Save does POST, then PUT on *any* error. Masked values are returned to the browser |
-| Badges | list / create / delete | PARTIAL | `/api/badges` defaults to demo id 901 |
-| Badges | pipeline-setup preset | PARTIAL | Image URLs hardcode `gitlab.com` (breaks self-hosted). Release badge hardcodes `v2.4.0` via shields.io |
-| Pages | info | PARTIAL | Falls back to demo data on error; fabricated defaults (`size_bytes`, `deployed_at`) |
+| CI editor | read `.gitlab-ci.yml` | WIRED | Seventh pass: default branch or a given ref; 404 = empty with a notice; other errors are shown, never sample YAML |
+| CI editor | save | WIRED | Real commit id; a new branch is created from the default branch; unchecking Run pipeline adds `[skip ci]` |
+| CI editor | lint | WIRED | Local parser per keystroke for the graph; GitLab `/projects/:id/ci/lint` after a pause decides validity |
+| Variables | list / save / delete | PARTIAL | Group scope uses the project namespace (seventh pass). Save does POST, then PUT on *any* error. Masked values are returned to the browser |
+| Badges | list / create / delete | WIRED | Seventh pass: explicit id required; group badges use the project namespace |
+| Badges | pipeline-setup preset | WIRED | Seventh pass: URLs from the project's `web_url`; release badge `/-/badges/release.svg`; preview and copied Markdown use the real URLs |
+| Pages | info | WIRED | Seventh pass: deployments, `force_https`, `pages_access_level`; 404 = not deployed; unknown values labelled. Update sends `pages_https_only`; redeploy runs a watched pipeline |
 | Pages | update | WIRED | |
 
 ### Server: infrastructure
@@ -133,18 +133,18 @@ Classification of the live (token configured) code path. With no token everythin
 | Component | Status | Notes |
 |---|---|---|
 | `cacheDb` | PARTIAL | TTL enforced since the third pass (`get(key, { allowStale })` keeps expired rows for offline use). The "WAL" is an append-only JSON-lines file, not SQLite WAL. The whole sql.js DB is exported to disk on each write batch. Journal file and `wal_logs` table grow without bound |
-| `metricsManager` | PARTIAL | Real counters and rate-limit header parsing, but seeded with fake totals (142/488) and random 30-minute history |
-| `/api/metrics/simulate-hit` | DEMO | Dashboard "Simulate" buttons |
+| `metricsManager` | WIRED | Seventh pass: starts at zero with an empty 30-minute window |
+| `/api/metrics/simulate-hit` | REMOVED | Seventh pass |
 | Error handling | PARTIAL | Most list calls swallow errors and return `[]`, so the UI cannot tell an empty result from a failure |
-| Agent API `/api/agent/*` | WIRED | Bearer token auth since the second pass. Defaults to the first project when `projectId` is omitted. `GET /:iid` searches only the first 50 list items. Skill text is duplicated in `apiRouter.ts`, `AgentSkillModal.tsx` and `skills/` |
+| Agent API `/api/agent/*` | WIRED | Defaults to the first project when `projectId` is omitted. `GET /:iid` reads the item directly (seventh pass). `skill.md` is served from `skills/` (single copy) |
 
 ### Frontend
 
 | Area | Status | Notes |
 |---|---|---|
 | All views call `src/services/api.ts` → `/api/*` | WIRED | No direct GitLab calls from the browser |
-| Sync progress bar | DEMO | Progress percentage and stage text are timer-driven, not tied to real sync steps |
-| Global search (Ctrl+K) | WIRED | Client-side filter over already-loaded data |
+| Sync progress bar | WIRED | Seventh pass: indeterminate bar with elapsed time |
+| Global search (Ctrl+K) | WIRED | Client-side filter over loaded data; work items and MRs open their drawers; settings results open the right section |
 | External assets | — | Google Fonts, Unsplash avatars in demo data, and shields.io all need network access |
 | Bundle | — | Single 549 kB JS chunk |
 
@@ -294,6 +294,46 @@ sequenceDiagram
 Follow-ups:
 - [ ] AGENT-6 MCP resources: job logs and `.gitlab-ci.yml` as readable resources (feeds TRIAGE-7)
 - [ ] AGENT-7 Per-token tool allowlist (part of AGENT-2 scopes)
+
+## Done 2026-10-17 (seventh pass): UI audit and documentation site
+
+Method: every API client call checked against a server route; every component prop checked for a caller; every handler read for hardcoded ids, timers standing in for work, and swallowed errors.
+
+```mermaid
+flowchart LR
+  UI[button / form] --> H[handler or prop] --> A[api.ts] --> R[server route] --> G[GitLab call]
+  H -.->|audit failure modes| X[prop never passed · demo id · canned text · console-only error]
+```
+
+Fixed (UI-reachable):
+- [x] AUDIT-1 Agent access modal was imported but never rendered; Navbar, Dashboard and search entry points were hidden. Rewritten with MCP, REST, Skill (from `/api/agent/skill.md`) and Try it (explicit project, real-item warning, real result)
+- [x] AUDIT-2 Dashboard `onOpenBadges`/`onOpenGeneral` and search `onSelectMR`/`onSelectSettingsSection` were never passed; search forced the badges section
+- [x] AUDIT-3 MR view received `onUpdateLabels` and `onToggleState` but never called them; drawer went stale after list updates
+- [x] AUDIT-4 Work item labels could be removed but not added
+- [x] AUDIT-5 Attachments inlined as base64 → GitLab uploads
+- [x] AUDIT-6 CI editor "Trigger pipeline" and Pages "Re-deploy" retried demo pipeline 30101
+- [x] AUDIT-7 Releases "Auto-generate" inserted canned text; tag compare showed a fixed sentence → `server/releaseNotes.ts` (Conventional Commits, semver suggestion)
+- [x] AUDIT-8 Badge modal previews and copied Markdown used fake shields.io values; preset used gitlab.com
+- [x] AUDIT-9 Group variables/badges hardcoded group 101; several views fell back to project 901
+- [x] AUDIT-10 Dashboard simulator wrote fake metrics; metrics seeded with fake totals
+- [x] AUDIT-11 Sync bar percentage was timer-driven
+- [x] AUDIT-12 20 handlers only logged errors → `utils/reportError` toast
+- [x] AUDIT-13 Vault page left a nav group highlighted
+- [x] AUDIT-14 `.dockerignore` excluded `skills/` (needed by `skill.md`); docs and tests now excluded instead
+
+Docs:
+- [x] DOCS-1 Eleventy 3 + Nunjucks site in `docs/` (own `package.json`): 18 pages, Mermaid, light/dark, mobile nav, pager, edit links, `DOCS_PATH_PREFIX` for Pages
+- [x] DOCS-2 README rewritten as a project landing page that links into the docs
+
+Verified: 66 tests; headless Chromium audit flow (agent modal, dashboard, search → MR drawer, MR labels/approve/close, work item label, release notes, tag compare, CI editor lint source); earlier UI and triage flows; curl for uploads (413 over 10 MB), skill.md, badge id validation, release notes, removed simulator (404); docs link check (0 broken), screenshots at desktop and 390 px.
+
+Follow-ups:
+- [ ] AUDIT-15 Server list calls still swallow errors and return `[]` (UI cannot tell empty from failed)
+- [ ] AUDIT-16 Masked variable values reach the browser
+- [ ] AUDIT-17 Work item drawer description not refreshed after a subtask toggle
+- [ ] AUDIT-18 Settings modal duplicates Vault → GitLab profiles; fold into the vault
+- [ ] DOCS-3 GitLab Pages job for the docs site (`DOCS_PATH_PREFIX=/lazylab/`)
+- [ ] DOCS-4 LICENSE file (none chosen yet)
 
 ## Epic SEC: hardening follow-ups
 
