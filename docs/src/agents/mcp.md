@@ -56,6 +56,7 @@ Every tool that takes `project` accepts a numeric id or a full path such as `gro
 | `retry_job` | no | Retry a failed job; the new job is watched |
 | `watch` | no | Notify the user when a pipeline, job or MR finishes |
 | `list_watches` | yes | Active watches |
+| `get_env` | yes | CI/CD variables with values for a project and environment, plus named vault secrets. Listed only for tokens with **Can read secrets**; used by [`lazy env` and `lazy run`](/cli/#local-environment-lazy-env-and-lazy-run) |
 
 Read-only tools carry `readOnlyHint`, so clients can allow them without asking each time. Results are compact JSON that keeps only the fields an agent uses.
 

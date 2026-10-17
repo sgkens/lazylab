@@ -50,6 +50,7 @@ Every button, menu and form in the UI was traced to a server route and a GitLab 
 | CI editor, lint | Wired | GitLab lint on request; local parser for the graph |
 | Variables, badges, Pages | Wired | Masked values are read one at a time on Reveal; Pages needs GitLab 16.8+ |
 | `lazy` CLI | Verified against a fake GitLab | push, follow, failures, retry, MR create, exit codes; not yet run against a live instance |
+| `lazy env`, `env pull`, `run` | Verified in demo mode | Variable precedence and scopes, file variables, vault fallback for hidden values; group inheritance (`/projects/:id/groups`) and hidden variables not yet checked against a live instance |
 | Token expiry, PAT rotation | Verified against a fake GitLab | Needs GitLab 16.0+ to read a PAT, 16.10+ to rotate; not yet run against a live instance |
 | Packages | Wired, read-only | |
 | Releases, tags, release notes | Demo only | Compare API |
