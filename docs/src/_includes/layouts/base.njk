@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if title and page.url != "/" %}{{ title }} · {% endif %}{{ site.title }} docs</title>
+  <meta name="description" content="{{ description or site.description }}">
+  <link rel="stylesheet" href="/assets/style.css">
+  <script>
+    // Apply the stored theme before paint; storage may be unavailable.
+    try { const t = localStorage.getItem('lazylab-docs-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+    <a class="brand" href="/"><span class="logo">lz</span> lazylab <span class="muted">docs</span></a>
+    <nav class="top-links">
+      <a href="{{ site.repo }}">Source</a>
+      <button class="theme-toggle" type="button" aria-label="Toggle colour theme">◐</button>
+    </nav>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      {% for section in nav %}
+        <p class="nav-section">{{ section.title }}</p>
+        <ul>
+          {% for item in section.items %}
+            <li><a href="{{ item.url }}"{% if item.url == page.url %} aria-current="page"{% endif %}>{{ item.title }}</a></li>
+          {% endfor %}
+        </ul>
+      {% endfor %}
+    </aside>
+
+    <main class="content">
+      <article>
+        <h1>{{ title }}</h1>
+        {% if abstract %}<p class="abstract">{{ abstract }}</p>{% endif %}
+        {{ content | safe }}
+      </article>
+
+      {% set pg = nav | pager(page.url) %}
+      <nav class="pager" aria-label="Pages">
+        {% if pg.prev %}<a class="prev" href="{{ pg.prev.url }}"><span class="muted">Previous</span>{{ pg.prev.title }}</a>{% else %}<span></span>{% endif %}
+        {% if pg.next %}<a class="next" href="{{ pg.next.url }}"><span class="muted">Next</span>{{ pg.next.title }}</a>{% endif %}
+      </nav>
+      <footer class="page-footer">
+        <a href="{{ site.editBase }}{{ page.inputPath | replace('./src/', '') }}">Edit this page</a>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const root = document.documentElement;
+    document.querySelector('.theme-toggle').addEventListener('click', () => {
+      const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      root.dataset.theme = dark ? 'light' : 'dark';
+      try { localStorage.setItem('lazylab-docs-theme', root.dataset.theme); } catch (e) {}
+    });
+    const toggle = document.querySelector('.nav-toggle');
+    toggle.addEventListener('click', () => {
+      const open = document.body.classList.toggle('nav-open');
+      toggle.setAttribute('aria-expanded', String(open));
+    });
+    // "#" links next to H2/H3 headings.
+    for (const h of document.querySelectorAll('article h2[id], article h3[id]')) {
+      const a = document.createElement('a');
+      a.href = '#' + h.id;
+      a.className = 'anchor';
+      a.textContent = '#';
+      a.setAttribute('aria-label', 'Link to this section');
+      h.append(a);
+    }
+  </script>
+  <script type="module">
+    if (document.querySelector('pre.mermaid')) {
+      const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs');
+      const t = document.documentElement.dataset.theme;
+      const dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict' });
+      await mermaid.run({ querySelector: 'pre.mermaid' });
+    }
+  </script>
+</body>
+</html>
