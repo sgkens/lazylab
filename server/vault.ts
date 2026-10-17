@@ -104,6 +104,8 @@ export interface NotifyRules {
   reReview: boolean;
   /** Notify when a runner goes offline. */
   runnerOffline: boolean;
+  /** Warn 14, 7, 3 and 1 days before a GitLab token expires, and when it has expired. */
+  tokenExpiry: boolean;
 }
 
 export interface WatchRecord {
@@ -124,13 +126,16 @@ export interface NotifySettings {
   channels: NotifyChannel[];
   rules: NotifyRules;
   watches: WatchRecord[];
+  /** Token key → last expiry threshold warned about (see server/tokenExpiry.ts). */
+  expiryWarned?: Record<string, number>;
 }
 
 export const defaultNotifyRules = (): NotifyRules => ({
   myMrPipelines: true,
   reviewRequests: true,
   reReview: true,
-  runnerOffline: true
+  runnerOffline: true,
+  tokenExpiry: true
 });
 
 interface VaultPayload {

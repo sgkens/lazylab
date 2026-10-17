@@ -19,6 +19,27 @@ export interface VaultProfile {
 
 export type VaultEntryKind = 'secret' | 'ci' | 'runner';
 
+/** A GitLab token with an expiry date (see server/tokenExpiry.ts). */
+export interface TrackedToken {
+  key: string;
+  kind: 'personal' | 'project' | 'group' | 'deploy';
+  name: string;
+  owner: string;
+  host: string;
+  expires_at: string | null;
+  days_left: number | null;
+  scopes: string[];
+  last_used_at?: string | null;
+  web_url?: string;
+  profileId?: string;
+}
+
+export interface TokenOverview {
+  tokens: TrackedToken[];
+  errors: string[];
+  checkedAt: number;
+}
+
 export interface CiPushTarget {
   scope_type: 'project' | 'group';
   scope_id: number;

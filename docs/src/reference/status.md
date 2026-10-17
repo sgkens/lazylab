@@ -48,7 +48,8 @@ Every button, menu and form in the UI was traced to a server route and a GitLab 
 | MCP server | Verified with the official MCP client | Claude Code and Codex end to end not yet run |
 | Work items, MRs, milestones, labels | Wired | List calls return the first 50 per project |
 | CI editor, lint | Wired | GitLab lint on request; local parser for the graph |
-| Variables, badges, Pages | Wired | Masked variable values reach the browser; Pages needs GitLab 16.8+ |
+| Variables, badges, Pages | Wired | Masked values are read one at a time on Reveal; Pages needs GitLab 16.8+ |
+| Token expiry, PAT rotation | Verified against a fake GitLab | Needs GitLab 16.0+ to read a PAT, 16.10+ to rotate; not yet run against a live instance |
 | Packages | Wired, read-only | |
 | Releases, tags, release notes | Demo only | Compare API |
 | Runners | Wired | `/runners` lists only runners you own, not the admin view |

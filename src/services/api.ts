@@ -30,7 +30,7 @@ import {
 } from '../types/gitlab';
 import { Inbox } from '../types/inbox';
 import { NotifyChannelInfo, NotifyChannelInput, NotifyRules, NotifyState, WatchKind, WatchView } from '../types/notify';
-import { DeviceSession, SessionState, VaultEntryKind, VaultSummary } from '../types/vault';
+import { DeviceSession, SessionState, TokenOverview, VaultEntryKind, VaultSummary } from '../types/vault';
 
 const post = (body?: unknown): RequestInit => ({ method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 
@@ -49,7 +49,8 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
   const data = await res.json();
   if (!res.ok || data.success === false) {
-    throw new Error(data.error || `HTTP error ${res.status}`);
+    // The body stays reachable for responses that carry data on failure (token rotation).
+    throw Object.assign(new Error(data.error || `HTTP error ${res.status}`), { data });
   }
   return data;
 }
@@ -87,7 +88,14 @@ export const vaultApi = {
   ) => request<VaultSummary>(`/vault/entries/${id}/push`, post(payload)),
 
   createAgentToken: (name: string) => request<{ success: boolean; token: string }>('/vault/agent-tokens', post({ name })),
-  deleteAgentToken: (id: string) => request<{ success: boolean }>(`/vault/agent-tokens/${id}`, { method: 'DELETE' })
+  deleteAgentToken: (id: string) => request<{ success: boolean }>(`/vault/agent-tokens/${id}`, { method: 'DELETE' }),
+
+  tokenExpiry: (force = false) => request<{ success: boolean } & TokenOverview>(`/tokens/expiry${force ? '?force=true' : ''}`),
+  rotatePersonalToken: (profileId: string, expiresAt: string) =>
+    request<{ success: boolean; expires_at: string | null; overview: TokenOverview | null }>(
+      `/tokens/personal/${profileId}/rotate`,
+      post({ expiresAt })
+    )
 };
 
 export const api = {

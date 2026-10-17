@@ -20,6 +20,7 @@ A self-hosted GitLab workspace that runs on your own machine, keeps your GitLab 
   - badges, Pages and avatar;
   - a CI editor checked by GitLab's linter.
 - **Encrypted vault:** GitLab profiles for several instances, CI secrets you can push to GitLab, runner tokens, other secrets and agent tokens. Everything is encrypted with a key derived from your password.
+- **Token expiry:** warnings 14, 7, 3 and 1 days before a personal, project, group or deploy token expires, and rotation of a profile's personal access token from the vault.
 - **Agents:** an MCP server at `/mcp` with 17 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens. Agent skills for Claude Code, Codex and Antigravity are included.
 
 ![Failure excerpt of a failed job](docs/src/assets/screenshots/failure-excerpt.png)
