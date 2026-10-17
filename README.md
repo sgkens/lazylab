@@ -1,184 +1,145 @@
 # lazylab
 
-A self-hosted web UI and agent API for GitLab, run on your own machine and usable from other machines on your network. It covers work items, merge requests, pipelines, runners, CI variables and releases, with an encrypted vault for GitLab tokens and other secrets.
+A self-hosted GitLab workspace that runs on your own machine, keeps your GitLab tokens in an encrypted vault, and tells you what needs your attention across projects, in the browser, on your phone, and in your coding agent.
 
-## Security model
+![lazylab inbox: merge requests and issues grouped by who has to act next](docs/src/assets/screenshots/inbox.png)
 
-- **One admin account**, created on first run with a setup code printed to the server log.
-- **Vault:** GitLab tokens, CI secrets, runner tokens and generic secrets are stored in `<data dir>/vault.json`, encrypted with AES-256-GCM.
-  - The data key is wrapped with a key derived from your password (scrypt, N=2^16).
-  - After a restart the vault is **locked**: GitLab sync is paused until you sign in.
-  - **Forgetting the password means losing the vault contents.**
-- **Sessions** are held in memory (HttpOnly, SameSite=Strict cookies, 12 h idle / 7 days max). Restarting the server or locking the vault signs every device out.
-- **Writes** from the browser must come from lazylab's own origin. Login is throttled after 5 failures per IP.
-- **Agents** use bearer tokens issued in Vault → Agent tokens; only their SHA-256 hash is stored.
-- The **GitLab data cache** (`<data dir>/labwi_cache.*`) is not encrypted.
+## Features
 
-## Requirements
+- **Inbox:** merge requests, issues and To-Dos from every member project that need you, sorted by who has to act next. Each one shows why: failed pipeline, merge conflicts, review requested, ready to merge.
+- **Watches and push notifications:** follow a pipeline, job or merge request. You get a notification in the browser, through ntfy or Gotify on a phone, or through Slack and Discord webhooks when it finishes. Your own MR pipelines are watched automatically.
+- **CI failure triage:** a failed job opens on the section of the log that failed, with the error line, exit code and failure reason. Failure notifications include that error line. Infrastructure failures are marked "likely passes on retry".
+- **Run pipelines with variables:** variables declared in `.gitlab-ci.yml` are filled in, the last run is remembered, and the new pipeline is watched.
+- **Planning:**
+  - work items and merge requests with comments, labels, subtasks and attachments uploaded to GitLab;
+  - approve, draft, merge, close and reopen merge requests;
+  - milestones and labels across projects.
+- **Releases:** release notes generated from Conventional Commits since the previous tag, with a suggested semantic version, and tag comparison.
+- **Project settings:**
+  - CI/CD variables (project and group, with bulk import and `.env` export);
+  - badges, Pages and avatar;
+  - a CI editor checked by GitLab's linter.
+- **Encrypted vault:** GitLab profiles for several instances, CI secrets you can push to GitLab, runner tokens, other secrets and agent tokens. Everything is encrypted with a key derived from your password.
+- **Agents:** an MCP server at `/mcp` with 17 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens. Agent skills for Claude Code, Codex and Antigravity are included.
 
-- Bun 1.3+ (metal), or Docker with Compose v2.
-- A GitLab personal access token with `api` scope, added during setup or later in the Vault. Without one, lazylab runs in demo mode on seeded sample data.
+![Failure excerpt of a failed job](docs/src/assets/screenshots/failure-excerpt.png)
 
-## Configuration
+## Quick start
 
-Shell: bash, repo root.
+### Bun
+
+Requires Bun 1.3 or later. Shell: bash.
+
+```bash
+git clone https://gitlab.com/sgkens/lazylab.git && cd lazylab
+cp .env.example .env
+bun install
+bun run build
+bun run start                     # http://127.0.0.1:3000
+```
+
+### Docker
+
+Requires Docker with Compose v2. Shell: bash, repository root.
 
 ```bash
 cp .env.example .env
+docker compose up -d --build      # http://127.0.0.1:3000
+docker compose logs -f lazylab    # first start prints the setup code
 ```
 
-Every option is documented in `.env.example`. GitLab tokens are not configured in `.env`; add them in the setup screen or the Vault. A `GITLAB_TOKEN` present at first-run setup is imported once.
+### First run
 
-## First run
+1. Open the UI and enter the **setup code** from the server log. Only someone with console access can claim the instance.
+2. Create the admin account. The password, 12 characters or more, encrypts the vault and **cannot be recovered**.
+3. Add a GitLab host and a personal access token with the `api` scope, now or later under **Vault → GitLab profiles**.
 
-1. Start lazylab (below) and read the setup code from the log: `docker compose logs lazylab`, or the terminal on metal.
-2. Open the UI, enter the code, choose a username and a password of 12+ characters, and optionally a GitLab host + token.
-3. For agents: Vault → Agent tokens → Create, then `export LAZYLAB_URL=... LAZYLAB_TOKEN=llab_...` on the machine running the agent.
+Without a GitLab profile, lazylab runs on built-in sample data (demo mode). After every restart the vault is locked: sign in once to resume sync, watches and agent access.
 
-## Run on metal (Bun)
+## Connect a coding agent
 
-Shell: bash, repo root.
-
-```bash
-bun install
-bun run dev                 # Vite middleware + API with watch, http://127.0.0.1:3000
-bun run build && bun run start   # production: serves dist/ + API
-```
-
-## Run in Docker
-
-Shell: bash, repo root.
+Create a token in **Vault → Agent tokens**; the screen shows these commands with your URL and token filled in. Shell: bash, on the machine running the agent.
 
 ```bash
-docker compose up -d --build   # http://127.0.0.1:3000
-docker compose logs -f lazylab
-docker compose down
-```
-
-The vault, cache and TLS files live in the `lazylab-data` volume at `/data`.
-
-## Access from another machine
-
-lazylab listens on loopback only by default. To use it from a laptop on your LAN or tailnet, expose it **and** use HTTPS; otherwise your password and session cookie travel in plain text (lazylab logs a warning at startup when this is the case).
-
-### Option A: Tailscale Serve or Caddy (recommended)
-
-Keep lazylab on loopback and let the proxy terminate HTTPS. Shell: bash, on the desktop.
-
-```bash
-# .env
-LAZYLAB_TRUST_PROXY=loopback          # metal; for Docker use the bridge range, e.g. 172.16.0.0/12
-
-# Tailscale: serves https://<desktop>.<tailnet>.ts.net -> http://127.0.0.1:3000
-tailscale serve --bg 3000
-```
-
-If saves fail with `Cross-origin request rejected`, the proxy is rewriting the Host header. Set `LAZYLAB_PUBLIC_HOSTS=<desktop>.<tailnet>.ts.net`.
-
-### Option B: built-in HTTPS
-
-```bash
-# .env
-LAZYLAB_TLS=on
-LAZYLAB_TLS_SANS=192.168.1.50,desktop.lan   # names/IPs the laptop will use
-HOST=0.0.0.0                                # metal
-LAZYLAB_BIND=0.0.0.0                        # Docker
-```
-
-- With no `LAZYLAB_TLS_CERT`/`LAZYLAB_TLS_KEY`, a self-signed certificate is generated into `<data dir>/tls/` on first start, and its SHA-256 fingerprint is logged. Compare that fingerprint with the browser's certificate viewer the first time you connect from the laptop.
-- In Docker, `LAZYLAB_TLS_SANS` is required: the container's own hostname is meaningless to the laptop.
-- To avoid browser warnings, issue a cert with [mkcert](https://github.com/FiloSottile/mkcert) for the desktop's names, trust mkcert's root CA on the laptop, and point `LAZYLAB_TLS_CERT`/`LAZYLAB_TLS_KEY` at the files. Delete `<data dir>/tls/` to regenerate the self-signed cert after changing SANs.
-
-## Notifications
-
-lazylab polls watched pipelines, jobs and merge requests every 15 seconds while the vault is unlocked, and notifies you when they finish or change.
-
-- **Watch:** the bell button on a running pipeline or job, or on a merge request in the Inbox. Agents and scripts use `POST /api/agent/watches` with `{"kind":"pipeline","projectId":1,"targetId":2}`.
-- **Rules** (Vault → Notifications): auto-watch the running pipelines of your own MRs, new review requests, new commits on MRs you review, runner offline.
-- **Delivery:** the bell menu, a desktop notification when the tab is in the background (needs HTTPS or localhost), and every enabled push channel.
-
-Push channels are stored encrypted in the vault:
-
-| Type | Fields | Notes |
-|---|---|---|
-| ntfy | server URL, topic, optional access token | Subscribe to the topic in the ntfy phone app. A public `ntfy.sh` topic is readable by anyone who guesses its name; use a long random topic or a token-protected server |
-| Gotify | server URL, application token | Self-hosted |
-| Webhook | URL, format `json` / `slack` / `discord` | Slack and Discord incoming webhooks, or any JSON endpoint |
-
-Each channel can take all events or failures only. Use **Test** to check it.
-
-## CI failure triage
-
-A failed job opens on a **Failure** view instead of the full log. It shows the failure reason, the exit code, the error line, and the last lines of the section that failed (40 at most). Runner output after the script is left out: artifact upload, cache archive and cleanup.
-
-- **CI/CD:** a failed pipeline lists the error line of each failed job under "Why it failed". Jobs allowed to fail are left out.
-- **Notifications:** a failure notification includes the failing job's error line, and "Why it failed" opens the excerpt. A desktop failure notification also opens it when clicked.
-- **Retry:** retrying a failed job creates a new job and watches it. Failure reasons that usually pass on retry (runner system failure, stuck or timeout, scheduler, API) are marked "likely passes on retry".
-- **Copy excerpt:** copies the excerpt as plain text, ready for a ticket or an agent prompt.
-
-### Run pipeline
-
-**Run pipeline** in CI/CD starts a pipeline for a branch or tag. The form fills in the variables declared under `variables:` in `.gitlab-ci.yml` for that ref, with their descriptions and option lists. It reads these through GitLab GraphQL `ciConfigVariables`. If the query fails, you add the variables by hand. Variables left at their declared default are not sent. The last ref and variables used in each project are remembered in the browser. By default lazylab watches the new pipeline and notifies you when it finishes.
-
-```bash
-# Shell: bash, with LAZYLAB_URL and LAZYLAB_TOKEN (an agent token) exported
-curl -s -H "Authorization: Bearer $LAZYLAB_TOKEN" -H "Content-Type: application/json" \
-  -X POST "$LAZYLAB_URL/api/agent/pipelines" \
-  -d '{"projectId": 42, "ref": "main", "variables": [{"key": "DEPLOY_ENV", "value": "staging"}]}'
-```
-
-## MCP server
-
-lazylab serves MCP (Model Context Protocol) at `/mcp`, so Claude Code, Codex and other MCP clients can call its GitLab tools directly. It uses Streamable HTTP, is stateless, and returns JSON responses. Clients authenticate with an agent token from Vault → Agent tokens, which also shows the setup command after a token is created.
-
-```bash
-# Shell: bash, on the machine running Claude Code
-claude mcp add --transport http lazylab https://desktop.tailnet.ts.net/mcp \
+claude mcp add --transport http lazylab https://<your-host>/mcp \
   --header "Authorization: Bearer llab_..."
 ```
 
-| Tool | Does |
+The agent can then:
+
+- read your inbox;
+- explain a failed pipeline with `get_pipeline_failures`;
+- run a pipeline and have you notified when it finishes;
+- file issues and merge requests.
+
+See [MCP server](docs/src/agents/mcp.md) for Codex and the full tool list.
+
+## Use it from another machine
+
+lazylab listens on `127.0.0.1` by default. To use it from a laptop, put it behind HTTPS: Tailscale Serve or Caddy (`LAZYLAB_TRUST_PROXY=loopback`), or the built-in TLS (`LAZYLAB_TLS=on`). Plain HTTP on a network address exposes your password and session cookie. lazylab warns about this at startup. See [Remote access](docs/src/remote-access.md).
+
+## Documentation
+
+The documentation site is in [`docs/`](docs/). It is built with Eleventy and Nunjucks.
+
+| Topic | Page |
 |---|---|
-| `get_inbox` | What needs you across projects |
-| `list_projects` | Member projects; tools take a project id or a `group/project` path |
-| `list_work_items`, `get_work_item`, `create_work_item`, `update_work_item` | Issues |
-| `list_merge_requests`, `get_merge_request`, `create_merge_request` | Merge requests |
-| `add_comment` | Comment on an issue or merge request |
-| `list_pipelines`, `get_pipeline_failures`, `get_job_failure` | Pipelines and why they failed |
-| `run_pipeline`, `retry_job` | Start work on GitLab; watched by default |
-| `watch`, `list_watches` | Notify you when something finishes |
+| Install, first run, demo mode | [Getting started](docs/src/getting-started.md) |
+| Environment variables and data directory | [Configuration](docs/src/configuration.md) |
+| HTTPS, proxies, certificates | [Remote access](docs/src/remote-access.md) |
+| Vault encryption, sessions, tokens | [Security model](docs/src/security.md) |
+| Inbox, notifications, CI, planning, releases, settings | [Guides](docs/src/guide/) |
+| MCP, REST, skills | [Agents](docs/src/agents/) |
+| Components, request path, watch loop | [Architecture](docs/src/reference/architecture.md) |
+| What is verified against live GitLab | [Feature status](docs/src/reference/status.md) |
 
-- Read-only tools carry `readOnlyHint`, so clients can allow them without asking each time.
-- While lazylab is locked (after a restart, until someone signs in) `/mcp` answers `503`.
-- A browser `Origin` header must match the host. Requests with no `Origin`, which is normal for CLI clients, are allowed.
-- With the built-in self-signed certificate, Node-based clients reject the connection. Use Tailscale Serve or a trusted certificate, or point `NODE_EXTRA_CA_CERTS` at the certificate in `<data dir>/tls/`.
+Build and preview the site. Shell: bash, repository root.
 
-## Agent skills
+```bash
+cd docs && bun install && bun run dev    # http://localhost:8090
+```
 
-`skills/` contains a `lazylab-agent` skill for Claude Code, Codex and Antigravity. See [skills/README.md](skills/README.md).
+## Security in brief
 
-## Project tracking
+- One admin account. Sign-in is throttled after 4 failures per IP.
+- The vault (`<data dir>/vault.json`) uses AES-256-GCM, with a data key wrapped by an scrypt-derived key. The key lives only in memory while you are signed in.
+- Session cookies are `HttpOnly` and `SameSite=Strict`, and `Secure` over HTTPS. Every write must come from lazylab's own origin.
+- Agent tokens are stored as SHA-256 hashes and can be revoked. They act as the active GitLab profile.
+- The GitLab response cache is not encrypted.
 
-Open epics, tasks and the wired/stub audit are in [devtracker-pending.md](devtracker-pending.md).
+Details: [Security model](docs/src/security.md).
 
-## Layout
+## Project status
+
+lazylab is pre-1.0 and built for a single user.
+
+- The UI was audited in October 2026: every control now reaches a real GitLab call or says what it cannot do.
+- Several features are verified only against demo data so far, including the inbox, run pipeline and release notes. [Feature status](docs/src/reference/status.md) lists what has run against a live GitLab.
+- Open work is tracked in [devtracker-pending.md](devtracker-pending.md).
+
+## Development
+
+Shell: bash, repository root.
+
+```bash
+bun install
+bun run dev      # API + Vite with reload
+bun run lint     # tsc --noEmit
+bun test         # unit tests
+```
 
 | Path | Contents |
 |---|---|
-| `server.ts` | Express entry point; Vite middleware in dev, static `dist/` in prod |
-| `server/apiRouter.ts` | REST routes, SSE `/api/events`, `/api/agent/*` |
-| `server/session.ts` | Setup, login, sessions, origin check, agent bearer auth (`/api/session/*`) |
-| `server/vault.ts` | Encrypted vault file: profiles, entries, agent tokens |
-| `server/vaultRouter.ts` | `/api/vault/*` routes, CI secret push to GitLab |
-| `server/tls.ts` | Built-in HTTPS, self-signed cert generation |
-| `server/inbox.ts` | Cross-project inbox (`/api/inbox`, `/api/agent/inbox`) |
-| `server/watch.ts` | Watch poller, notification rules, history |
-| `server/notify.ts` | Push delivery: ntfy, Gotify, webhook |
-| `server/notifyRouter.ts` | `/api/notify/*` routes |
-| `server/mcp.ts` | MCP server at `/mcp`: JSON-RPC dispatch, tool definitions, bearer auth |
-| `server/triage.ts` | Job trace failure excerpt, run-pipeline input validation |
-| `server/gitlabClient.ts` | GitLab REST v4 client plus demo-mode dataset |
-| `server/cacheDb.ts` | sql.js cache snapshot + append-only journal in `.data/` |
-| `server/metricsManager.ts` | API/cache hit counters and rate-limit tracking |
-| `server/yamlParser.ts` | Minimal `.gitlab-ci.yml` parser for the editor |
-| `src/` | React 19 + Tailwind 4 SPA |
+| `server.ts` | Express entry point; Vite middleware in development, static `dist/` in production |
+| `server/` | API routes, MCP server, GitLab client, vault, sessions, inbox, watches, notifications, triage, release notes, cache |
+| `src/` | React 19 + Tailwind 4 single-page app |
+| `tests/` | `bun test` suites |
+| `skills/` | Agent skills for Claude Code, Codex and Antigravity |
+| `docs/` | Documentation site (Eleventy) |
+
+Conventions:
+
+- **Commits:** Conventional Commits (`type(scope): summary`), with `build: major|minor|patch` in the body when the version changes.
+- **Branches:** feature branches merge into `develop`; `main` stays stable.
+
+See [Development](docs/src/reference/development.md) for details.
