@@ -890,6 +890,7 @@ const AgentSetupSnippets: React.FC<{ token: string; showToast: (m: string) => vo
 
 const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m: string) => void }> = ({ tokens, run, showToast }) => {
   const [name, setName] = useState('');
+  const [secrets, setSecrets] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
 
   return (
@@ -926,7 +927,14 @@ const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m
           {tokens.map((t) => (
             <li key={t.id} className="flex items-center gap-3 px-3 py-2">
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-semibold text-zinc-100">{t.name}</div>
+                <div className="text-xs font-semibold text-zinc-100">
+                  {t.name}
+                  {t.secrets && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded border border-amber-800/60 bg-amber-950/30 text-[10px] font-medium text-amber-300">
+                      reads secrets
+                    </span>
+                  )}
+                </div>
                 <div className="text-[11px] text-zinc-500 font-mono">
                   {t.prefix}… · created {fmtDate(t.createdAt)}
                 </div>
@@ -940,20 +948,30 @@ const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m
       )}
 
       <form
-        className="flex gap-2"
+        className="space-y-2"
         onSubmit={async (e) => {
           e.preventDefault();
           let token = '';
-          if (await run(async () => (token = (await vaultApi.createAgentToken(name)).token))) {
+          if (await run(async () => (token = (await vaultApi.createAgentToken(name, secrets)).token))) {
             setCreated(token);
             setName('');
+            setSecrets(false);
           }
         }}
       >
-        <input className={inputClass} placeholder="name, e.g. laptop-claude-code" value={name} onChange={(e) => setName(e.target.value)} required />
-        <button className={btnPrimary}>
-          <Plus className="w-3.5 h-3.5" /> Create
-        </button>
+        <div className="flex gap-2">
+          <input className={inputClass} placeholder="name, e.g. laptop-claude-code" value={name} onChange={(e) => setName(e.target.value)} required />
+          <button className={btnPrimary}>
+            <Plus className="w-3.5 h-3.5" /> Create
+          </button>
+        </div>
+        <label className="flex items-start gap-2 text-[11px] text-zinc-400">
+          <input type="checkbox" className="mt-0.5" checked={secrets} onChange={(e) => setSecrets(e.target.checked)} />
+          <span>
+            Can read secrets: CI variable values and vault secrets, for <code className="font-mono">lazy env pull</code> and{' '}
+            <code className="font-mono">lazy run</code>. Leave it off for tokens given to agents.
+          </span>
+        </label>
       </form>
     </Card>
   );

@@ -87,7 +87,8 @@ export const vaultApi = {
     payload: { scope_type: 'project' | 'group'; scope_id: number; key: string; environment_scope?: string; masked?: boolean; protected?: boolean }
   ) => request<VaultSummary>(`/vault/entries/${id}/push`, post(payload)),
 
-  createAgentToken: (name: string) => request<{ success: boolean; token: string }>('/vault/agent-tokens', post({ name })),
+  createAgentToken: (name: string, secrets = false) =>
+    request<{ success: boolean; token: string }>('/vault/agent-tokens', post({ name, secrets })),
   deleteAgentToken: (id: string) => request<{ success: boolean }>(`/vault/agent-tokens/${id}`, { method: 'DELETE' }),
 
   tokenExpiry: (force = false) => request<{ success: boolean } & TokenOverview>(`/tokens/expiry${force ? '?force=true' : ''}`),
