@@ -4,6 +4,81 @@ Open epics and tasks for lazylab, plus the baseline audit of what is wired to Gi
 
 Status keys: `[ ]` open, `[~]` in progress, `[x]` done. Task IDs are `<epic>-<n>` and stay stable once assigned.
 
+## Product audit: developer QoL (2026-10-17)
+
+### Verdict
+
+As imported, lazylab is mostly a second UI for things GitLab's own UI already does, and on its own that is not a reason for a developer to switch. lazylab becomes worth running when it does what a hosted UI cannot, because it runs on the developer's own machine:
+
+1. **It sits next to the work.** The same host has the git checkouts, Docker, the runners and the editor. GitLab cannot see any of these.
+2. **It holds secrets and brokers access.** Agents, scripts and the laptop get scoped lazylab tokens instead of a GitLab PAT with `api` scope.
+3. **It aggregates and remembers.** It can show one view across every project and every GitLab host, kept in a local cache with "since you last looked" state.
+4. **It can act on your behalf.** It can watch pipelines, retry infrastructure failures, notify the laptop or phone, and prepare releases.
+
+Test for every new feature: does it remove a context switch or a repeated manual step, and does it need to run locally? If neither, it belongs in GitLab's UI rather than here.
+
+### Where the developer loop loses time
+
+```mermaid
+flowchart LR
+  P[Pick work] --> B[Branch] --> C[Code] --> PU[Push]
+  PU --> CI[Wait for CI] --> F{Green?}
+  F -- no --> T[Read log, fix, retry] --> PU
+  F -- yes --> MR[Open MR] --> RV[Review / approve] --> M[Merge] --> R[Tag + release] --> D[Deploy]
+  P -.INBOX.-> P
+  B -.REPO-4.-> B
+  CI -.WATCH.-> CI
+  T -.TRIAGE.-> T
+  C -.ENV.-> C
+  MR -.REPO-3, CLI.-> MR
+  RV -.INBOX, WATCH.-> RV
+  R -.REL.-> R
+  D -.DEPLOY.-> D
+```
+
+| Step | Today without lazylab | lazylab answer |
+|---|---|---|
+| Pick work | Check To-Do list, MR lists and issue boards per project | INBOX: one list across projects and hosts |
+| Branch | Copy the issue number by hand, type a branch name | REPO-4: start work on an issue |
+| Code | Copy CI variables into `.env` by hand; secrets drift | ENV-1/2: pull or inject secrets from the vault |
+| Wait for CI | Refresh the pipeline page, or forget about it | WATCH: notification on the laptop or phone when it finishes |
+| Fix failures | Scroll a 5 MB log; retry flaky jobs by hand | TRIAGE: failure excerpt, flaky detection, retry policy |
+| Open MR | Web form, copy the branch name | REPO-3 / CLI-1: MR from the current branch |
+| Review | Email notifications, tab hunting | INBOX + WATCH: review queue, re-review on new push |
+| Release | Work out the semver bump and write the changelog by hand | REL: bump and changelog from Conventional Commits |
+| Deploy | Environments page per project | DEPLOY: environments across projects, review app cleanup |
+| Across N projects | Repeat every setting change N times | FLEET: bulk labels, settings baseline, project bootstrap |
+| Agents | Hand the agent a full-scope PAT | AGENT: MCP server, scoped tokens, approval queue |
+
+### Integrations considered
+
+| Integration | Verdict | Where |
+|---|---|---|
+| Notification push (ntfy, Gotify, generic webhook, browser Notification API) | Yes: covers phone, laptop and chat (Slack/Discord/Matrix incoming webhooks) with one mechanism | WATCH-2/3 |
+| GitLab webhooks | Yes, optional: replaces polling when GitLab can reach the desktop (Tailscale Funnel, LAN self-hosted GitLab) | WATCH-5 |
+| MCP (Model Context Protocol) | Yes: Claude Code and Codex connect natively instead of using the curl skill | AGENT-1 |
+| Local git checkouts | Yes: branch, ahead/behind and pipeline status for local HEAD | REPO |
+| Editor deep links (`vscode://`, `cursor://`, JetBrains) | Yes: little effort, removes "find that file" steps | REPO-5 |
+| Docker on the host | Opt-in only (socket access is root-equivalent): local runner lifecycle | RL-2 |
+| Container registry | Yes: storage cleanup is a recurring chore | REG |
+| Renovate / Dependabot MRs | Yes: group and bulk-merge across projects | FLEET-4 |
+| Jira / Linear | No for now: GitLab work items cover it; revisit if asked | n/a |
+| Hosted LLM in the app | No: the mission is local-first. Agents are reached through MCP and skills instead | AGENT |
+| Sentry / uptime | Later: link releases to errors once REL and DEPLOY exist | n/a |
+
+### Non-goals
+
+- Full diff and code review UI: GitLab's review UI is the right tool there. lazylab links to it and adds queue, state and notifications around it.
+- Wiki, snippets, epics, boards editing.
+- Being a multi-user server: lazylab has one owner and many devices.
+
+### Roadmap
+
+1. **Foundation, blocks everything else:** GL-1, GL-14, GL-15, GL-2, CACHE-1/2/4, BUILD-3. Cross-project views are wrong while list calls hit non-existent endpoints and swallow errors.
+2. **First differentiators, most QoL for the effort:** INBOX-1/2, WATCH-1..4, TRIAGE-1/6, ENV-4, AGENT-1.
+3. **Away from the browser:** CLI-1/2/4, ENV-1/2, REPO-1..4.
+4. **Chores at scale:** REL, FLEET, DEPLOY, REG, RL.
+
 ## Audit baseline (2026-10-17)
 
 Classification of the live (token configured) code path. With no token everything runs on in-memory demo data in `server/gitlabClient.ts`, and mutations are lost on restart.
@@ -190,6 +265,103 @@ flowchart LR
 - [ ] BUILD-5 Container `HEALTHCHECK` on `/api/status` (needs a lightweight health route that does not call GitLab)
 - [ ] BUILD-6 Split `gitlabClient.ts` (3.4k lines): demo dataset into `server/demo/`, one module per GitLab resource
 - [ ] BUILD-7 Single source for the agent skill text: serve `/api/agent/skill.md` from `skills/.claude/lazylab-agent/SKILL.md` and have `AgentSkillModal` fetch it
+
+## Epic INBOX: my work across projects and hosts
+
+- [ ] INBOX-1 `GET /api/inbox`: MRs where I am reviewer, my open MRs (pipeline, approvals, conflicts, draft), issues assigned to me, pending To-Dos. Uses the global GitLab endpoints that exist (`/merge_requests?scope=…`, `/issues?scope=assigned_to_me`, `/todos`)
+- [ ] INBOX-2 Inbox view as the default tab, grouped by "needs my action" / "waiting on others" / "assigned"
+- [ ] INBOX-3 Mark a To-Do done; snooze an item locally until a date or until it changes
+- [ ] INBOX-4 Aggregate across every vault profile (work GitLab + gitlab.com), not only the active one
+- [ ] INBOX-5 "New since you last looked" markers, stored locally per item (`updated_at` vs last-seen)
+- [ ] INBOX-6 Standup summary: my events since yesterday (`/users/:id/events`) as copyable markdown
+
+## Epic WATCH: notifications and background watching
+
+- [ ] WATCH-1 Watch a pipeline, job or MR; the server polls it until a terminal state and records the outcome
+- [ ] WATCH-2 Browser notifications over SSE (Notification API needs HTTPS or localhost)
+- [ ] WATCH-3 Push channels stored in the vault: ntfy, Gotify, generic JSON webhook (covers Slack/Discord/Matrix)
+- [ ] WATCH-4 Auto-watch rules: pipelines of my MRs, MRs where I am reviewer (new push → re-review), runner offline
+- [ ] WATCH-5 GitLab webhook receiver `POST /hooks/gitlab` with a secret token, replacing polling when GitLab can reach the host
+- [ ] WATCH-6 PWA manifest + service worker so the laptop and phone can install lazylab and receive Web Push
+
+## Epic TRIAGE: CI failure triage
+
+- [ ] TRIAGE-1 Failure excerpt: the failing section of a job trace (collapsed `section_start` markers, last N lines before `ERROR: Job failed`), plus `failure_reason`
+- [ ] TRIAGE-2 Flaky detection: pass/fail history per job name on the default branch; "retry flaky" action
+- [ ] TRIAGE-3 Auto-retry policy for infrastructure failures (`runner_system_failure`, `stuck_or_timeout_failure`, `scheduler_failure`), with a cap
+- [ ] TRIAGE-4 Pipeline duration trend and slowest jobs per project
+- [ ] TRIAGE-5 Incremental trace tail with live follow (offset-based fetch instead of the whole log per poll)
+- [ ] TRIAGE-6 Run pipeline for a ref with a variables form (`POST /projects/:id/pipeline`); missing today
+- [ ] TRIAGE-7 "Hand to agent": bundle MR diff + failure excerpt + `.gitlab-ci.yml` as a prompt or an MCP resource
+
+## Epic REPO: local checkouts on the lazylab host
+
+- [ ] REPO-1 Workspace roots setting; scan for git repos and match `remote.origin.url` to GitLab projects. In Docker this needs a read-only bind mount
+- [ ] REPO-2 Per project: local branch, ahead/behind, dirty state, pipeline for local `HEAD`
+- [ ] REPO-3 Create MR from a branch: title from the last commit, `Closes #<iid>` from a `<iid>-slug` branch name
+- [ ] REPO-4 Start work on an issue: create `<iid>-<slug>` branch on GitLab, optional local fetch + checkout
+- [ ] REPO-5 Editor deep links (`vscode://file/…`, `cursor://`, JetBrains) for file paths in MR changes and job traces
+- [ ] REPO-6 Stale branch cleanup: merged branches on the remote and locally
+
+## Epic CLI: `lazy` companion for the laptop and terminal
+
+- [ ] CLI-1 `lazy` Bun CLI over the lazylab API with an agent token; detects the project from `git remote` in the current directory. Commands: `inbox`, `ci [watch]`, `mr create`, `job log --failed`
+- [ ] CLI-2 `lazy push`: `git push`, then watch the pipeline and notify on completion
+- [ ] CLI-3 TUI mode (lazygit-style panes) for inbox and pipelines
+- [ ] CLI-4 Single binary via `bun build --compile` for Linux, macOS and Windows
+
+## Epic ENV: secrets for local development
+
+- [ ] ENV-1 `lazy env pull`: render a project's CI variables (masked ones from the vault) and named vault secrets into `.env` for a given `environment_scope`
+- [ ] ENV-2 `lazy run -- <cmd>`: inject the same set as environment variables without writing a file
+- [ ] ENV-3 Secret fan-out and rotation: one vault secret pushed to N projects; updating it re-pushes every recorded target
+- [ ] ENV-4 Token expiry tracking: PAT (`GET /personal_access_tokens/self`), project/group/deploy tokens; warn N days ahead via WATCH; rotate the PAT (`POST /personal_access_tokens/self/rotate`) and update the vault profile
+- [ ] ENV-5 Drift check: vault CI secrets vs variables present in GitLab (presence and flags, not values)
+
+## Epic AGENT: agents as first-class clients
+
+- [ ] AGENT-1 MCP server (streamable HTTP at `/mcp`, bearer auth) exposing inbox, work items, MRs, pipelines, failure excerpt and run-pipeline as tools
+- [ ] AGENT-2 Token scopes: read-only / write, per-project allowlist (supersedes SEC-6)
+- [ ] AGENT-3 Approval queue: destructive or outward agent actions (merge, delete, push variable) wait for confirmation in the UI or a push notification
+- [ ] AGENT-4 Activity log per agent token
+- [ ] AGENT-5 Generate the skill and MCP config snippet for Claude Code / Codex from the Vault → Agent tokens screen
+
+## Epic REL: releases from Conventional Commits
+
+- [ ] REL-1 Next version from commits since the last tag (`feat` → minor, `fix` → patch, `!`/`BREAKING CHANGE` → major), with preview
+- [ ] REL-2 Changelog grouped by type, editable before publishing
+- [ ] REL-3 One action: tag + release + notes on the chosen ref
+- [ ] REL-4 Release checks: pipeline green on the ref, milestone closed, no open MRs targeting the milestone
+
+## Epic FLEET: operations across many projects
+
+- [ ] FLEET-1 Label sets: define once, apply to selected projects
+- [ ] FLEET-2 Settings baseline: check projects against a profile (protected default branch, approvals, squash, CI badge) with fix actions
+- [ ] FLEET-3 Project bootstrap: create a project with CI template, badges, variables and branch protection in one step
+- [ ] FLEET-4 Dependency MRs (Renovate/Dependabot) grouped across projects; bulk approve + merge when the pipeline is green
+
+## Epic DEPLOY: environments
+
+- [ ] DEPLOY-1 Environments across projects: last deployment, ref, status, who
+- [ ] DEPLOY-2 Re-deploy (retry the deploy job of a previous deployment) and stop an environment
+- [ ] DEPLOY-3 Stale review apps: list and stop environments older than N days
+
+## Epic REG: container registry
+
+- [ ] REG-1 Registry repositories and tags per project, with sizes
+- [ ] REG-2 Bulk delete tags by pattern / age; edit the cleanup policy
+
+## Epic RL: runners on this machine
+
+- [ ] RL-1 Runner health: last contact, offline alert (via WATCH)
+- [ ] RL-2 Opt-in Docker socket: start, stop and update a `gitlab/gitlab-runner` container registered from the UI
+- [ ] RL-3 Pending-job diagnosis: jobs stuck in `pending` and why (no online runner with matching tags)
+
+## Epic PAL: keyboard-first UI
+
+- [ ] PAL-1 Ctrl+K runs actions, not only search ("retry last failed pipeline", "open my MR for branch X")
+- [ ] PAL-2 `j`/`k`/`enter` list navigation and single-key actions in the main views
+- [ ] PAL-3 Paste any GitLab URL to open the matching item in lazylab
 
 ## Epic DEMO: demo mode decision
 
