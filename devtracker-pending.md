@@ -76,7 +76,7 @@ flowchart LR
 
 1. **Foundation, blocks everything else:** GL-1, GL-14, GL-15, GL-2, CACHE-1/2/4, BUILD-3. Cross-project views are wrong while list calls hit non-existent endpoints and swallow errors.
 2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, ~~TRIAGE-1/6~~, ~~ENV-4~~, ~~AGENT-1~~.
-3. **Away from the browser:** ~~CLI-1/2~~, CLI-4, ENV-1/2, REPO-1..4.
+3. **Away from the browser:** ~~CLI-1/2~~, CLI-4, ~~ENV-1/2~~, REPO-1..4.
 4. **Chores at scale:** REL, FLEET, DEPLOY, REG, RL.
 
 ## Audit baseline (2026-10-17)
@@ -407,6 +407,47 @@ Follow-ups:
 | E11 | "Auto-fetch background error: Unable to connect" at the end of the run | The script stops the fake GitLab and lazylab together | Expected; not a product error |
 | E12 | Pipeline-finished notifications missing from the first run's check | Watches poll every 15 s and the script ended sooner | Script waits for one poll; notifications arrive |
 
+## Done 2026-10-18 (tenth pass): local environment (ENV-1, ENV-2)
+
+```mermaid
+flowchart LR
+  C[lazy env / env pull / run] --> M[MCP get_env, token needs secrets flag]
+  M --> L[loadEnvLevels: project vars, /projects/:id/groups closest first, group vars]
+  L --> R[resolveEnv: first level wins, exact scope > pattern > *]
+  V[(vault: CI secret targets, generic secrets)] --> R
+  R --> O{command}
+  O -- env --> T[table: key, flags, source; no values]
+  O -- env pull --> F[.env mode 600, file vars in .env.d/, git-ignore and overwrite guards]
+  O -- run --> P[child env, file vars in a temp dir removed after]
+```
+
+- [x] ENV-1a `server/envResolve.ts`: `scopeMatches` (GitLab `*` wildcards), `resolveEnv` (project > closest group > parent; exact > pattern > `*`; hidden values from the vault CI secret pushed to the same key and scope; named vault secrets win), `loadEnvLevels` (a group the user cannot read is skipped and reported)
+- [x] ENV-1b Client: variables read all pages (was the first 20 only, which also affected the Variables view); `hidden` flag (GitLab 17.4+, value `null`); `getProjectAncestorGroups`; demo group variables filtered by group id (the demo showed platform's variables for every group)
+- [x] ENV-1c MCP tool `get_env`, listed and callable only for agent tokens created with **Can read secrets** (new `AgentToken.secrets`); each call is journaled as `READ_ENV` with the token name. First slice of AGENT-2/SEC-6
+- [x] ENV-1d Vault → Agent tokens: "Can read secrets" checkbox at creation, "reads secrets" badge
+- [x] ENV-1e `lazy env` (keys, flags, source; `--json` without values) and `lazy env pull` (`--env`, `--out`, `--secret KEY=name`, `--force`; refuses files git does not ignore and a `.env` it did not write; file variables in `<out>.d/`)
+- [x] ENV-2 `lazy run [--env] [--secret] -- <cmd>`: variables in the child environment only, file variables in a private temp dir removed afterwards, exit code passed through (128 + signal)
+- [x] Defaults from `git config lazylab.environment` and `lazylab.secret` (multi-valued); repeated string options join into a comma list
+
+Verified: 104 tests (scope matching, precedence, specificity, vault fallback, named secrets, quoting, rendering, caveats, argument parsing, `get_env` gating and demo resolution, token flag); end to end in demo mode (plain token refused; list; pull refused without `.gitignore`, then for `.env.d/`; production pull with a secret and a missing one; modes 600/700; `run` with a file variable, exit 3 passed through, temp dir removed; `run` without `--`, unknown command; hand-written `.env` refused, `--force`; git config defaults; journal entries); headless Chromium (checkbox, badge, stored flag, no console errors); `.env` quoting checked against Node `--env-file`, Bun and Docker Compose.
+Not verified: live GitLab (`/projects/:id/groups`, hidden variables, pagination past 100, 403 on a parent group); Windows (`chmod`, temp dir, signals).
+
+Follow-ups:
+- [ ] ENV-9 `lazy env diff`: compare the local `.env` with what `env pull` would write (keys added, removed, changed; no values)
+- [ ] ENV-10 Expand `$NAME` references between variables the way GitLab does for non-raw variables
+- [ ] ENV-11 Per-token project allowlist for `get_env` (with AGENT-2)
+
+### Errors noted this pass
+
+| # | Error | Cause | Status |
+|---|---|---|---|
+| E13 | A value with `$HOME` in single quotes came back expanded under `bun --env-file` | Bun's loader expands `$NAME` even in single quotes; Node, dotenv and Compose read single quotes literally | Kept single quotes (literal for most loaders); `env pull` names the keys with `$` and points to `lazy run` |
+| E14 | Double-quoted `\"` escapes came back with the backslash under Node `--env-file` | Node does not unescape `\"` | Double quotes are used only for values with `'` and no `"` or `\`; values with both quote kinds are named as not portable |
+| E15 | `resolveEnv` test failed: `SONAR` was null | Test bug: a later `--secret Sonar` spec replaced the earlier `SONAR=…` | Fixed in the test |
+| E16 | MCP test counted 18 listed tools against 19 defined | `get_env` is hidden from tokens without secret access | Test compares `listTools(true)` |
+| E17 | Second end-to-end run: "Already set up" | The first run's server kept the port: the trap killed the subshell, not `bun` | Script starts `bun` directly so `$!` is the server |
+| E18 | `pkill -f 'bun server.ts'` killed the calling shell (exit 144) | The pattern matched the shell's own command line | Use `pgrep -af 'server\.ts'` and kill by PID |
+
 ## Epic SEC: hardening follow-ups
 
 - [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
@@ -523,8 +564,8 @@ Follow-ups:
 
 ## Epic ENV: secrets for local development
 
-- [ ] ENV-1 `lazy env pull`: render a project's CI variables (masked ones from the vault) and named vault secrets into `.env` for a given `environment_scope`
-- [ ] ENV-2 `lazy run -- <cmd>`: inject the same set as environment variables without writing a file
+- [x] ENV-1 `lazy env pull`: render a project's CI variables (masked ones from the vault) and named vault secrets into `.env` for a given `environment_scope` (hidden values come from the vault; masked values are readable through the API)
+- [x] ENV-2 `lazy run -- <cmd>`: inject the same set as environment variables without writing a file
 - [ ] ENV-3 Secret fan-out and rotation: one vault secret pushed to N projects; updating it re-pushes every recorded target
 - [x] ENV-4 Token expiry tracking: PAT (`GET /personal_access_tokens/self`), project/group/deploy tokens; warn N days ahead via WATCH; rotate the PAT (`POST /personal_access_tokens/self/rotate`) and update the vault profile
 - [ ] ENV-5 Drift check: vault CI secrets vs variables present in GitLab (presence and flags, not values)
@@ -532,7 +573,7 @@ Follow-ups:
 ## Epic AGENT: agents as first-class clients
 
 - [x] AGENT-1 MCP server (streamable HTTP at `/mcp`, bearer auth) exposing inbox, work items, MRs, pipelines, failure excerpt and run-pipeline as tools
-- [ ] AGENT-2 Token scopes: read-only / write, per-project allowlist (supersedes SEC-6)
+- [~] AGENT-2 Token scopes: read-only / write, per-project allowlist (supersedes SEC-6). Started: `secrets` flag gates `get_env` (ENV-1c)
 - [ ] AGENT-3 Approval queue: destructive or outward agent actions (merge, delete, push variable) wait for confirmation in the UI or a push notification
 - [ ] AGENT-4 Activity log per agent token
 - [~] AGENT-5 Generate the skill and MCP config snippet for Claude Code / Codex from the Vault → Agent tokens screen
