@@ -77,3 +77,25 @@ bun run build    # static output in docs/_site
 | `docs/src/**/*.md` | Pages; front matter sets `title` and `abstract` |
 
 Markdown is not processed by Nunjucks, so `{{ }}` in code samples stays literal. Set `DOCS_PATH_PREFIX=/lazylab/` when publishing under a sub-path, for example on GitLab Pages.
+
+### Publishing
+
+`.gitlab-ci.yml` has two jobs that share one build:
+
+| Job | Runs when | Does |
+|---|---|---|
+| `docs:build` | A merge request changes `docs/` | Builds the site; a broken page fails the MR |
+| `pages` | `docs/` or `.gitlab-ci.yml` changes on the default branch | Builds the site and publishes `public/` with GitLab Pages |
+
+The path prefix comes from `CI_PAGES_URL`: `https://sgkens.gitlab.io/lazylab` gives `/lazylab/`, and a unique Pages domain gives `/`. To check the job's script locally, run it with the variable set:
+
+```bash
+# Shell: bash, repository root
+export CI_PROJECT_DIR="$PWD" CI_PAGES_URL=https://sgkens.gitlab.io/lazylab
+export DOCS_PATH_PREFIX="$(echo "$CI_PAGES_URL" | sed -E 's#^https?://[^/]+##; s#/*$#/#')"
+(cd docs && bun install --frozen-lockfile && bun run build) && rm -rf public && mv docs/_site public
+```
+
+## License
+
+lazylab is released under the [MIT License](https://gitlab.com/sgkens/lazylab/-/blob/main/LICENSE).
