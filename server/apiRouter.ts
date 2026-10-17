@@ -48,13 +48,20 @@ async function runAutoFetch() {
     lastSyncTime = Date.now();
     // Refresh core caches
     const projects = await gitlabClient.getProjects(true);
+    // Each refresh is independent: one failing source must not stop the others or the inbox.
     // Milestones are not forced: each one costs an extra issues_statistics call, so their 2 min TTL applies.
-    await gitlabClient.getMilestones(undefined, false);
-    await gitlabClient.getWorkItems(undefined, 'all', true);
-    await gitlabClient.getMergeRequests(undefined, 'all', true);
-    await gitlabClient.getPipelines(undefined, true);
-    const runners = await gitlabClient.getRunners(true);
-    watchManager.onRunners(runners);
+    const refreshes = await Promise.allSettled([
+      gitlabClient.getMilestones(undefined, false),
+      gitlabClient.getWorkItems(undefined, 'all', true),
+      gitlabClient.getMergeRequests(undefined, 'all', true),
+      gitlabClient.getPipelines(undefined, true)
+    ]);
+    for (const r of refreshes) if (r.status === 'rejected') console.warn('Auto-fetch refresh failed:', r.reason?.message ?? r.reason);
+    try {
+      watchManager.onRunners(await gitlabClient.getRunners(true));
+    } catch (err: any) {
+      console.warn('Auto-fetch runners failed:', err?.message ?? err);
+    }
     const inbox = await getInbox(gitlabClient, true);
     broadcastEvent('inbox_updated', { counts: inbox.counts, generatedAt: inbox.generatedAt });
     await watchManager.onInbox(inbox);

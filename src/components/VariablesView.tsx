@@ -85,7 +85,13 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
       setIsLoading(true);
       const [projRes, grpRes] = await Promise.all([
         api.getVariables('project', currentProjectId),
-        group ? api.getVariables('group', group.id) : Promise.resolve({ success: true, variables: [] as GitLabVariable[] })
+        // Group variables need group access a project maintainer may not have; that failure must not hide the project's own.
+        group
+          ? api.getVariables('group', group.id).catch((err) => {
+              reportError('Could not load group variables', err);
+              return { success: true, variables: [] as GitLabVariable[] };
+            })
+          : Promise.resolve({ success: true, variables: [] as GitLabVariable[] })
       ]);
       const combined: GitLabVariable[] = [
         ...(projRes.success ? projRes.variables : []),

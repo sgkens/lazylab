@@ -109,7 +109,13 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
       setIsLoadingBadges(true);
       const [projBadges, grpBadges] = await Promise.all([
         api.getBadges('project', currentProjectId),
-        group ? api.getBadges('group', group.id) : Promise.resolve({ success: true, badges: [] as GitLabBadge[] })
+        // Group badges need group access a project maintainer may not have; that failure must not hide the project's own.
+        group
+          ? api.getBadges('group', group.id).catch((err) => {
+              reportError('Could not load group badges', err);
+              return { success: true, badges: [] as GitLabBadge[] };
+            })
+          : Promise.resolve({ success: true, badges: [] as GitLabBadge[] })
       ]);
       const combined: GitLabBadge[] = [
         ...(projBadges.success ? projBadges.badges : []),

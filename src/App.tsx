@@ -35,6 +35,7 @@ import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { SyncProgressBar } from './components/SyncProgressBar';
 import { AgentSkillModal } from './components/AgentSkillModal';
 import { api, notifyApi, sessionApi } from './services/api';
+import { reportError } from './utils/reportError';
 import { SessionState } from './types/vault';
 import {
   AppStatus,
@@ -177,35 +178,27 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
 
   // Initial load
   const loadInitialData = useCallback(async (force = false) => {
+    setIsSyncing(true);
     try {
-      setIsSyncing(true);
-      const [statusRes, projectsRes, labelsRes, milestonesRes] = await Promise.all([
-        api.getStatus(),
-        api.getProjects(force),
-        api.getLabels(undefined, force),
-        api.getMilestones(undefined, force)
-      ]);
-
-      setStatus(statusRes);
-      setProjects(projectsRes.projects || []);
-      setLabels(labelsRes.labels || []);
-      setMilestones(milestonesRes.milestones || []);
-
-      // Preload data for Dashboard & Tabs
-      const [wRes, mRes, pRes, rRes] = await Promise.all([
-        api.getWorkItems(selectedProjectId || undefined, 'all', force),
-        api.getMergeRequests(selectedProjectId || undefined, 'all', force),
-        api.getPipelines(selectedProjectId || undefined, force),
-        api.getRunners(force)
-      ]);
-
-      setWorkItems(wRes.workItems || []);
-      setMergeRequests(mRes.mergeRequests || []);
-      setPipelines(pRes.pipelines || []);
-      setRunners(rRes.runners || []);
-    } catch (err: any) {
-      console.error('Failed loading initial data:', err);
-      showToast(err.message || 'Error syncing data');
+      // Each source loads on its own: a failed one keeps its previous data and is named in the toast,
+      // instead of one error blanking every list.
+      const pid = selectedProjectId || undefined;
+      const sources: [string, () => Promise<void>][] = [
+        ['status', async () => setStatus(await api.getStatus())],
+        ['projects', async () => setProjects((await api.getProjects(force)).projects || [])],
+        ['labels', async () => setLabels((await api.getLabels(undefined, force)).labels || [])],
+        ['milestones', async () => setMilestones((await api.getMilestones(undefined, force)).milestones || [])],
+        ['work items', async () => setWorkItems((await api.getWorkItems(pid, 'all', force)).workItems || [])],
+        ['merge requests', async () => setMergeRequests((await api.getMergeRequests(pid, 'all', force)).mergeRequests || [])],
+        ['pipelines', async () => setPipelines((await api.getPipelines(pid, force)).pipelines || [])],
+        ['runners', async () => setRunners((await api.getRunners(force)).runners || [])]
+      ];
+      const results = await Promise.allSettled(sources.map(([, load]) => load()));
+      const failed = sources.map(([name], i) => ({ name, r: results[i] })).filter((x) => x.r.status === 'rejected');
+      if (failed.length > 0) {
+        const first = (failed[0].r as PromiseRejectedResult).reason;
+        reportError(`Could not load ${failed.map((f) => f.name).join(', ')}`, first);
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -317,7 +310,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         setLabels(res.labels || []);
       }
     } catch (err: any) {
-      console.error('Failed loading tab data:', err);
+      reportError(`Could not load ${tab.replace('_', ' ')}`, err);
     }
   };
 

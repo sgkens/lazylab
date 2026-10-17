@@ -1908,12 +1908,8 @@ export class GitLabClient {
     }
 
     if (!projectId) {
-      try {
-        const all = await this.forRecentProjects((p) => this.getMilestones(p.id, force));
-        return all.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
-      } catch {
-        return [];
-      }
+      const all = await this.forRecentProjects((p) => this.getMilestones(p.id, force));
+      return all.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
     }
 
     const cacheKey = `milestones:${projectId}`;
@@ -1922,39 +1918,35 @@ export class GitLabClient {
       if (cached) return cached.data;
     }
 
-    try {
-      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/milestones?per_page=50&state=active`);
-      // The milestone API returns no issue counts; issues_statistics gives them per milestone (one call each).
-      const stats = await mapLimit(data, AGGREGATE_CONCURRENCY, async (m) => {
-        const { data: s } = await this.fetchApi<any>(
-          `/projects/${projectId}/issues_statistics?milestone=${encodeURIComponent(m.title)}`
-        );
-        return s?.statistics?.counts as { opened: number; closed: number } | undefined;
-      });
-      const list: GitLabMilestone[] = data.map((m, i) => {
-        const counts = stats[i].status === 'fulfilled' ? stats[i].value : undefined;
-        const total = counts ? counts.opened + counts.closed : 0;
-        return {
-          id: m.id,
-          iid: m.iid,
-          project_id: m.project_id || projectId,
-          title: m.title,
-          description: m.description,
-          state: m.state,
-          due_date: m.due_date,
-          start_date: m.start_date,
-          web_url: m.web_url,
-          // Left undefined when unknown; the UI shows "n/a" rather than a made-up number.
-          open_issues_count: counts?.opened,
-          closed_issues_count: counts?.closed,
-          completion_percentage: counts ? (total ? Math.round((counts.closed / total) * 100) : 0) : undefined
-        };
-      });
-      cacheDb.set(cacheKey, 'milestones', String(projectId), list, etag, 120000);
-      return list;
-    } catch {
-      return [];
-    }
+    const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/milestones?per_page=50&state=active`);
+    // The milestone API returns no issue counts; issues_statistics gives them per milestone (one call each).
+    const stats = await mapLimit(data, AGGREGATE_CONCURRENCY, async (m) => {
+      const { data: s } = await this.fetchApi<any>(
+        `/projects/${projectId}/issues_statistics?milestone=${encodeURIComponent(m.title)}`
+      );
+      return s?.statistics?.counts as { opened: number; closed: number } | undefined;
+    });
+    const list: GitLabMilestone[] = data.map((m, i) => {
+      const counts = stats[i].status === 'fulfilled' ? stats[i].value : undefined;
+      const total = counts ? counts.opened + counts.closed : 0;
+      return {
+        id: m.id,
+        iid: m.iid,
+        project_id: m.project_id || projectId,
+        title: m.title,
+        description: m.description,
+        state: m.state,
+        due_date: m.due_date,
+        start_date: m.start_date,
+        web_url: m.web_url,
+        // Left undefined when unknown; the UI shows "n/a" rather than a made-up number.
+        open_issues_count: counts?.opened,
+        closed_issues_count: counts?.closed,
+        completion_percentage: counts ? (total ? Math.round((counts.closed / total) * 100) : 0) : undefined
+      };
+    });
+    cacheDb.set(cacheKey, 'milestones', String(projectId), list, etag, 120000);
+    return list;
   }
 
   async createMilestone(projectId: number, payload: { title: string; description?: string; due_date?: string; start_date?: string }): Promise<GitLabMilestone> {
@@ -2001,12 +1993,8 @@ export class GitLabClient {
 
     // `/issues?scope=all` would include every public project on gitlab.com; stay within member projects.
     if (!projectId) {
-      try {
-        const all = await this.forRecentProjects((p) => this.getWorkItems(p.id, state, force));
-        return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 100);
-      } catch {
-        return [];
-      }
+      const all = await this.forRecentProjects((p) => this.getWorkItems(p.id, state, force));
+      return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 100);
     }
 
     const cacheKey = `work_items:${projectId}:${state}`;
@@ -2018,16 +2006,11 @@ export class GitLabClient {
     let endpoint = `/projects/${projectId}/issues?per_page=50`;
     if (state !== 'all') endpoint += `&state=${state}`;
 
-    try {
-      const { data, etag } = await this.fetchApi<any[]>(endpoint);
-      const items: GitLabWorkItem[] = data.map(mapWorkItem);
+    const { data, etag } = await this.fetchApi<any[]>(endpoint);
+    const items: GitLabWorkItem[] = data.map(mapWorkItem);
 
-      cacheDb.set(cacheKey, 'work_items', String(projectId), items, etag, 60000);
-      return items;
-    } catch (err) {
-      console.error('Failed fetching work items:', err);
-      return [];
-    }
+    cacheDb.set(cacheKey, 'work_items', String(projectId), items, etag, 60000);
+    return items;
   }
 
   async createWorkItem(projectId: number, payload: {
@@ -2233,25 +2216,21 @@ export class GitLabClient {
       return DEMO_NOTES[key] || [];
     }
 
-    try {
-      const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/issues/${issueIid}/notes?sort=asc`);
-      return data.map((n) => ({
-        id: n.id,
-        body: n.body,
-        author: {
-          id: n.author.id,
-          name: n.author.name,
-          username: n.author.username,
-          avatar_url: n.author.avatar_url,
-          web_url: n.author.web_url
-        },
-        created_at: n.created_at,
-        system: Boolean(n.system),
-        attachment: n.attachment ? { name: n.attachment.filename || 'attachment', url: n.attachment.url } : undefined
-      }));
-    } catch {
-      return [];
-    }
+    const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/issues/${issueIid}/notes?sort=asc`);
+    return data.map((n) => ({
+      id: n.id,
+      body: n.body,
+      author: {
+        id: n.author.id,
+        name: n.author.name,
+        username: n.author.username,
+        avatar_url: n.author.avatar_url,
+        web_url: n.author.web_url
+      },
+      created_at: n.created_at,
+      system: Boolean(n.system),
+      attachment: n.attachment ? { name: n.attachment.filename || 'attachment', url: n.attachment.url } : undefined
+    }));
   }
 
   async createWorkItemNote(projectId: number, issueIid: number, body: string, attachment?: { name: string; url: string; size?: number }): Promise<GitLabNote> {
@@ -2299,24 +2278,20 @@ export class GitLabClient {
       return DEMO_NOTES[key] || [];
     }
 
-    try {
-      const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/merge_requests/${mrIid}/notes?sort=asc`);
-      return data.map((n) => ({
-        id: n.id,
-        body: n.body,
-        author: {
-          id: n.author.id,
-          name: n.author.name,
-          username: n.author.username,
-          avatar_url: n.author.avatar_url,
-          web_url: n.author.web_url
-        },
-        created_at: n.created_at,
-        system: Boolean(n.system)
-      }));
-    } catch {
-      return [];
-    }
+    const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/merge_requests/${mrIid}/notes?sort=asc`);
+    return data.map((n) => ({
+      id: n.id,
+      body: n.body,
+      author: {
+        id: n.author.id,
+        name: n.author.name,
+        username: n.author.username,
+        avatar_url: n.author.avatar_url,
+        web_url: n.author.web_url
+      },
+      created_at: n.created_at,
+      system: Boolean(n.system)
+    }));
   }
 
   async createMergeRequestNote(projectId: number, mrIid: number, body: string, attachment?: { name: string; url: string; size?: number }): Promise<GitLabNote> {
@@ -2368,12 +2343,8 @@ export class GitLabClient {
     }
 
     if (!projectId) {
-      try {
-        const all = await this.forRecentProjects((p) => this.getMergeRequests(p.id, state, force));
-        return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 100);
-      } catch {
-        return [];
-      }
+      const all = await this.forRecentProjects((p) => this.getMergeRequests(p.id, state, force));
+      return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 100);
     }
 
     const cacheKey = `mrs:${projectId}:${state}`;
@@ -2386,27 +2357,22 @@ export class GitLabClient {
 
     if (state !== 'all') endpoint += `&state=${state}`;
 
+    const { data, etag } = await this.fetchApi<any[]>(endpoint);
+    const mrs: GitLabMergeRequest[] = data.map(mapMergeRequest);
+    // List responses carry no approval data; one filtered call marks the MRs the user has approved.
     try {
-      const { data, etag } = await this.fetchApi<any[]>(endpoint);
-      const mrs: GitLabMergeRequest[] = data.map(mapMergeRequest);
-      // List responses carry no approval data; one filtered call marks the MRs the user has approved.
-      try {
-        const me = await this.getCurrentUser();
-        const { data: mine } = await this.fetchApi<any[]>(
-          `/projects/${projectId}/merge_requests?per_page=100&state=opened&approved_by_usernames[]=${encodeURIComponent(me.username)}`
-        );
-        const approved = new Set(mine.map((m) => m.iid));
-        for (const mr of mrs) mr.approved = approved.has(mr.iid);
-      } catch {
-        // leave approved as mapped
-      }
-
-      cacheDb.set(cacheKey, 'merge_requests', String(projectId), mrs, etag, 60000);
-      return mrs;
-    } catch (err) {
-      console.error('Failed fetching merge requests:', err);
-      return [];
+      const me = await this.getCurrentUser();
+      const { data: mine } = await this.fetchApi<any[]>(
+        `/projects/${projectId}/merge_requests?per_page=100&state=opened&approved_by_usernames[]=${encodeURIComponent(me.username)}`
+      );
+      const approved = new Set(mine.map((m) => m.iid));
+      for (const mr of mrs) mr.approved = approved.has(mr.iid);
+    } catch {
+      // leave approved as mapped
     }
+
+    cacheDb.set(cacheKey, 'merge_requests', String(projectId), mrs, etag, 60000);
+    return mrs;
   }
 
   async createMergeRequest(projectId: number, payload: {
@@ -2615,12 +2581,8 @@ export class GitLabClient {
     }
 
     if (!projectId) {
-      try {
-        const all = await this.forRecentProjects((p) => this.getPipelines(p.id, force));
-        return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 50);
-      } catch {
-        return [];
-      }
+      const all = await this.forRecentProjects((p) => this.getPipelines(p.id, force));
+      return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 50);
     }
 
     const cacheKey = `pipelines:${projectId}`;
@@ -2629,25 +2591,21 @@ export class GitLabClient {
       if (cached) return cached.data;
     }
 
-    try {
-      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/pipelines?per_page=30`);
-      const pipelines: GitLabPipeline[] = data.map((p) => ({
-        id: p.id,
-        project_id: p.project_id || projectId,
-        status: p.status,
-        ref: p.ref,
-        sha: p.sha,
-        web_url: p.web_url,
-        created_at: p.created_at,
-        updated_at: p.updated_at,
-        user: p.user ? { name: p.user.name, username: p.user.username, avatar_url: p.user.avatar_url } : undefined
-      }));
+    const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/pipelines?per_page=30`);
+    const pipelines: GitLabPipeline[] = data.map((p) => ({
+      id: p.id,
+      project_id: p.project_id || projectId,
+      status: p.status,
+      ref: p.ref,
+      sha: p.sha,
+      web_url: p.web_url,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      user: p.user ? { name: p.user.name, username: p.user.username, avatar_url: p.user.avatar_url } : undefined
+    }));
 
-      cacheDb.set(cacheKey, 'pipelines', String(projectId), pipelines, etag, 45000);
-      return pipelines;
-    } catch {
-      return [];
-    }
+    cacheDb.set(cacheKey, 'pipelines', String(projectId), pipelines, etag, 45000);
+    return pipelines;
   }
 
   // Single-item reads used by watches. Never cached: the caller polls for a fresh status.
@@ -2726,37 +2684,33 @@ export class GitLabClient {
     const cached = force ? null : cacheDb.get<{ stages: string[]; jobs: GitLabJob[] }>(cacheKey);
     if (cached) return cached.data;
 
-    try {
-      const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/pipelines/${pipelineId}/jobs?per_page=100`);
-      const jobs: GitLabJob[] = data.map((j) => ({
-        id: j.id,
-        name: j.name,
-        stage: j.stage,
-        status: j.status,
-        duration: j.duration,
-        started_at: j.started_at,
-        finished_at: j.finished_at,
-        pipeline_id: pipelineId,
-        project_id: projectId,
-        runner: j.runner ? {
-          id: j.runner.id,
-          description: j.runner.description,
-          active: j.runner.active,
-          is_shared: j.runner.is_shared
-        } : undefined,
-        web_url: j.web_url,
-        allow_failure: Boolean(j.allow_failure)
-      }));
+    const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/pipelines/${pipelineId}/jobs?per_page=100`);
+    const jobs: GitLabJob[] = data.map((j) => ({
+      id: j.id,
+      name: j.name,
+      stage: j.stage,
+      status: j.status,
+      duration: j.duration,
+      started_at: j.started_at,
+      finished_at: j.finished_at,
+      pipeline_id: pipelineId,
+      project_id: projectId,
+      runner: j.runner ? {
+        id: j.runner.id,
+        description: j.runner.description,
+        active: j.runner.active,
+        is_shared: j.runner.is_shared
+      } : undefined,
+      web_url: j.web_url,
+      allow_failure: Boolean(j.allow_failure)
+    }));
 
-      const stageSet = new Set<string>();
-      jobs.forEach(j => stageSet.add(j.stage));
-      const res = { stages: Array.from(stageSet), jobs };
+    const stageSet = new Set<string>();
+    jobs.forEach(j => stageSet.add(j.stage));
+    const res = { stages: Array.from(stageSet), jobs };
 
-      cacheDb.set(cacheKey, 'jobs', String(projectId), res, undefined, 30000);
-      return res;
-    } catch {
-      return { stages: [], jobs: [] };
-    }
+    cacheDb.set(cacheKey, 'jobs', String(projectId), res, undefined, 30000);
+    return res;
   }
 
   async retryPipeline(projectId: number, pipelineId: number): Promise<any> {
@@ -2835,26 +2789,22 @@ export class GitLabClient {
       if (cached) return cached.data;
     }
 
-    try {
-      const { data, etag } = await this.fetchApi<any[]>('/runners?per_page=50');
-      const runners: GitLabRunner[] = data.map((r) => ({
-        id: r.id,
-        description: r.description || `runner-${r.id}`,
-        ip_address: r.ip_address,
-        active: Boolean(r.active),
-        paused: Boolean(r.paused),
-        is_shared: Boolean(r.is_shared),
-        runner_type: r.runner_type || 'project_type',
-        status: r.status || (r.paused ? 'paused' : r.active ? 'online' : 'offline'),
-        tag_list: r.tag_list || [],
-        project_ids: r.project_ids || []
-      }));
+    const { data, etag } = await this.fetchApi<any[]>('/runners?per_page=50');
+    const runners: GitLabRunner[] = data.map((r) => ({
+      id: r.id,
+      description: r.description || `runner-${r.id}`,
+      ip_address: r.ip_address,
+      active: Boolean(r.active),
+      paused: Boolean(r.paused),
+      is_shared: Boolean(r.is_shared),
+      runner_type: r.runner_type || 'project_type',
+      status: r.status || (r.paused ? 'paused' : r.active ? 'online' : 'offline'),
+      tag_list: r.tag_list || [],
+      project_ids: r.project_ids || []
+    }));
 
-      cacheDb.set(cacheKey, 'runners', null, runners, etag, 60000);
-      return runners;
-    } catch {
-      return [];
-    }
+    cacheDb.set(cacheKey, 'runners', null, runners, etag, 60000);
+    return runners;
   }
 
   async toggleRunner(runnerId: number, paused: boolean): Promise<any> {
@@ -3004,15 +2954,11 @@ export class GitLabClient {
     if (this.isDemoMode) return DEMO_LABELS;
 
     if (!projectId) {
-      try {
-        // Same label name in several projects is shown once.
-        const all = await this.forRecentProjects((p) => this.getLabels(p.id, force) as Promise<(GitLabLabel & { project_name?: string })[]>);
-        const byName = new Map<string, GitLabLabel>();
-        for (const label of all) if (!byName.has(label.name)) byName.set(label.name, label);
-        return [...byName.values()];
-      } catch {
-        return [];
-      }
+      // Same label name in several projects is shown once.
+      const all = await this.forRecentProjects((p) => this.getLabels(p.id, force) as Promise<(GitLabLabel & { project_name?: string })[]>);
+      const byName = new Map<string, GitLabLabel>();
+      for (const label of all) if (!byName.has(label.name)) byName.set(label.name, label);
+      return [...byName.values()];
     }
 
     const cacheKey = `labels:${projectId}`;
@@ -3021,13 +2967,9 @@ export class GitLabClient {
       if (cached) return cached.data;
     }
 
-    try {
-      const { data, etag } = await this.fetchApi<GitLabLabel[]>(`/projects/${projectId}/labels?per_page=100&with_counts=true`);
-      cacheDb.set(cacheKey, 'labels', String(projectId), data, etag, 300000);
-      return data;
-    } catch {
-      return [];
-    }
+    const { data, etag } = await this.fetchApi<GitLabLabel[]>(`/projects/${projectId}/labels?per_page=100&with_counts=true`);
+    cacheDb.set(cacheKey, 'labels', String(projectId), data, etag, 300000);
+    return data;
   }
 
   async createLabel(projectId: number, payload: { name: string; color: string; description?: string }): Promise<GitLabLabel> {
@@ -3070,12 +3012,8 @@ export class GitLabClient {
     }
 
     if (!projectId) {
-      try {
-        const all = await this.forRecentProjects((p) => this.getPackages(p.id, packageType, force));
-        return all.sort((a, b) => b.created_at.localeCompare(a.created_at));
-      } catch {
-        return [];
-      }
+      const all = await this.forRecentProjects((p) => this.getPackages(p.id, packageType, force));
+      return all.sort((a, b) => b.created_at.localeCompare(a.created_at));
     }
 
     const cacheKey = `packages:${projectId}:${packageType || 'all'}`;
@@ -3084,27 +3022,23 @@ export class GitLabClient {
       if (cached) return cached.data;
     }
 
-    try {
-      const typeFilter = packageType && packageType !== 'all' ? `&package_type=${packageType}` : '';
-      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/packages?per_page=50${typeFilter}`);
-      const packages: GitLabPackage[] = data.map((pkg) => ({
-        id: pkg.id,
-        name: pkg.name,
-        version: pkg.version,
-        package_type: pkg.package_type,
-        status: pkg.status || 'default',
-        created_at: pkg.created_at,
-        project_id: pkg.project_id,
-        tags: pkg.tags || [],
-        pipeline_id: pkg.pipeline?.id,
-        web_path: pkg._links?.web_path,
-        install_command: pkg.package_type === 'npm' ? `npm install ${pkg.name}@${pkg.version}` : undefined
-      }));
-      cacheDb.set(cacheKey, 'packages', String(projectId), packages, etag, 60000);
-      return packages;
-    } catch {
-      return [];
-    }
+    const typeFilter = packageType && packageType !== 'all' ? `&package_type=${packageType}` : '';
+    const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/packages?per_page=50${typeFilter}`);
+    const packages: GitLabPackage[] = data.map((pkg) => ({
+      id: pkg.id,
+      name: pkg.name,
+      version: pkg.version,
+      package_type: pkg.package_type,
+      status: pkg.status || 'default',
+      created_at: pkg.created_at,
+      project_id: pkg.project_id,
+      tags: pkg.tags || [],
+      pipeline_id: pkg.pipeline?.id,
+      web_path: pkg._links?.web_path,
+      install_command: pkg.package_type === 'npm' ? `npm install ${pkg.name}@${pkg.version}` : undefined
+    }));
+    cacheDb.set(cacheKey, 'packages', String(projectId), packages, etag, 60000);
+    return packages;
   }
 
   async getPackage(projectId: number, packageId: number): Promise<GitLabPackage | null> {
@@ -3135,8 +3069,9 @@ export class GitLabClient {
           download_path: f.download_path
         }))
       };
-    } catch {
-      return null;
+    } catch (err: any) {
+      if (/\(404\)/.test(err.message)) return null;
+      throw err;
     }
   }
 
@@ -3150,27 +3085,23 @@ export class GitLabClient {
       if (cached) return cached.data;
     }
 
-    try {
-      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/repository/tags?per_page=50`);
-      const tags: GitLabTag[] = data.map(t => ({
-        name: t.name,
-        message: t.message,
-        target: t.target,
-        commit: {
-          id: t.commit.id,
-          short_id: t.commit.short_id,
-          title: t.commit.title,
-          created_at: t.commit.created_at,
-          author_name: t.commit.author_name
-        },
-        release: t.release ? { tag_name: t.release.tag_name, description: t.release.description } : undefined,
-        protected: t.protected
-      }));
-      cacheDb.set(cacheKey, 'tags', String(projectId), tags, etag, 60000);
-      return tags;
-    } catch {
-      return [];
-    }
+    const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/repository/tags?per_page=50`);
+    const tags: GitLabTag[] = data.map(t => ({
+      name: t.name,
+      message: t.message,
+      target: t.target,
+      commit: {
+        id: t.commit.id,
+        short_id: t.commit.short_id,
+        title: t.commit.title,
+        created_at: t.commit.created_at,
+        author_name: t.commit.author_name
+      },
+      release: t.release ? { tag_name: t.release.tag_name, description: t.release.description } : undefined,
+      protected: t.protected
+    }));
+    cacheDb.set(cacheKey, 'tags', String(projectId), tags, etag, 60000);
+    return tags;
   }
 
   async createTag(projectId: number, payload: { tag_name: string; ref: string; message?: string }): Promise<GitLabTag> {
@@ -3212,24 +3143,20 @@ export class GitLabClient {
       if (cached) return cached.data;
     }
 
-    try {
-      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/releases?per_page=50`);
-      const releases: GitLabRelease[] = data.map(r => ({
-        name: r.name,
-        tag_name: r.tag_name,
-        description: r.description,
-        created_at: r.created_at,
-        released_at: r.released_at,
-        author: r.author,
-        commit_path: r.commit_path,
-        upcoming_release: r.upcoming_release,
-        assets: r.assets
-      }));
-      cacheDb.set(cacheKey, 'releases', String(projectId), releases, etag, 60000);
-      return releases;
-    } catch {
-      return [];
-    }
+    const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/releases?per_page=50`);
+    const releases: GitLabRelease[] = data.map(r => ({
+      name: r.name,
+      tag_name: r.tag_name,
+      description: r.description,
+      created_at: r.created_at,
+      released_at: r.released_at,
+      author: r.author,
+      commit_path: r.commit_path,
+      upcoming_release: r.upcoming_release,
+      assets: r.assets
+    }));
+    cacheDb.set(cacheKey, 'releases', String(projectId), releases, etag, 60000);
+    return releases;
   }
 
   /**
@@ -3325,37 +3252,27 @@ Execution finished in 38s
       };
     }
 
-    try {
-      const jobInfo = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}`);
-      // Raw log endpoint
-      const traceRes = await fetch(`${this.host}/api/v4/projects/${projectId}/jobs/${jobId}/trace`, {
-        headers: this.token ? { 'PRIVATE-TOKEN': this.token } : {}
-      });
-      let rawText = await traceRes.text();
-      // Keep the tail of very large logs: the failure is at the end and the UI cannot render megabytes.
-      if (rawText.length > MAX_TRACE_CHARS) rawText = rawText.slice(-MAX_TRACE_CHARS);
-      return {
-        job_id: jobId,
-        project_id: projectId,
-        job_name: jobInfo.data.name,
-        stage: jobInfo.data.stage,
-        status: jobInfo.data.status,
-        duration: jobInfo.data.duration,
-        failure_reason: jobInfo.data.failure_reason,
-        web_url: jobInfo.data.web_url,
-        trace: rawText || 'No log output captured for this job.',
-        runner: jobInfo.data.runner
-      };
-    } catch {
-      return {
-        job_id: jobId,
-        project_id: projectId,
-        job_name: `job-${jobId}`,
-        stage: 'unknown',
-        status: 'unknown',
-        trace: 'Failed to retrieve job trace log from GitLab API.'
-      };
-    }
+    const jobInfo = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}`);
+    // Raw log endpoint
+    const traceRes = await fetch(`${this.host}/api/v4/projects/${projectId}/jobs/${jobId}/trace`, {
+      headers: this.token ? { 'PRIVATE-TOKEN': this.token } : {}
+    });
+    if (!traceRes.ok) throw new Error(`GitLab API Error (${traceRes.status}): could not read the log of job ${jobId}`);
+    let rawText = await traceRes.text();
+    // Keep the tail of very large logs: the failure is at the end and the UI cannot render megabytes.
+    if (rawText.length > MAX_TRACE_CHARS) rawText = rawText.slice(-MAX_TRACE_CHARS);
+    return {
+      job_id: jobId,
+      project_id: projectId,
+      job_name: jobInfo.data.name,
+      stage: jobInfo.data.stage,
+      status: jobInfo.data.status,
+      duration: jobInfo.data.duration,
+      failure_reason: jobInfo.data.failure_reason,
+      web_url: jobInfo.data.web_url,
+      trace: rawText || 'No log output captured for this job.',
+      runner: jobInfo.data.runner
+    };
   }
 
   /**
@@ -3378,7 +3295,6 @@ Execution finished in 38s
   // TRIAGE: failure excerpts and running pipelines
   async getJobFailure(projectId: number, jobId: number): Promise<JobFailure> {
     const trace = await this.getJobTrace(projectId, jobId);
-    if (trace.status === 'unknown') throw new Error(`Job ${jobId} could not be read`);
     let pipelineId: number | undefined;
     if (this.isDemoMode) {
       pipelineId = Object.values(DEMO_JOBS).flat().find((j) => j.id === jobId)?.pipeline_id;
@@ -3518,21 +3434,17 @@ Execution finished in 38s
       return DEMO_RUNNER_JOBS[runnerId] || [];
     }
 
-    try {
-      const { data } = await this.fetchApi<any[]>(`/runners/${runnerId}/jobs?per_page=20`);
-      return data.map(j => ({
-        id: j.id,
-        name: j.name,
-        stage: j.stage,
-        status: j.status,
-        project_id: j.project.id,
-        project_name: j.project.name,
-        created_at: j.created_at,
-        duration: j.duration
-      }));
-    } catch {
-      return [];
-    }
+    const { data } = await this.fetchApi<any[]>(`/runners/${runnerId}/jobs?per_page=20`);
+    return data.map(j => ({
+      id: j.id,
+      name: j.name,
+      stage: j.stage,
+      status: j.status,
+      project_id: j.project.id,
+      project_name: j.project.name,
+      created_at: j.created_at,
+      duration: j.duration
+    }));
   }
 
   // 13. CI/CD Pipeline Editor & Visualizer
@@ -3739,23 +3651,19 @@ Execution finished in 38s
       return DEMO_BADGES.filter(b => (kind === 'project' ? b.project_id === id : b.group_id === id));
     }
 
-    try {
-      const endpoint = kind === 'project' ? `/projects/${id}/badges` : `/groups/${id}/badges`;
-      const { data } = await this.fetchApi<any[]>(endpoint);
-      return data.map(b => ({
-        id: b.id,
-        name: b.name || `Badge #${b.id}`,
-        link_url: b.link_url,
-        image_url: b.image_url,
-        rendered_link_url: b.rendered_link_url,
-        rendered_image_url: b.rendered_image_url,
-        kind,
-        project_id: kind === 'project' ? id : undefined,
-        group_id: kind === 'group' ? id : undefined
-      }));
-    } catch {
-      return [];
-    }
+    const endpoint = kind === 'project' ? `/projects/${id}/badges` : `/groups/${id}/badges`;
+    const { data } = await this.fetchApi<any[]>(endpoint);
+    return data.map(b => ({
+      id: b.id,
+      name: b.name || `Badge #${b.id}`,
+      link_url: b.link_url,
+      image_url: b.image_url,
+      rendered_link_url: b.rendered_link_url,
+      rendered_image_url: b.rendered_image_url,
+      kind,
+      project_id: kind === 'project' ? id : undefined,
+      group_id: kind === 'group' ? id : undefined
+    }));
   }
 
   async createBadge(payload: { name: string; link_url: string; image_url: string; kind: 'project' | 'group'; project_id?: number; group_id?: number }): Promise<GitLabBadge> {
