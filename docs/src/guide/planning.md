@@ -15,7 +15,7 @@ The list shows issues grouped by parent (tree view) or flat, with type and label
 
 - **State:** close or reopen.
 - **Milestone:** assign or clear.
-- **Subtasks:** checkbox lines (`- [ ] …`) in the description. Toggling or adding one edits the description on GitLab.
+- **Subtasks:** checkbox lines (`- [ ] …`) in the description. Toggling or adding one edits the description on GitLab, and the drawer shows the description GitLab returns. If the save fails, the checkbox goes back to its previous state.
 - **Labels:** remove with ×, add with **+ label**.
 - **Discussion:** comments in Markdown with preview. Drop a file or use the paperclip to upload it to the project (`POST /projects/:id/uploads`, 10 MB maximum); GitLab's Markdown link is inserted.
 
