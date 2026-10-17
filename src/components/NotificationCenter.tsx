@@ -8,6 +8,8 @@ interface NotificationCenterProps {
   onClear: () => void;
   onRemoveWatch: (id: string) => void;
   onOpenSettings: () => void;
+  /** Opens the failure view of a job. */
+  onOpenFailure: (projectId: number, jobId: number, jobName: string) => void;
 }
 
 const LEVEL_ICON = {
@@ -31,23 +33,31 @@ function browserPermission(): Permission {
   return Notification.permission;
 }
 
-function NotificationRow({ n }: { n: LazyNotification }) {
-  const content = (
-    <>
+function NotificationRow({ n, onOpenFailure }: { n: LazyNotification; onOpenFailure: NotificationCenterProps['onOpenFailure'] }) {
+  const title = <p className={`text-xs ${n.read ? 'text-zinc-300' : 'text-white font-semibold'}`}>{n.title}</p>;
+  return (
+    <div className="flex items-start gap-2 px-3 py-2 hover:bg-zinc-800/40">
       {LEVEL_ICON[n.level]}
       <div className="flex-1 min-w-0">
-        <p className={`text-xs ${n.read ? 'text-zinc-300' : 'text-white font-semibold'}`}>{n.title}</p>
-        <p className="text-[11px] text-zinc-500 truncate">{n.body}</p>
+        {n.url ? (
+          <a href={n.url} target="_blank" rel="noreferrer" className="hover:text-orange-300 block">
+            {title}
+          </a>
+        ) : (
+          title
+        )}
+        <p className="text-[11px] text-zinc-500 whitespace-pre-line line-clamp-2 break-words">{n.body}</p>
+        {n.failedJob && (
+          <button
+            onClick={() => onOpenFailure(n.failedJob!.projectId, n.failedJob!.jobId, n.failedJob!.name)}
+            className="mt-1 text-[11px] text-rose-300 hover:text-rose-200 underline underline-offset-2"
+          >
+            Why it failed
+          </button>
+        )}
       </div>
       <span className="text-[10px] font-mono text-zinc-600 shrink-0">{ago(n.createdAt)}</span>
-    </>
-  );
-  return n.url ? (
-    <a href={n.url} target="_blank" rel="noreferrer" className="flex items-start gap-2 px-3 py-2 hover:bg-zinc-800/60">
-      {content}
-    </a>
-  ) : (
-    <div className="flex items-start gap-2 px-3 py-2">{content}</div>
+    </div>
   );
 }
 
@@ -73,8 +83,19 @@ function WatchRow({ w, onRemove }: { w: WatchView; onRemove: () => void }) {
   );
 }
 
-export const NotificationCenter: React.FC<NotificationCenterProps> = ({ state, onMarkRead, onClear, onRemoveWatch, onOpenSettings }) => {
+export const NotificationCenter: React.FC<NotificationCenterProps> = ({
+  state,
+  onMarkRead,
+  onClear,
+  onRemoveWatch,
+  onOpenSettings,
+  onOpenFailure
+}) => {
   const [open, setOpen] = useState(false);
+  const openFailure: NotificationCenterProps['onOpenFailure'] = (projectId, jobId, name) => {
+    setOpen(false);
+    onOpenFailure(projectId, jobId, name);
+  };
   const [tab, setTab] = useState<'notifications' | 'watching'>('notifications');
   const [permission, setPermission] = useState<Permission>(browserPermission);
   const ref = useRef<HTMLDivElement>(null);
@@ -147,7 +168,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ state, o
           <div className="max-h-96 overflow-y-auto divide-y divide-zinc-800/70">
             {tab === 'notifications' &&
               (state?.notifications.length ? (
-                state.notifications.map((n) => <NotificationRow key={n.id} n={n} />)
+                state.notifications.map((n) => <NotificationRow key={n.id} n={n} onOpenFailure={openFailure} />)
               ) : (
                 <p className="px-3 py-6 text-xs text-zinc-500 text-center">No notifications yet.</p>
               ))}

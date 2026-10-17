@@ -15,6 +15,11 @@ import {
   GitLabTag,
   GitLabRelease,
   JobTrace,
+  JobFailure,
+  FailureExcerpt,
+  GitLabBranch,
+  DeclaredVariable,
+  PipelineVariableInput,
   RunnerJob,
   CiConfig,
   CiLintResult,
@@ -272,6 +277,34 @@ export const api = {
       body: JSON.stringify({ projectId })
     }),
 
+  retryJob: (jobId: number, projectId: number, watch = true) =>
+    request<{ success: boolean; job: { id: number; name: string; status: string; web_url?: string }; watch: WatchView | null }>(
+      `/jobs/${jobId}/retry`,
+      post({ projectId, watch })
+    ),
+
+  getJobFailure: (projectId: number, jobId: number) =>
+    request<{ success: boolean; failure: JobFailure }>(`/projects/${projectId}/jobs/${jobId}/failure`),
+
+  getPipelineFailures: (projectId: number, pipelineId: number) =>
+    request<{ success: boolean; failures: JobFailure[] }>(`/projects/${projectId}/pipelines/${pipelineId}/failures`),
+
+  getBranches: (projectId: number, search = '') =>
+    request<{ success: boolean; branches: GitLabBranch[] }>(
+      `/projects/${projectId}/branches${search ? `?search=${encodeURIComponent(search)}` : ''}`
+    ),
+
+  getDeclaredVariables: (projectId: number, ref: string) =>
+    request<{ success: boolean; variables: DeclaredVariable[] }>(
+      `/projects/${projectId}/pipeline-variables?ref=${encodeURIComponent(ref)}`
+    ),
+
+  runPipeline: (projectId: number, ref: string, variables: PipelineVariableInput[], watch: boolean) =>
+    request<{ success: boolean; pipeline: GitLabPipeline; watch: WatchView | null }>(
+      `/projects/${projectId}/pipelines`,
+      post({ ref, variables, watch })
+    ),
+
   playJob: (jobId: number, projectId: number) =>
     request<{ success: boolean; result: any }>(`/jobs/${jobId}/play`, {
       method: 'POST',
@@ -380,7 +413,7 @@ export const api = {
 
   // Job Trace & Runner Jobs
   getJobTrace: (projectId: number, jobId: number) =>
-    request<{ success: boolean; trace: JobTrace }>(`/projects/${projectId}/jobs/${jobId}/trace`),
+    request<{ success: boolean; trace: JobTrace; failure: FailureExcerpt | null }>(`/projects/${projectId}/jobs/${jobId}/trace`),
 
   getRunnerJobs: (runnerId: number) =>
     request<{ success: boolean; jobs: RunnerJob[] }>(`/runners/${runnerId}/jobs`),

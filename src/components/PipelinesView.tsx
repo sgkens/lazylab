@@ -16,9 +16,10 @@ import {
   RefreshCw,
   Play,
   Terminal,
-  Award
+  Award,
+  AlertTriangle
 } from 'lucide-react';
-import { GitLabJob, GitLabPipeline, GitLabProject } from '../types/gitlab';
+import { GitLabJob, GitLabPipeline, GitLabProject, JobFailure } from '../types/gitlab';
 import { BadgePipelineModal } from './BadgePipelineModal';
 import { api } from '../services/api';
 import { WatchButton } from './WatchButton';
@@ -33,7 +34,76 @@ interface PipelinesViewProps {
   onCancelPipeline: (pipelineId: number, projectId: number) => void;
   onPlayJob: (jobId: number, projectId: number) => void;
   onViewJobTrace?: (projectId: number, jobId: number, jobName?: string) => void;
+  onRunPipeline?: () => void;
 }
+
+/** The error line of each failed job, so the cause shows without opening a log. */
+const PipelineFailures: React.FC<{
+  pipeline: GitLabPipeline;
+  onOpen?: (projectId: number, jobId: number, jobName?: string) => void;
+}> = ({ pipeline, onOpen }) => {
+  const [failures, setFailures] = useState<JobFailure[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getPipelineFailures(pipeline.project_id, pipeline.id)
+      .then((res) => !cancelled && setFailures(res.failures))
+      .catch((err) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [pipeline.id, pipeline.project_id]);
+
+  if (error) return <p className="text-xs text-slate-500 mb-3">Could not read failed jobs: {error}</p>;
+  if (!failures) {
+    return (
+      <p className="text-xs text-slate-500 mb-3 flex items-center gap-1">
+        <RefreshCw className="w-3 h-3 animate-spin" /> Reading failed job logs...
+      </p>
+    );
+  }
+  if (failures.length === 0) return null;
+
+  return (
+    <div className="mb-4 rounded-lg border border-rose-900/70 bg-rose-950/20 divide-y divide-rose-900/40">
+      <div className="px-3 py-2 text-xs font-semibold text-rose-200 flex items-center gap-2">
+        <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+        Why it failed
+      </div>
+      {failures.map((f) => (
+        <div key={f.job_id} className="px-3 py-2 flex items-start gap-3 text-xs">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-white">{f.job_name}</span>
+              <span className="font-mono text-slate-500">{f.stage}</span>
+              {f.excerpt.failureReason && (
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-300">
+                  {f.excerpt.failureReason.replace(/_/g, ' ')}
+                </span>
+              )}
+              {f.excerpt.exitCode !== null && <span className="font-mono text-slate-500">exit {f.excerpt.exitCode}</span>}
+              {f.excerpt.retryable && (
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-200">likely passes on retry</span>
+              )}
+            </div>
+            <p className="font-mono text-rose-200 mt-1 break-all">{f.excerpt.errorLine || f.excerpt.failureHint || 'No error line found'}</p>
+          </div>
+          {onOpen && (
+            <button
+              onClick={() => onOpen(f.project_id, f.job_id, f.job_name)}
+              className="px-2 py-1 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 shrink-0 flex items-center gap-1"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              Excerpt
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
 
 export const PipelinesView: React.FC<PipelinesViewProps> = ({
   pipelines,
@@ -41,7 +111,8 @@ export const PipelinesView: React.FC<PipelinesViewProps> = ({
   onRetryPipeline,
   onCancelPipeline,
   onPlayJob,
-  onViewJobTrace
+  onViewJobTrace,
+  onRunPipeline
 }) => {
   const [expandedPipelineId, setExpandedPipelineId] = useState<number | null>(
     pipelines.length > 0 ? pipelines[0].id : null
@@ -175,6 +246,16 @@ export const PipelinesView: React.FC<PipelinesViewProps> = ({
 
         {/* Badges Pipeline Setup Action */}
         <div className="flex items-center gap-2">
+          {onRunPipeline && (
+            <button
+              onClick={onRunPipeline}
+              className="px-2.5 py-1 rounded bg-orange-600 hover:bg-orange-500 text-white transition-colors flex items-center gap-1.5 font-medium shadow-sm"
+              title="Run a pipeline for a branch or tag, with variables"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Run pipeline</span>
+            </button>
+          )}
           <button
             onClick={() => setIsBadgePipelineOpen(true)}
             className="px-2.5 py-1 rounded bg-purple-950/60 hover:bg-purple-900/80 border border-purple-800/80 text-purple-300 hover:text-white transition-colors flex items-center gap-1.5 font-medium shadow-sm"
@@ -288,6 +369,7 @@ export const PipelinesView: React.FC<PipelinesViewProps> = ({
                 {/* Expanded Stage & Job DAG Visualizer */}
                 {isExpanded && (
                   <div className="px-6 py-4 bg-slate-950/80 border-t border-slate-900">
+                    {pipeline.status === 'failed' && <PipelineFailures pipeline={pipeline} onOpen={onViewJobTrace} />}
                     <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Workflow className="w-3.5 h-3.5 text-sky-400" />

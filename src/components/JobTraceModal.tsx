@@ -17,9 +17,10 @@ import {
   Minimize2,
   Play,
   Flame,
-  Radio
+  Radio,
+  ExternalLink
 } from 'lucide-react';
-import { JobTrace } from '../types/gitlab';
+import { FailureExcerpt, JobTrace } from '../types/gitlab';
 import { api } from '../services/api';
 
 interface JobTraceModalProps {
@@ -28,7 +29,8 @@ interface JobTraceModalProps {
   projectId: number;
   jobId: number | null;
   jobName?: string;
-  onJobRetried?: () => void;
+  /** Called with the id of the new job GitLab created for a retry (the same id for a manual play). */
+  onJobRetried?: (newJobId: number) => void;
 }
 
 export const JobTraceModal: React.FC<JobTraceModalProps> = ({
@@ -40,6 +42,10 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
   onJobRetried
 }) => {
   const [traceData, setTraceData] = useState<JobTrace | null>(null);
+  const [failure, setFailure] = useState<FailureExcerpt | null>(null);
+  const [view, setView] = useState<'failure' | 'log'>('log');
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [excerptCopied, setExcerptCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [retrySuccess, setRetrySuccess] = useState(false);
@@ -57,8 +63,11 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
       loadTrace();
     } else {
       setTraceData(null);
+      setFailure(null);
+      setView('log');
       setSearchQuery('');
       setRetrySuccess(false);
+      setRetryError(null);
     }
   }, [isOpen, jobId, projectId]);
 
@@ -69,6 +78,8 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
       const res = await api.getJobTrace(projectId, jobId);
       if (res.success) {
         setTraceData(res.trace);
+        setFailure(res.failure);
+        setView(res.failure && res.failure.lines.length > 0 ? 'failure' : 'log');
         if (liveTail) {
           setTimeout(() => {
             scrollToBottom();
@@ -94,22 +105,42 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
     }
   };
 
+  // Manual jobs are played; finished jobs are retried, which creates a new job that is watched.
   const handleRetry = async () => {
     if (!jobId) return;
     try {
       setIsRetrying(true);
-      await api.playJob(jobId, projectId);
+      setRetryError(null);
+      let newJobId = jobId;
+      if (traceData?.status === 'manual') {
+        await api.playJob(jobId, projectId);
+      } else {
+        const res = await api.retryJob(jobId, projectId, true);
+        newJobId = res.job.id;
+      }
       setRetrySuccess(true);
-      if (onJobRetried) onJobRetried();
       setTimeout(() => {
         setRetrySuccess(false);
-        loadTrace();
-      }, 1500);
-    } catch (err) {
-      console.error('Failed to retry job:', err);
+        if (onJobRetried && newJobId !== jobId) onJobRetried(newJobId);
+        else loadTrace();
+      }, 1200);
+    } catch (err: any) {
+      setRetryError(err.message || 'Retry failed');
     } finally {
       setIsRetrying(false);
     }
+  };
+
+  const handleCopyExcerpt = () => {
+    if (!failure) return;
+    const head = [
+      `${traceData?.job_name || `Job #${jobId}`} failed${failure.failureReason ? ` (${failure.failureReason})` : ''}`,
+      failure.exitCode !== null ? `exit code ${failure.exitCode}` : null,
+      traceData?.web_url || null
+    ].filter(Boolean);
+    navigator.clipboard.writeText([...head, '', ...failure.lines.map((l) => l.text)].join('\n'));
+    setExcerptCopied(true);
+    setTimeout(() => setExcerptCopied(false), 2000);
   };
 
   if (!isOpen || !jobId) return null;
@@ -282,7 +313,11 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
                   ? 'bg-emerald-600 text-white'
                   : 'bg-orange-600 hover:bg-orange-500 text-white'
               }`}
-              title="Re-run this job on the runner"
+              title={
+                traceData?.status === 'manual'
+                  ? 'Run this manual job'
+                  : 'Retry this job; lazylab watches the new job and notifies you when it finishes'
+              }
             >
               {isRetrying ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -291,8 +326,25 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
               ) : (
                 <Play className="w-3.5 h-3.5 fill-current" />
               )}
-              <span>{retrySuccess ? 'Job Queued!' : 'Retry Job'}</span>
+              <span>{retrySuccess ? 'Queued' : traceData?.status === 'manual' ? 'Run' : 'Retry'}</span>
             </button>
+
+            {failure && (
+              <div className="flex rounded-md border border-zinc-700 overflow-hidden text-xs font-mono">
+                <button
+                  onClick={() => setView('failure')}
+                  className={`px-2 py-1 ${view === 'failure' ? 'bg-rose-900/70 text-rose-200' : 'text-zinc-400 hover:text-zinc-200'}`}
+                >
+                  Failure
+                </button>
+                <button
+                  onClick={() => setView('log')}
+                  className={`px-2 py-1 border-l border-zinc-700 ${view === 'log' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                >
+                  Full log
+                </button>
+              </div>
+            )}
 
             {/* Jump to error QOL button */}
             {errorLineIndices.length > 0 && (
@@ -391,6 +443,7 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
 
             <button
               onClick={onClose}
+              title="Close"
               className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded transition-colors ml-1"
             >
               <X className="w-5 h-5" />
@@ -403,7 +456,69 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
           ref={terminalRef}
           className="flex-1 bg-black p-4 font-mono text-xs overflow-y-auto text-zinc-300 selection:bg-orange-500/30 selection:text-orange-200"
         >
-          {isLoading && !traceData ? (
+          {view === 'failure' && failure ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-rose-900/70 bg-rose-950/30 p-3 font-sans">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span className="font-semibold text-rose-200">
+                      {failure.failureReason ? failure.failureReason.replace(/_/g, ' ') : 'Failed'}
+                    </span>
+                    {failure.exitCode !== null && (
+                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300">exit {failure.exitCode}</span>
+                    )}
+                    {failure.section && (
+                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400">in {failure.section}</span>
+                    )}
+                    {failure.retryable && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-200">likely passes on retry</span>
+                    )}
+                  </div>
+                  {failure.failureHint && <p className="text-xs text-zinc-400">{failure.failureHint}</p>}
+                  {failure.errorLine && (
+                    <p className="text-xs font-mono text-rose-200 break-all">{failure.errorLine}</p>
+                  )}
+                  {retryError && <p className="text-xs text-rose-300">Retry failed: {retryError}</p>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={handleCopyExcerpt}
+                    className="px-2 py-1 text-xs rounded border border-zinc-700 text-zinc-300 hover:bg-zinc-800 flex items-center gap-1"
+                    title="Copy the excerpt as plain text, for a ticket or an agent"
+                  >
+                    {excerptCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    Copy excerpt
+                  </button>
+                  {traceData?.web_url && (
+                    <a
+                      href={traceData.web_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2 py-1 text-xs rounded border border-zinc-700 text-zinc-300 hover:bg-zinc-800 flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      GitLab
+                    </a>
+                  )}
+                </div>
+              </div>
+              <div className="whitespace-pre-wrap break-all">
+                {failure.lines.map((line) => (
+                  <div
+                    key={line.n}
+                    className={`flex gap-3 py-0.5 ${line.hl ? 'bg-rose-950/40 border-l-2 border-rose-500 -ml-2 pl-2 text-rose-200' : ''}`}
+                  >
+                    <span className="w-12 shrink-0 text-right text-zinc-600 select-none">{line.n}</span>
+                    <span>{line.text || ' '}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-zinc-500 font-sans">
+                {failure.lines.length} of {failure.totalLines} lines. Switch to Full log for the rest.
+              </p>
+            </div>
+          ) : isLoading && !traceData ? (
             <div className="flex flex-col items-center justify-center h-full text-zinc-500">
               <RefreshCw className="w-6 h-6 animate-spin text-orange-400 mb-2" />
               <span>Streaming CI output trace from runner...</span>
@@ -429,7 +544,8 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
             {errorLineIndices.length > 0 && (
               <span className="text-rose-400 font-semibold">{errorLineIndices.length} error signals detected</span>
             )}
-            <span className="text-zinc-400">Exit status: {traceData?.status === 'success' ? '0 (Success)' : '1 (Check logs)'}</span>
+            {traceData?.status === 'success' && <span className="text-zinc-400">Exit status: 0</span>}
+            {failure?.exitCode != null && <span className="text-zinc-400">Exit status: {failure.exitCode}</span>}
           </div>
         </div>
       </div>
