@@ -127,6 +127,32 @@ curl -s -H "Authorization: Bearer $LAZYLAB_TOKEN" -H "Content-Type: application/
   -d '{"projectId": 42, "ref": "main", "variables": [{"key": "DEPLOY_ENV", "value": "staging"}]}'
 ```
 
+## MCP server
+
+lazylab serves MCP (Model Context Protocol) at `/mcp`, so Claude Code, Codex and other MCP clients can call its GitLab tools directly. It uses Streamable HTTP, is stateless, and returns JSON responses. Clients authenticate with an agent token from Vault → Agent tokens, which also shows the setup command after a token is created.
+
+```bash
+# Shell: bash, on the machine running Claude Code
+claude mcp add --transport http lazylab https://desktop.tailnet.ts.net/mcp \
+  --header "Authorization: Bearer llab_..."
+```
+
+| Tool | Does |
+|---|---|
+| `get_inbox` | What needs you across projects |
+| `list_projects` | Member projects; tools take a project id or a `group/project` path |
+| `list_work_items`, `get_work_item`, `create_work_item`, `update_work_item` | Issues |
+| `list_merge_requests`, `get_merge_request`, `create_merge_request` | Merge requests |
+| `add_comment` | Comment on an issue or merge request |
+| `list_pipelines`, `get_pipeline_failures`, `get_job_failure` | Pipelines and why they failed |
+| `run_pipeline`, `retry_job` | Start work on GitLab; watched by default |
+| `watch`, `list_watches` | Notify you when something finishes |
+
+- Read-only tools carry `readOnlyHint`, so clients can allow them without asking each time.
+- While lazylab is locked (after a restart, until someone signs in) `/mcp` answers `503`.
+- A browser `Origin` header must match the host. Requests with no `Origin`, which is normal for CLI clients, are allowed.
+- With the built-in self-signed certificate, Node-based clients reject the connection. Use Tailscale Serve or a trusted certificate, or point `NODE_EXTRA_CA_CERTS` at the certificate in `<data dir>/tls/`.
+
 ## Agent skills
 
 `skills/` contains a `lazylab-agent` skill for Claude Code, Codex and Antigravity. See [skills/README.md](skills/README.md).
@@ -149,6 +175,7 @@ Open epics, tasks and the wired/stub audit are in [devtracker-pending.md](devtra
 | `server/watch.ts` | Watch poller, notification rules, history |
 | `server/notify.ts` | Push delivery: ntfy, Gotify, webhook |
 | `server/notifyRouter.ts` | `/api/notify/*` routes |
+| `server/mcp.ts` | MCP server at `/mcp`: JSON-RPC dispatch, tool definitions, bearer auth |
 | `server/triage.ts` | Job trace failure excerpt, run-pipeline input validation |
 | `server/gitlabClient.ts` | GitLab REST v4 client plus demo-mode dataset |
 | `server/cacheDb.ts` | sql.js cache snapshot + append-only journal in `.data/` |

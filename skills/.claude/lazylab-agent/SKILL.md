@@ -7,6 +7,10 @@ description: Create, read and update GitLab work items (issues) and merge reques
 
 Calls the lazylab REST API to manage GitLab work items and merge requests. lazylab holds the GitLab token in its encrypted vault; agents authenticate to lazylab with their own bearer token.
 
+## MCP or REST
+
+If the `lazylab` MCP server is connected (tools such as `get_inbox`, `get_pipeline_failures`, `run_pipeline`), use those tools and skip the curl calls below. The writing rules still apply. Use this REST API from scripts or when MCP is not configured.
+
 ## Preconditions
 
 - Two environment variables:

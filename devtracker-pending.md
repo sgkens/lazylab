@@ -75,7 +75,7 @@ flowchart LR
 ### Roadmap
 
 1. **Foundation, blocks everything else:** GL-1, GL-14, GL-15, GL-2, CACHE-1/2/4, BUILD-3. Cross-project views are wrong while list calls hit non-existent endpoints and swallow errors.
-2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, ~~TRIAGE-1/6~~, ENV-4, AGENT-1.
+2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, ~~TRIAGE-1/6~~, ENV-4, ~~AGENT-1~~.
 3. **Away from the browser:** CLI-1/2/4, ENV-1/2, REPO-1..4.
 4. **Chores at scale:** REL, FLEET, DEPLOY, REG, RL.
 
@@ -265,6 +265,36 @@ Follow-ups:
 - [ ] TRIAGE-9 Excerpt for very large logs without downloading the whole trace (needs TRIAGE-5 offset fetch)
 - [ ] TRIAGE-10 Show failures for jobs in child/downstream pipelines (bridges)
 
+## Done 2026-10-17 (sixth pass): MCP server
+
+```mermaid
+sequenceDiagram
+  participant C as Claude Code / Codex
+  participant M as /mcp (server/mcp.ts)
+  participant V as vault
+  participant G as GitLab client (active profile)
+  C->>M: POST initialize (Bearer llab_...)
+  M->>V: verifyAgentToken, isUnlocked
+  M-->>C: protocolVersion, tools capability, instructions
+  C->>M: POST tools/call get_pipeline_failures
+  M->>G: getPipelineFailures
+  G-->>M: excerpts
+  M-->>C: content[text JSON], isError false
+```
+
+- [x] AGENT-1 `server/mcp.ts`: stateless Streamable HTTP (POST JSON, GET/DELETE 405, notifications 202, batches for 2025-03-26), protocol versions 2025-06-18 / 2025-03-26 / 2024-11-05, bearer agent tokens, Origin check, 503 while locked
+  - 17 tools: inbox, projects, work items (list/get/create/update), comments, MRs (list/get/create), pipelines, pipeline and job failures, run pipeline, retry job, watch, list watches
+  - Tools accept a project id or `group/project` path; outputs are trimmed to the fields an agent uses; read-only tools are annotated
+  - Argument validation against each tool's input schema; bad arguments and GitLab errors come back as tool errors (`isError`) so the model can correct itself
+  - `GitLabClient.getWorkItem` reads one issue directly instead of searching the first 50
+- [~] AGENT-5 Vault → Agent tokens shows Claude Code, Codex and REST setup after creating a token (skill install not generated)
+- Verified: 61 tests (protocol, version negotiation, validation, tools against demo data); the official MCP TypeScript SDK client (1.17.0) connected over HTTP, listed and called tools; curl for 401 without or with a bad token or cookie only, 403 foreign Origin, 405 GET, 202 notification, batch, 400 empty body, 503 locked; headless Chromium for the setup snippets
+- Not verified: Claude Code and Codex end to end (the Codex `bearer_token_env_var` config key is from Codex docs, not tested here); live GitLab for the new single work item read
+
+Follow-ups:
+- [ ] AGENT-6 MCP resources: job logs and `.gitlab-ci.yml` as readable resources (feeds TRIAGE-7)
+- [ ] AGENT-7 Per-token tool allowlist (part of AGENT-2 scopes)
+
 ## Epic SEC: hardening follow-ups
 
 - [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
@@ -389,11 +419,11 @@ Follow-ups:
 
 ## Epic AGENT: agents as first-class clients
 
-- [ ] AGENT-1 MCP server (streamable HTTP at `/mcp`, bearer auth) exposing inbox, work items, MRs, pipelines, failure excerpt and run-pipeline as tools
+- [x] AGENT-1 MCP server (streamable HTTP at `/mcp`, bearer auth) exposing inbox, work items, MRs, pipelines, failure excerpt and run-pipeline as tools
 - [ ] AGENT-2 Token scopes: read-only / write, per-project allowlist (supersedes SEC-6)
 - [ ] AGENT-3 Approval queue: destructive or outward agent actions (merge, delete, push variable) wait for confirmation in the UI or a push notification
 - [ ] AGENT-4 Activity log per agent token
-- [ ] AGENT-5 Generate the skill and MCP config snippet for Claude Code / Codex from the Vault → Agent tokens screen
+- [~] AGENT-5 Generate the skill and MCP config snippet for Claude Code / Codex from the Vault → Agent tokens screen
 
 ## Epic REL: releases from Conventional Commits
 
