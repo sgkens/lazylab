@@ -6,6 +6,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AuthScreen } from './components/AuthScreen';
 import { VaultView } from './components/VaultView';
+import { InboxView } from './components/InboxView';
+import { Inbox } from './types/inbox';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { ProjectSelector } from './components/ProjectSelector';
 import { DashboardView } from './components/DashboardView';
@@ -84,7 +86,9 @@ export default function App() {
 }
 
 function Workspace({ username, onSignedOut }: { username: string | null; onSignedOut: () => void }) {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('inbox');
+  const [inbox, setInbox] = useState<Inbox | null>(null);
+  const [inboxLoading, setInboxLoading] = useState(false);
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [projects, setProjects] = useState<GitLabProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -194,8 +198,23 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     }
   }, [selectedProjectId]);
 
+  const loadInbox = async (force = false) => {
+    setInboxLoading(true);
+    try {
+      const res = await api.getInbox(force);
+      setInbox(res.inbox);
+    } catch (err: any) {
+      console.error('Failed loading inbox:', err);
+    } finally {
+      setInboxLoading(false);
+    }
+  };
+
   const loadTabData = async (tab: ActiveTab, projId: number | null, force = false) => {
     try {
+      if (tab === 'inbox') {
+        await loadInbox(force);
+      }
       if (tab === 'work_items' || tab === 'dashboard') {
         const res = await api.getWorkItems(projId || undefined, 'all', force);
         setWorkItems(res.workItems || []);
@@ -236,7 +255,9 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   // Subscribe to real-time events via SSE
   useEffect(() => {
     const unsubscribe = api.subscribeEvents((event) => {
-      if (event === 'sync_completed') {
+      if (event === 'inbox_updated') {
+        loadInbox(false);
+      } else if (event === 'sync_completed') {
         loadTabData(activeTab, selectedProjectId, false);
         api.getStatus().then(setStatus).catch(() => {});
       } else if (event === 'work_item_updated' || event === 'work_item_created' || event === 'note_created') {
@@ -734,6 +755,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         mrsCount={mergeRequests.length}
         pipelinesCount={pipelines.length}
         milestonesCount={milestones.length}
+        inboxActionCount={inbox?.counts.action ?? 0}
         theme={theme}
         onToggleTheme={toggleTheme}
         settingsSection={settingsSection}
@@ -770,6 +792,10 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
 
       {/* Main Content Workspace View */}
       <main className="flex-1 flex overflow-hidden">
+        {activeTab === 'inbox' && (
+          <InboxView inbox={inbox} projects={projects} loading={inboxLoading} onRefresh={() => loadInbox(true)} />
+        )}
+
         {activeTab === 'dashboard' && (
           <DashboardView
             workItems={filteredWorkItems}

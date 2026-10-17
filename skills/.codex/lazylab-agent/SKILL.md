@@ -35,6 +35,7 @@ Base URL: `$LAZYLAB_URL/api/agent`. All bodies are `application/json`.
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/inbox` | What needs the user across projects: `items[]` with `bucket` (`action`\|`waiting`\|`assigned`), `reason`, `kind`, `web_url`; plus `counts` and `errors[]`. Start here when asked what to work on |
 | GET | `/work-items?projectId=&state=opened\|closed\|all` | List work items (first 50) |
 | GET | `/work-items/:iid?projectId=` | One work item plus notes |
 | POST | `/work-items` | Create. Required: `title`. Optional: `projectId`, `description`, `labels[]`, `assignee_ids[]`, `issue_type`, `weight`, `milestone_id` |

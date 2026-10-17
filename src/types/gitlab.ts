@@ -82,6 +82,8 @@ export interface GitLabWorkItem {
   user_notes_count: number;
   upvotes: number;
   web_url: string;
+  /** Full reference, e.g. `group/project#7`. Live mode only. */
+  reference?: string;
   weight?: number;
   subtasks?: SubTask[];
 }
@@ -113,6 +115,8 @@ export interface GitLabMergeRequest {
   };
   has_conflicts: boolean;
   web_url: string;
+  /** Full reference, e.g. `group/project!12`. Live mode only. */
+  reference?: string;
   created_at: string;
   updated_at: string;
   approved?: boolean;

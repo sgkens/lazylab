@@ -1,6 +1,12 @@
 import { cacheDb } from './cacheDb.js';
 import { metricsManager } from './metricsManager.js';
 import { parseGitLabCiYaml } from './yamlParser.js';
+import { mapLimit } from './concurrency.js';
+
+// GitLab has no instance-wide list endpoint for milestones, pipelines, labels or packages,
+// so "all projects" views fan out over the most recently active member projects.
+const AGGREGATE_PROJECT_LIMIT = 15;
+const AGGREGATE_CONCURRENCY = 4;
 
 export interface GitLabUser {
   id: number;
@@ -84,6 +90,8 @@ export interface GitLabWorkItem {
   user_notes_count: number;
   upvotes: number;
   web_url: string;
+  /** Full reference, e.g. `group/project#7`. Live mode only. */
+  reference?: string;
   weight?: number;
   subtasks?: SubTask[];
 }
@@ -115,6 +123,8 @@ export interface GitLabMergeRequest {
   };
   has_conflicts: boolean;
   web_url: string;
+  /** Full reference, e.g. `group/project!12`. Live mode only. */
+  reference?: string;
   created_at: string;
   updated_at: string;
   approved?: boolean;
@@ -1626,6 +1636,113 @@ let DEMO_PAGES: Record<number, GitLabPagesInfo> = {
   }
 };
 
+/** Normalises a GitLab REST merge request (list or single) to the UI shape. */
+export function mapMergeRequest(m: any): GitLabMergeRequest {
+  return {
+    id: m.id,
+    iid: m.iid,
+    project_id: m.project_id,
+    title: m.title,
+    description: m.description || '',
+    state: m.state,
+    draft: Boolean(m.draft || m.work_in_progress),
+    work_in_progress: Boolean(m.work_in_progress || m.draft),
+    merge_status: m.merge_status,
+    detailed_merge_status: m.detailed_merge_status,
+    source_branch: m.source_branch,
+    target_branch: m.target_branch,
+    author: {
+      id: m.author.id,
+      name: m.author.name,
+      username: m.author.username,
+      avatar_url: m.author.avatar_url
+    },
+    assignees: (m.assignees || []).map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      username: a.username,
+      avatar_url: a.avatar_url
+    })),
+    reviewers: (m.reviewers || []).map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      username: r.username,
+      avatar_url: r.avatar_url
+    })),
+    labels: m.labels || [],
+    // List responses carry no pipeline; single-MR responses carry head_pipeline (preferred) and pipeline.
+    pipeline: (m.head_pipeline || m.pipeline) ? {
+      id: (m.head_pipeline || m.pipeline).id,
+      status: (m.head_pipeline || m.pipeline).status,
+      web_url: (m.head_pipeline || m.pipeline).web_url,
+      ref: (m.head_pipeline || m.pipeline).ref,
+      sha: (m.head_pipeline || m.pipeline).sha
+    } : undefined,
+    reference: m.references?.full,
+    has_conflicts: Boolean(m.has_conflicts),
+    web_url: m.web_url,
+    created_at: m.created_at,
+    updated_at: m.updated_at,
+    user_notes_count: m.user_notes_count || 0,
+    changes_count: m.changes_count || '1',
+    approved: Boolean(m.approved_by && m.approved_by.length > 0)
+  };
+}
+
+/** Normalises a GitLab REST issue to a work item; checkbox lines in the description become subtasks. */
+export function mapWorkItem(item: any): GitLabWorkItem {
+  // Parse checkboxes in description into subtasks
+  const subtasks: SubTask[] = [];
+  if (item.description) {
+    const lines = item.description.split('\n');
+    let subId = 1;
+    for (const line of lines) {
+      const match = line.match(/^[\s-]*\[([ xX])\]\s*(.+)$/);
+      if (match) {
+        subtasks.push({
+          id: subId++,
+          title: match[2].trim(),
+          completed: match[1].toLowerCase() === 'x',
+          parent_iid: item.iid
+        });
+      }
+    }
+  }
+
+  return {
+    id: item.id,
+    iid: item.iid,
+    project_id: item.project_id,
+    title: item.title,
+    description: item.description || '',
+    state: item.state,
+    work_item_type: item.issue_type ? (item.issue_type.charAt(0).toUpperCase() + item.issue_type.slice(1)) : 'Issue',
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    closed_at: item.closed_at,
+    labels: item.labels || [],
+    milestone: item.milestone ? { id: item.milestone.id, title: item.milestone.title } : null,
+    assignees: (item.assignees || []).map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      username: a.username,
+      avatar_url: a.avatar_url
+    })),
+    author: {
+      id: item.author.id,
+      name: item.author.name,
+      username: item.author.username,
+      avatar_url: item.author.avatar_url
+    },
+    user_notes_count: item.user_notes_count || 0,
+    upvotes: item.upvotes || 0,
+    web_url: item.web_url,
+    reference: item.references?.full,
+    weight: item.weight,
+    subtasks
+  };
+}
+
 export class GitLabClient {
   private host: string;
   private token: string | null;
@@ -1678,6 +1795,28 @@ export class GitLabClient {
     return { data, etag };
   }
 
+  /** Read-only GET for modules outside this class (inbox, agents). Throws in demo mode. */
+  async apiGet<T>(endpoint: string): Promise<T> {
+    const { data } = await this.fetchApi<T>(endpoint);
+    return data;
+  }
+
+  /**
+   * Runs a per-project list call over the most recently active member projects and merges the results.
+   * Tags each row with `project_name`. Throws only when every project failed.
+   */
+  private async forRecentProjects<T extends { project_name?: string }>(
+    fetchOne: (project: GitLabProject) => Promise<T[]>
+  ): Promise<T[]> {
+    const projects = (await this.getProjects()).slice(0, AGGREGATE_PROJECT_LIMIT);
+    const results = await mapLimit(projects, AGGREGATE_CONCURRENCY, async (project) =>
+      (await fetchOne(project)).map((row) => ({ ...row, project_name: row.project_name ?? project.name }))
+    );
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failures.length > 0 && failures.length === results.length) throw failures[0].reason;
+    return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+  }
+
   // 1. Current user
   async getCurrentUser(): Promise<GitLabUser> {
     if (this.isDemoMode) return DEMO_USER;
@@ -1713,30 +1852,50 @@ export class GitLabClient {
       return DEMO_MILESTONES;
     }
 
-    const cacheKey = `milestones:${projectId || 'all'}`;
+    if (!projectId) {
+      try {
+        const all = await this.forRecentProjects((p) => this.getMilestones(p.id, force));
+        return all.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+      } catch {
+        return [];
+      }
+    }
+
+    const cacheKey = `milestones:${projectId}`;
     if (!force) {
       const cached = cacheDb.get<GitLabMilestone[]>(cacheKey);
       if (cached) return cached.data;
     }
 
-    const endpoint = projectId ? `/projects/${projectId}/milestones?per_page=50` : `/groups/all/milestones?per_page=50`;
     try {
-      const { data, etag } = await this.fetchApi<any[]>(endpoint);
-      const list: GitLabMilestone[] = data.map((m) => ({
-        id: m.id,
-        iid: m.iid,
-        project_id: m.project_id || projectId,
-        title: m.title,
-        description: m.description,
-        state: m.state,
-        due_date: m.due_date,
-        start_date: m.start_date,
-        web_url: m.web_url,
-        open_issues_count: m.stats?.open_issues ?? 2,
-        closed_issues_count: m.stats?.closed_issues ?? 5,
-        completion_percentage: m.stats ? Math.round((m.stats.closed_issues / ((m.stats.open_issues + m.stats.closed_issues) || 1)) * 100) : 60
-      }));
-      cacheDb.set(cacheKey, 'milestones', projectId ? String(projectId) : null, list, etag, 120000);
+      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/milestones?per_page=50&state=active`);
+      // The milestone API returns no issue counts; issues_statistics gives them per milestone (one call each).
+      const stats = await mapLimit(data, AGGREGATE_CONCURRENCY, async (m) => {
+        const { data: s } = await this.fetchApi<any>(
+          `/projects/${projectId}/issues_statistics?milestone=${encodeURIComponent(m.title)}`
+        );
+        return s?.statistics?.counts as { opened: number; closed: number } | undefined;
+      });
+      const list: GitLabMilestone[] = data.map((m, i) => {
+        const counts = stats[i].status === 'fulfilled' ? stats[i].value : undefined;
+        const total = counts ? counts.opened + counts.closed : 0;
+        return {
+          id: m.id,
+          iid: m.iid,
+          project_id: m.project_id || projectId,
+          title: m.title,
+          description: m.description,
+          state: m.state,
+          due_date: m.due_date,
+          start_date: m.start_date,
+          web_url: m.web_url,
+          // Left undefined when unknown; the UI shows "n/a" rather than a made-up number.
+          open_issues_count: counts?.opened,
+          closed_issues_count: counts?.closed,
+          completion_percentage: counts ? (total ? Math.round((counts.closed / total) * 100) : 0) : undefined
+        };
+      });
+      cacheDb.set(cacheKey, 'milestones', String(projectId), list, etag, 120000);
       return list;
     } catch {
       return [];
@@ -1785,70 +1944,30 @@ export class GitLabClient {
       return items;
     }
 
-    const cacheKey = `work_items:${projectId || 'all'}:${state}`;
+    // `/issues?scope=all` would include every public project on gitlab.com; stay within member projects.
+    if (!projectId) {
+      try {
+        const all = await this.forRecentProjects((p) => this.getWorkItems(p.id, state, force));
+        return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 100);
+      } catch {
+        return [];
+      }
+    }
+
+    const cacheKey = `work_items:${projectId}:${state}`;
     if (!force) {
       const cached = cacheDb.get<GitLabWorkItem[]>(cacheKey);
       if (cached) return cached.data;
     }
 
-    let endpoint = projectId ? `/projects/${projectId}/issues?per_page=50` : `/issues?scope=all&per_page=50`;
+    let endpoint = `/projects/${projectId}/issues?per_page=50`;
     if (state !== 'all') endpoint += `&state=${state}`;
 
     try {
       const { data, etag } = await this.fetchApi<any[]>(endpoint);
-      const items: GitLabWorkItem[] = data.map((item) => {
-        // Parse checkboxes in description into subtasks
-        const subtasks: SubTask[] = [];
-        if (item.description) {
-          const lines = item.description.split('\n');
-          let subId = 1;
-          for (const line of lines) {
-            const match = line.match(/^[\s-]*\[([ xX])\]\s*(.+)$/);
-            if (match) {
-              subtasks.push({
-                id: subId++,
-                title: match[2].trim(),
-                completed: match[1].toLowerCase() === 'x',
-                parent_iid: item.iid
-              });
-            }
-          }
-        }
+      const items: GitLabWorkItem[] = data.map(mapWorkItem);
 
-        return {
-          id: item.id,
-          iid: item.iid,
-          project_id: item.project_id,
-          title: item.title,
-          description: item.description || '',
-          state: item.state,
-          work_item_type: item.issue_type ? (item.issue_type.charAt(0).toUpperCase() + item.issue_type.slice(1)) : 'Issue',
-          created_at: item.created_at,
-          updated_at: item.updated_at,
-          closed_at: item.closed_at,
-          labels: item.labels || [],
-          milestone: item.milestone ? { id: item.milestone.id, title: item.milestone.title } : null,
-          assignees: (item.assignees || []).map((a: any) => ({
-            id: a.id,
-            name: a.name,
-            username: a.username,
-            avatar_url: a.avatar_url
-          })),
-          author: {
-            id: item.author.id,
-            name: item.author.name,
-            username: item.author.username,
-            avatar_url: item.author.avatar_url
-          },
-          user_notes_count: item.user_notes_count || 0,
-          upvotes: item.upvotes || 0,
-          web_url: item.web_url,
-          weight: item.weight,
-          subtasks
-        };
-      });
-
-      cacheDb.set(cacheKey, 'work_items', projectId ? String(projectId) : null, items, etag, 60000);
+      cacheDb.set(cacheKey, 'work_items', String(projectId), items, etag, 60000);
       return items;
     } catch (err) {
       console.error('Failed fetching work items:', err);
@@ -2191,69 +2310,30 @@ export class GitLabClient {
       return mrs;
     }
 
-    const cacheKey = `mrs:${projectId || 'all'}:${state}`;
+    if (!projectId) {
+      try {
+        const all = await this.forRecentProjects((p) => this.getMergeRequests(p.id, state, force));
+        return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 100);
+      } catch {
+        return [];
+      }
+    }
+
+    const cacheKey = `mrs:${projectId}:${state}`;
     if (!force) {
       const cached = cacheDb.get<GitLabMergeRequest[]>(cacheKey);
       if (cached) return cached.data;
     }
 
-    let endpoint = projectId
-      ? `/projects/${projectId}/merge_requests?per_page=50`
-      : `/merge_requests?scope=all&per_page=50`;
+    let endpoint = `/projects/${projectId}/merge_requests?per_page=50`;
 
     if (state !== 'all') endpoint += `&state=${state}`;
 
     try {
       const { data, etag } = await this.fetchApi<any[]>(endpoint);
-      const mrs: GitLabMergeRequest[] = data.map((m) => ({
-        id: m.id,
-        iid: m.iid,
-        project_id: m.project_id,
-        title: m.title,
-        description: m.description || '',
-        state: m.state,
-        draft: Boolean(m.draft || m.work_in_progress),
-        work_in_progress: Boolean(m.work_in_progress || m.draft),
-        merge_status: m.merge_status,
-        detailed_merge_status: m.detailed_merge_status,
-        source_branch: m.source_branch,
-        target_branch: m.target_branch,
-        author: {
-          id: m.author.id,
-          name: m.author.name,
-          username: m.author.username,
-          avatar_url: m.author.avatar_url
-        },
-        assignees: (m.assignees || []).map((a: any) => ({
-          id: a.id,
-          name: a.name,
-          username: a.username,
-          avatar_url: a.avatar_url
-        })),
-        reviewers: (m.reviewers || []).map((r: any) => ({
-          id: r.id,
-          name: r.name,
-          username: r.username,
-          avatar_url: r.avatar_url
-        })),
-        labels: m.labels || [],
-        pipeline: m.pipeline ? {
-          id: m.pipeline.id,
-          status: m.pipeline.status,
-          web_url: m.pipeline.web_url,
-          ref: m.pipeline.ref,
-          sha: m.pipeline.sha
-        } : undefined,
-        has_conflicts: Boolean(m.has_conflicts),
-        web_url: m.web_url,
-        created_at: m.created_at,
-        updated_at: m.updated_at,
-        user_notes_count: m.user_notes_count || 0,
-        changes_count: m.changes_count || '1',
-        approved: Boolean(m.approved_by && m.approved_by.length > 0)
-      }));
+      const mrs: GitLabMergeRequest[] = data.map(mapMergeRequest);
 
-      cacheDb.set(cacheKey, 'merge_requests', projectId ? String(projectId) : null, mrs, etag, 60000);
+      cacheDb.set(cacheKey, 'merge_requests', String(projectId), mrs, etag, 60000);
       return mrs;
     } catch (err) {
       console.error('Failed fetching merge requests:', err);
@@ -2460,15 +2540,23 @@ export class GitLabClient {
       return DEMO_PIPELINES;
     }
 
-    const cacheKey = `pipelines:${projectId || 'all'}`;
+    if (!projectId) {
+      try {
+        const all = await this.forRecentProjects((p) => this.getPipelines(p.id, force));
+        return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 50);
+      } catch {
+        return [];
+      }
+    }
+
+    const cacheKey = `pipelines:${projectId}`;
     if (!force) {
       const cached = cacheDb.get<GitLabPipeline[]>(cacheKey);
       if (cached) return cached.data;
     }
 
-    const endpoint = projectId ? `/projects/${projectId}/pipelines?per_page=30` : `/pipelines?scope=all&per_page=30`;
     try {
-      const { data, etag } = await this.fetchApi<any[]>(endpoint);
+      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/pipelines?per_page=30`);
       const pipelines: GitLabPipeline[] = data.map((p) => ({
         id: p.id,
         project_id: p.project_id || projectId,
@@ -2481,7 +2569,7 @@ export class GitLabClient {
         user: p.user ? { name: p.user.name, username: p.user.username, avatar_url: p.user.avatar_url } : undefined
       }));
 
-      cacheDb.set(cacheKey, 'pipelines', projectId ? String(projectId) : null, pipelines, etag, 45000);
+      cacheDb.set(cacheKey, 'pipelines', String(projectId), pipelines, etag, 45000);
       return pipelines;
     } catch {
       return [];
@@ -2757,16 +2845,27 @@ export class GitLabClient {
   async getLabels(projectId?: number, force = false): Promise<GitLabLabel[]> {
     if (this.isDemoMode) return DEMO_LABELS;
 
-    const cacheKey = `labels:${projectId || 'all'}`;
+    if (!projectId) {
+      try {
+        // Same label name in several projects is shown once.
+        const all = await this.forRecentProjects((p) => this.getLabels(p.id, force) as Promise<(GitLabLabel & { project_name?: string })[]>);
+        const byName = new Map<string, GitLabLabel>();
+        for (const label of all) if (!byName.has(label.name)) byName.set(label.name, label);
+        return [...byName.values()];
+      } catch {
+        return [];
+      }
+    }
+
+    const cacheKey = `labels:${projectId}`;
     if (!force) {
       const cached = cacheDb.get<GitLabLabel[]>(cacheKey);
       if (cached) return cached.data;
     }
 
     try {
-      const endpoint = projectId ? `/projects/${projectId}/labels?per_page=100` : `/labels?per_page=100`;
-      const { data, etag } = await this.fetchApi<GitLabLabel[]>(endpoint);
-      cacheDb.set(cacheKey, 'labels', projectId ? String(projectId) : null, data, etag, 300000);
+      const { data, etag } = await this.fetchApi<GitLabLabel[]>(`/projects/${projectId}/labels?per_page=100&with_counts=true`);
+      cacheDb.set(cacheKey, 'labels', String(projectId), data, etag, 300000);
       return data;
     } catch {
       return [];
@@ -2812,17 +2911,24 @@ export class GitLabClient {
       return pkgs;
     }
 
-    const cacheKey = `packages:${projectId || 'all'}:${packageType || 'all'}`;
+    if (!projectId) {
+      try {
+        const all = await this.forRecentProjects((p) => this.getPackages(p.id, packageType, force));
+        return all.sort((a, b) => b.created_at.localeCompare(a.created_at));
+      } catch {
+        return [];
+      }
+    }
+
+    const cacheKey = `packages:${projectId}:${packageType || 'all'}`;
     if (!force) {
       const cached = cacheDb.get<GitLabPackage[]>(cacheKey);
       if (cached) return cached.data;
     }
 
     try {
-      const endpoint = projectId
-        ? `/projects/${projectId}/packages?per_page=50${packageType && packageType !== 'all' ? `&package_type=${packageType}` : ''}`
-        : `/packages?per_page=50${packageType && packageType !== 'all' ? `&package_type=${packageType}` : ''}`;
-      const { data, etag } = await this.fetchApi<any[]>(endpoint);
+      const typeFilter = packageType && packageType !== 'all' ? `&package_type=${packageType}` : '';
+      const { data, etag } = await this.fetchApi<any[]>(`/projects/${projectId}/packages?per_page=50${typeFilter}`);
       const packages: GitLabPackage[] = data.map((pkg) => ({
         id: pkg.id,
         name: pkg.name,
@@ -2836,7 +2942,7 @@ export class GitLabClient {
         web_path: pkg._links?.web_path,
         install_command: pkg.package_type === 'npm' ? `npm install ${pkg.name}@${pkg.version}` : undefined
       }));
-      cacheDb.set(cacheKey, 'packages', projectId ? String(projectId) : null, packages, etag, 60000);
+      cacheDb.set(cacheKey, 'packages', String(projectId), packages, etag, 60000);
       return packages;
     } catch {
       return [];

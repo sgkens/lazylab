@@ -24,11 +24,13 @@ import {
   Award,
   Bot,
   ShieldCheck,
-  LogOut
+  LogOut,
+  Inbox
 } from 'lucide-react';
 import { AppStatus } from '../types/gitlab';
 
 export type ActiveTab =
+  | 'inbox'
   | 'dashboard'
   | 'work_items'
   | 'merge_requests'
@@ -59,6 +61,7 @@ interface NavbarProps {
   mrsCount: number;
   pipelinesCount: number;
   milestonesCount: number;
+  inboxActionCount?: number;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
   settingsSection?: 'general' | 'badges' | 'pages';
@@ -81,6 +84,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   mrsCount,
   pipelinesCount,
   milestonesCount,
+  inboxActionCount = 0,
   theme,
   onToggleTheme,
   settingsSection = 'badges',
@@ -89,7 +93,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout
 }) => {
   const [navCategory, setNavCategory] = useState<NavCategory>(() => {
-    if (['dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) return 'plan';
+    if (['inbox', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) return 'plan';
     if (['pipelines', 'pipeline_editor', 'runners', 'ci_variables'].includes(activeTab)) return 'cicd';
     if (['packages', 'releases_tags'].includes(activeTab)) return 'registry';
     if (activeTab === 'repo_settings') return 'settings';
@@ -97,7 +101,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   });
 
   React.useEffect(() => {
-    if (['dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
+    if (['inbox', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
       setNavCategory('plan');
     } else if (['pipelines', 'pipeline_editor', 'runners', 'ci_variables'].includes(activeTab)) {
       setNavCategory('cicd');
@@ -118,7 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             href="#"
             onClick={(e) => {
               e.preventDefault();
-              onTabChange('dashboard');
+              onTabChange('inbox');
             }}
             className="text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-orange-400 transition-colors flex items-center gap-2"
           >
@@ -255,8 +259,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => {
               setNavCategory('plan');
-              if (!['dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
-                onTabChange('dashboard');
+              if (!['inbox', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
+                onTabChange('inbox');
               }
             }}
             className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors flex items-center gap-1.5 ${
@@ -325,6 +329,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* SCOPE 1: PLAN */}
           {navCategory === 'plan' && (
             <>
+              <button
+                onClick={() => onTabChange('inbox')}
+                className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                  activeTab === 'inbox'
+                    ? 'bg-zinc-800 text-white shadow-sm font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
+                }`}
+              >
+                <Inbox className="w-3.5 h-3.5 text-orange-400" />
+                <span>Inbox</span>
+                {inboxActionCount > 0 && (
+                  <span className="px-1.5 rounded-full bg-orange-600 text-white text-[10px] font-bold tabular-nums">
+                    {inboxActionCount}
+                  </span>
+                )}
+              </button>
+
               <button
                 onClick={() => onTabChange('dashboard')}
                 className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${

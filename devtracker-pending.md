@@ -93,30 +93,30 @@ Classification of the live (token configured) code path. With no token everythin
 | Area | Feature | Status | Notes |
 |---|---|---|---|
 | Auth | verify / save / clear token | WIRED | Since 2026-10-17 (second pass), save/clear create/deactivate an encrypted vault profile |
-| Sync | auto-fetch timer + SSE `/api/events` | PARTIAL | Calls global endpoints that do not exist (see GL-1). Refreshes only the `:all` cache keys, so project-scoped keys go stale |
+| Sync | auto-fetch timer + SSE `/api/events` | WIRED | Since 2026-10-17 (third pass): fans out over the 15 most recently active member projects and refreshes the per-project cache keys; also refreshes the inbox |
 | Projects | list | WIRED | Capped at 50, no pagination |
 | Projects | update settings | WIRED | |
 | Projects | avatar upload | STUB | In live mode it mutates the demo array; GitLab is never called |
-| Milestones | list | PARTIAL | Project scope OK. `/groups/all/milestones` is not a GitLab endpoint. Stats fall back to fake 2/5/60% |
+| Milestones | list | WIRED | Third pass: per-project fan-out; active milestones only; counts from `issues_statistics`, "n/a" when unavailable |
 | Milestones | create | WIRED | |
-| Work items | list | WIRED | Capped at 50 |
+| Work items | list | WIRED | Capped at 50 per project. All-projects view fans out over member projects (was `/issues?scope=all`, which includes every public project on gitlab.com) |
 | Work items | create / update | PARTIAL | Returns the raw GitLab object, not mapped to `GitLabWorkItem` (no `work_item_type`, `subtasks`). Update drops an empty `title`/`description` because of a truthy check |
 | Work items | subtasks (checkbox lines) | PARTIAL | IDs are positional; toggle returns `[]`; demo-mode addSubTask on a missing item falls through to a live fetch and throws |
 | Notes | list / create (issues and MRs) | WIRED | |
 | Notes | attachments | STUB | The file is inlined as a base64 data URL in the note body and never uploaded via `/projects/:id/uploads`. `express.json()` 100 kb limit rejects most files |
-| MRs | list | PARTIAL | `approved` is derived from `approved_by`, which the list endpoint does not return, so it is always false live |
+| MRs | list | PARTIAL | `approved` is derived from `approved_by`, which the list endpoint does not return, so it is always false live. List responses carry no pipeline; only the inbox fetches single MRs for `head_pipeline`. All-projects view fans out like work items |
 | MRs | approve / unapprove / merge | WIRED | |
 | MRs | update | PARTIAL | `draft` is ignored live |
 | MRs | create | WIRED | Agent API only; no UI |
-| Pipelines | list | PARTIAL | Project scope OK. A global `/pipelines` endpoint does not exist |
+| Pipelines | list | WIRED | Third pass: per-project fan-out, newest 50 |
 | Pipelines | jobs, retry, cancel, play job | WIRED | |
 | Jobs | trace | WIRED | Whole log per request, no incremental tail; errors are masked as a fake trace |
 | Runners | list | WIRED | `/runners` returns only runners the user owns, not the admin `/runners/all` |
 | Runners | pause, assign, unassign, delete, runner jobs | WIRED | |
 | Runners | register | WIRED | Fixed in the second pass (GL-6): uses the returned token, saves it to the vault, surfaces API errors |
-| Labels | list | PARTIAL | Project scope OK. Global `/labels` does not exist |
+| Labels | list | WIRED | Third pass: per-project fan-out, de-duplicated by name; project scope uses `with_counts=true` |
 | Labels | create | WIRED | |
-| Packages | list | PARTIAL | Project scope OK. Global `/packages` does not exist |
+| Packages | list | WIRED | Third pass: per-project fan-out |
 | Packages | details | WIRED | Server and client function exist, but no UI calls them |
 | Tags / releases | list / create | WIRED | Not yet exercised against a live instance |
 | CI editor | read `.gitlab-ci.yml` | PARTIAL | `ref=main` is hardcoded (ignores `default_branch`). On any error it returns the **demo YAML**, which a save would then commit to the real repo |
@@ -132,7 +132,7 @@ Classification of the live (token configured) code path. With no token everythin
 
 | Component | Status | Notes |
 |---|---|---|
-| `cacheDb` | PARTIAL | `expiresAt` is stored but never checked, so entries never expire. The "WAL" is an append-only JSON-lines file, not SQLite WAL. The whole sql.js DB is exported to disk on each write batch. Journal file and `wal_logs` table grow without bound |
+| `cacheDb` | PARTIAL | TTL enforced since the third pass (`get(key, { allowStale })` keeps expired rows for offline use). The "WAL" is an append-only JSON-lines file, not SQLite WAL. The whole sql.js DB is exported to disk on each write batch. Journal file and `wal_logs` table grow without bound |
 | `metricsManager` | PARTIAL | Real counters and rate-limit header parsing, but seeded with fake totals (142/488) and random 30-minute history |
 | `/api/metrics/simulate-hit` | DEMO | Dashboard "Simulate" buttons |
 | Error handling | PARTIAL | Most list calls swallow errors and return `[]`, so the UI cannot tell an empty result from a failure |
@@ -196,6 +196,22 @@ flowchart LR
   - Container with TLS
   - Headless Chromium UI flow (setup → vault → add/reveal secret → agent token → sign out → sign in), no page errors
 
+## Done 2026-10-17 (third pass): foundation + inbox
+
+- [x] GL-1 Removed the non-existent global endpoints. `forRecentProjects` fans out over the 15 most recently active member projects (4 in flight) for milestones, pipelines, labels, packages, work items and MRs
+- [x] GL-14 Milestone counts from `issues_statistics`; the UI shows "n/a" instead of the fake 60%
+- [x] CACHE-2 TTL enforced in `cacheDb.get`; `allowStale` for later offline use (CACHE-5)
+- [x] CACHE-4 Auto-fetch now refreshes the per-project keys the views read
+- [x] INBOX-1 `GET /api/inbox` and `GET /api/agent/inbox` (`server/inbox.ts`): review requests, own MRs with `head_pipeline`, assigned issues, To-Dos merged onto items; partial failures reported in `errors[]`
+- [x] INBOX-2 Inbox is the default tab, grouped into action / waiting / assigned, with an action count badge in the nav
+- [~] BUILD-3 `bun test` set up (`tests/`, `bunfig.toml` preload isolates `LAZYLAB_DATA_DIR`): `mapLimit`, cache TTL, inbox classification and assembly, demo inbox. Still to cover: `yamlParser`, normalisers, routes
+- Verified: `tsc`, `vite build`, 19 tests, headless Chromium flow (setup → inbox → milestones → dashboard → vault → agent token → sign out → sign in), no page errors
+
+Follow-ups found on the way:
+- [ ] INBOX-7 "Already approved by me" state for review requests (needs `/merge_requests/:iid/approvals` per item)
+- [ ] GL-17 Make `AGGREGATE_PROJECT_LIMIT` (15) a setting, or let the user pin the projects the all-projects views aggregate
+- [ ] GL-18 MR list pipeline status for the MR view (single-MR fetch or `/pipelines?ref=`) — list responses have none
+
 ## Epic SEC: hardening follow-ups
 
 - [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
@@ -215,7 +231,7 @@ flowchart LR
 
 ## Epic GL: GitLab client correctness
 
-- [ ] GL-1 Remove the non-existent global endpoints (`/groups/all/milestones`, `/pipelines`, `/labels`, `/packages`). Aggregate per-project over the membership list, or require a project
+- [x] GL-1 Remove the non-existent global endpoints (`/groups/all/milestones`, `/pipelines`, `/labels`, `/packages`). Aggregate per-project over the membership list, or require a project
 - [ ] GL-2 Pagination via `Link` / `x-next-page` headers for projects, issues, MRs, pipelines
 - [ ] GL-3 Map create/update responses through the same normaliser as the list calls (work items, MRs)
 - [ ] GL-4 Send `draft` on MR update; fetch `/approvals` for the approval state
@@ -228,16 +244,16 @@ flowchart LR
 - [ ] GL-11 Project avatar: implement the multipart `PUT /projects/:id` upload, or remove the feature
 - [ ] GL-12 Note attachments: upload via `POST /projects/:id/uploads` and insert the returned markdown
 - [ ] GL-13 Pages: remove fabricated defaults and the demo fallback
-- [ ] GL-14 Milestone stats: compute from issues, or show "n/a"; no fake numbers
+- [x] GL-14 Milestone stats: compute from issues, or show "n/a"; no fake numbers
 - [ ] GL-15 Return errors from list calls (typed error payload) instead of `[]`; show them in the UI
 - [ ] GL-16 Agent API: `GET /:iid` fetches the single item directly; require `projectId` or a configured default project
 
 ## Epic CACHE: local storage layer
 
 - [ ] CACHE-1 Replace sql.js with `bun:sqlite` (both targets now run Bun): real WAL mode, no full-DB export per write
-- [ ] CACHE-2 Enforce TTL in `get()`; stale-while-revalidate for the UI
+- [x] CACHE-2 Enforce TTL in `get()`; stale-while-revalidate for the UI
 - [ ] CACHE-3 Bound the journal: rotate or truncate the `.wal` file and prune `wal_logs` (keep N rows / N days)
-- [ ] CACHE-4 Auto-fetch refreshes the project-scoped keys the UI actually uses
+- [x] CACHE-4 Auto-fetch refreshes the project-scoped keys the UI actually uses
 - [ ] CACHE-5 Serve the last cached data when GitLab is unreachable, flagged as stale (offline mode)
 - [ ] CACHE-6 Rename `labwi_*` leftovers (cache files, `labwi_theme` localStorage key)
 
@@ -260,7 +276,7 @@ flowchart LR
 
 - [x] BUILD-1 `git init`, `main` + `develop` branches, first commit of the imported baseline
 - [ ] BUILD-2 Vite `manualChunks`: split `react`/`react-dom`, `lucide-react`, and the heavy views (pipeline editor, dashboard)
-- [ ] BUILD-3 `bun test` setup: unit tests for `yamlParser`, `cacheDb`, response normalisers; route tests against the demo client
+- [~] BUILD-3 `bun test` setup: unit tests for `yamlParser`, `cacheDb`, response normalisers; route tests against the demo client
 - [ ] BUILD-4 CI pipeline: lint, test, build, docker build
 - [ ] BUILD-5 Container `HEALTHCHECK` on `/api/status` (needs a lightweight health route that does not call GitLab)
 - [ ] BUILD-6 Split `gitlabClient.ts` (3.4k lines): demo dataset into `server/demo/`, one module per GitLab resource
@@ -268,8 +284,8 @@ flowchart LR
 
 ## Epic INBOX: my work across projects and hosts
 
-- [ ] INBOX-1 `GET /api/inbox`: MRs where I am reviewer, my open MRs (pipeline, approvals, conflicts, draft), issues assigned to me, pending To-Dos. Uses the global GitLab endpoints that exist (`/merge_requests?scope=…`, `/issues?scope=assigned_to_me`, `/todos`)
-- [ ] INBOX-2 Inbox view as the default tab, grouped by "needs my action" / "waiting on others" / "assigned"
+- [x] INBOX-1 `GET /api/inbox`: MRs where I am reviewer, my open MRs (pipeline, approvals, conflicts, draft), issues assigned to me, pending To-Dos. Uses the global GitLab endpoints that exist (`/merge_requests?scope=…`, `/issues?scope=assigned_to_me`, `/todos`)
+- [x] INBOX-2 Inbox view as the default tab, grouped by "needs my action" / "waiting on others" / "assigned"
 - [ ] INBOX-3 Mark a To-Do done; snooze an item locally until a date or until it changes
 - [ ] INBOX-4 Aggregate across every vault profile (work GitLab + gitlab.com), not only the active one
 - [ ] INBOX-5 "New since you last looked" markers, stored locally per item (`updated_at` vs last-seen)
