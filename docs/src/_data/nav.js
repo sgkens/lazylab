@@ -19,7 +19,8 @@ export default [
       { title: 'Work items and merge requests', url: '/guide/planning/' },
       { title: 'Releases and tags', url: '/guide/releases/' },
       { title: 'Project settings', url: '/guide/project-settings/' },
-      { title: 'Vault', url: '/guide/vault/' }
+      { title: 'Vault', url: '/guide/vault/' },
+      { title: 'Command line (lazy)', url: '/cli/' }
     ]
   },
   {

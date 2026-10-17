@@ -49,6 +49,7 @@ Every tool that takes `project` accepts a numeric id or a full path such as `gro
 | `get_merge_request` | yes | One MR with description, head pipeline and comments |
 | `create_merge_request` | no | Open an MR from a pushed branch |
 | `list_pipelines` | yes | Recent pipelines, optionally for one ref |
+| `get_pipeline` | yes | One pipeline with the status of each job |
 | `get_pipeline_failures` | yes | Error line, exit code, reason, retryable and log excerpt per failed job |
 | `get_job_failure` | yes | The same for one job |
 | `run_pipeline` | no | Start a pipeline with variables; watched by default |
