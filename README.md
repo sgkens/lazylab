@@ -89,6 +89,24 @@ LAZYLAB_BIND=0.0.0.0                        # Docker
 - In Docker, `LAZYLAB_TLS_SANS` is required: the container's own hostname is meaningless to the laptop.
 - To avoid browser warnings, issue a cert with [mkcert](https://github.com/FiloSottile/mkcert) for the desktop's names, trust mkcert's root CA on the laptop, and point `LAZYLAB_TLS_CERT`/`LAZYLAB_TLS_KEY` at the files. Delete `<data dir>/tls/` to regenerate the self-signed cert after changing SANs.
 
+## Notifications
+
+lazylab polls watched pipelines, jobs and merge requests every 15 seconds while the vault is unlocked, and notifies you when they finish or change.
+
+- **Watch:** the bell button on a running pipeline or job, or on a merge request in the Inbox. Agents and scripts use `POST /api/agent/watches` with `{"kind":"pipeline","projectId":1,"targetId":2}`.
+- **Rules** (Vault → Notifications): auto-watch the running pipelines of your own MRs, new review requests, new commits on MRs you review, runner offline.
+- **Delivery:** the bell menu, a desktop notification when the tab is in the background (needs HTTPS or localhost), and every enabled push channel.
+
+Push channels are stored encrypted in the vault:
+
+| Type | Fields | Notes |
+|---|---|---|
+| ntfy | server URL, topic, optional access token | Subscribe to the topic in the ntfy phone app. A public `ntfy.sh` topic is readable by anyone who guesses its name; use a long random topic or a token-protected server |
+| Gotify | server URL, application token | Self-hosted |
+| Webhook | URL, format `json` / `slack` / `discord` | Slack and Discord incoming webhooks, or any JSON endpoint |
+
+Each channel can take all events or failures only. Use **Test** to check it.
+
 ## Agent skills
 
 `skills/` contains a `lazylab-agent` skill for Claude Code, Codex and Antigravity. See [skills/README.md](skills/README.md).
@@ -107,6 +125,10 @@ Open epics, tasks and the wired/stub audit are in [devtracker-pending.md](devtra
 | `server/vault.ts` | Encrypted vault file: profiles, entries, agent tokens |
 | `server/vaultRouter.ts` | `/api/vault/*` routes, CI secret push to GitLab |
 | `server/tls.ts` | Built-in HTTPS, self-signed cert generation |
+| `server/inbox.ts` | Cross-project inbox (`/api/inbox`, `/api/agent/inbox`) |
+| `server/watch.ts` | Watch poller, notification rules, history |
+| `server/notify.ts` | Push delivery: ntfy, Gotify, webhook |
+| `server/notifyRouter.ts` | `/api/notify/*` routes |
 | `server/gitlabClient.ts` | GitLab REST v4 client plus demo-mode dataset |
 | `server/cacheDb.ts` | sql.js cache snapshot + append-only journal in `.data/` |
 | `server/metricsManager.ts` | API/cache hit counters and rate-limit tracking |
