@@ -5,7 +5,10 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { AuthScreen } from './components/AuthScreen';
-import { VaultView } from './components/VaultView';
+import { VaultView, VaultSection } from './components/VaultView';
+import { NotificationCenter } from './components/NotificationCenter';
+import { WatchContext } from './components/WatchButton';
+import { NotifyState, WatchKind, LazyNotification } from './types/notify';
 import { InboxView } from './components/InboxView';
 import { Inbox } from './types/inbox';
 import { Navbar, ActiveTab } from './components/Navbar';
@@ -30,7 +33,7 @@ import { ProjectSettingsView } from './components/ProjectSettingsView';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { SyncProgressBar } from './components/SyncProgressBar';
 import { AgentSkillModal } from './components/AgentSkillModal';
-import { api, sessionApi } from './services/api';
+import { api, notifyApi, sessionApi } from './services/api';
 import { SessionState } from './types/vault';
 import {
   AppStatus,
@@ -89,6 +92,8 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   const [activeTab, setActiveTab] = useState<ActiveTab>('inbox');
   const [inbox, setInbox] = useState<Inbox | null>(null);
   const [inboxLoading, setInboxLoading] = useState(false);
+  const [notifyState, setNotifyState] = useState<NotifyState | null>(null);
+  const [vaultSection, setVaultSection] = useState<VaultSection | undefined>(undefined);
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [projects, setProjects] = useState<GitLabProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -198,6 +203,55 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     }
   }, [selectedProjectId]);
 
+  const loadNotify = useCallback(async () => {
+    try {
+      setNotifyState(await notifyApi.state());
+    } catch (err) {
+      console.error('Failed loading notifications:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadNotify();
+  }, [loadNotify]);
+
+  const watchKey = (kind: WatchKind, projectId: number, targetId: number) => `${kind}:${projectId}:${targetId}`;
+  const watchedIds = React.useMemo(
+    () => new Map((notifyState?.watches ?? []).map((w) => [watchKey(w.kind, w.project_id, w.target_id), w.id])),
+    [notifyState]
+  );
+
+  const watchContext = React.useMemo(
+    () => ({
+      isWatched: (kind: WatchKind, projectId: number, targetId: number) => watchedIds.has(watchKey(kind, projectId, targetId)),
+      toggleWatch: async (kind: WatchKind, projectId: number, targetId: number) => {
+        const existing = watchedIds.get(watchKey(kind, projectId, targetId));
+        try {
+          if (existing) {
+            await notifyApi.removeWatch(existing);
+            showToast('Stopped watching');
+          } else {
+            await notifyApi.addWatch(kind, projectId, targetId);
+            showToast("Watching. You'll be notified when it finishes.");
+          }
+        } catch (err: any) {
+          showToast(err.message || 'Watch failed');
+        }
+        loadNotify();
+      }
+    }),
+    [watchedIds, loadNotify]
+  );
+
+  /** Desktop notification when the tab is in the background; the toast covers the foreground case. */
+  const announce = (n: LazyNotification) => {
+    showToast(`${n.title}${n.body ? ` · ${n.body}` : ''}`);
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+      const desktop = new Notification(n.title, { body: n.body, tag: n.id });
+      if (n.url) desktop.onclick = () => window.open(n.url, '_blank', 'noopener');
+    }
+  };
+
   const loadInbox = async (force = false) => {
     setInboxLoading(true);
     try {
@@ -254,8 +308,13 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
 
   // Subscribe to real-time events via SSE
   useEffect(() => {
-    const unsubscribe = api.subscribeEvents((event) => {
-      if (event === 'inbox_updated') {
+    const unsubscribe = api.subscribeEvents((event, data) => {
+      if (event === 'notification') {
+        announce(data as LazyNotification);
+        loadNotify();
+      } else if (event === 'watches_changed') {
+        loadNotify();
+      } else if (event === 'inbox_updated') {
         loadInbox(false);
       } else if (event === 'sync_completed') {
         loadTabData(activeTab, selectedProjectId, false);
@@ -764,6 +823,18 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
           setActiveTab('repo_settings');
         }}
         username={username}
+        notificationSlot={
+          <NotificationCenter
+            state={notifyState}
+            onMarkRead={() => notifyApi.markRead().then(loadNotify).catch(() => undefined)}
+            onClear={() => notifyApi.clearNotifications().then(loadNotify).catch(() => undefined)}
+            onRemoveWatch={(id) => notifyApi.removeWatch(id).then(loadNotify).catch(() => undefined)}
+            onOpenSettings={() => {
+              setVaultSection('notify');
+              setActiveTab('vault');
+            }}
+          />
+        }
         onLogout={async () => {
           await sessionApi.logout().catch(() => undefined);
           onSignedOut();
@@ -791,6 +862,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
       />
 
       {/* Main Content Workspace View */}
+      <WatchContext.Provider value={watchContext}>
       <main className="flex-1 flex overflow-hidden">
         {activeTab === 'inbox' && (
           <InboxView inbox={inbox} projects={projects} loading={inboxLoading} onRefresh={() => loadInbox(true)} />
@@ -920,6 +992,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
             onProfileChanged={() => loadInitialData(true)}
             onLocked={onSignedOut}
             showToast={showToast}
+            initialSection={vaultSection}
           />
         )}
 
@@ -941,6 +1014,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
           />
         )}
       </main>
+      </WatchContext.Provider>
 
       {/* Modals */}
       <CreateWorkItemModal

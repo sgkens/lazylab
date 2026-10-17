@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { GitLabProject } from '../types/gitlab';
 import { Inbox, InboxBucket, InboxItem } from '../types/inbox';
+import { WatchButton } from './WatchButton';
 
 interface InboxViewProps {
   inbox: Inbox | null;
@@ -131,6 +132,7 @@ function InboxRow({ item, projectName, accent }: { item: InboxItem; projectName?
             {mr.pipeline.status}
           </a>
         )}
+        {mr && <WatchButton kind="merge_request" projectId={mr.project_id} targetId={mr.iid} compact />}
         <span className="tabular-nums w-14 text-right">{relativeTime(item.updated_at)}</span>
         <a href={item.web_url} target="_blank" rel="noreferrer" className="hover:text-zinc-200" title="Open in GitLab">
           <ExternalLink className="w-3.5 h-3.5" />

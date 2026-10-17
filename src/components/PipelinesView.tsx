@@ -21,6 +21,10 @@ import {
 import { GitLabJob, GitLabPipeline, GitLabProject } from '../types/gitlab';
 import { BadgePipelineModal } from './BadgePipelineModal';
 import { api } from '../services/api';
+import { WatchButton } from './WatchButton';
+
+// Statuses that can still change; only these get a Watch button.
+const IN_PROGRESS = new Set(['created', 'waiting_for_resource', 'preparing', 'pending', 'running', 'scheduled']);
 
 interface PipelinesViewProps {
   pipelines: GitLabPipeline[];
@@ -241,6 +245,9 @@ export const PipelinesView: React.FC<PipelinesViewProps> = ({
 
                   {/* Actions on Pipeline */}
                   <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {IN_PROGRESS.has(pipeline.status) && (
+                      <WatchButton kind="pipeline" projectId={pipeline.project_id} targetId={pipeline.id} />
+                    )}
                     {pipeline.status === 'running' ? (
                       <button
                         onClick={() => onCancelPipeline(pipeline.id, pipeline.project_id)}
@@ -331,6 +338,9 @@ export const PipelinesView: React.FC<PipelinesViewProps> = ({
                                         </div>
 
                                         <div className="flex items-center gap-1">
+                                          {IN_PROGRESS.has(job.status) && (
+                                            <WatchButton kind="job" projectId={pipeline.project_id} targetId={job.id} compact />
+                                          )}
                                           {/* Terminal Output Log button */}
                                           {onViewJobTrace && (
                                             <button

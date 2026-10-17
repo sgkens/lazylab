@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Bell,
   Bot,
   CheckCircle2,
   Copy,
@@ -16,7 +17,8 @@ import {
   Upload,
   Variable
 } from 'lucide-react';
-import { sessionApi, vaultApi } from '../services/api';
+import { notifyApi, sessionApi, vaultApi } from '../services/api';
+import { NotifyChannelInput, NotifyChannelType, NotifyRules, NotifyState } from '../types/notify';
 import { GitLabProject } from '../types/gitlab';
 import { AgentTokenInfo, DeviceSession, VaultEntry, VaultEntryKind, VaultProfile } from '../types/vault';
 
@@ -25,9 +27,12 @@ interface VaultViewProps {
   onProfileChanged: () => void;
   onLocked: () => void;
   showToast: (msg: string) => void;
+  /** Section to open, e.g. 'notify' from the notification centre. */
+  initialSection?: VaultSection;
 }
 
-type Section = 'profiles' | 'ci' | 'runner' | 'secret' | 'agent' | 'account';
+export type VaultSection = 'profiles' | 'ci' | 'runner' | 'secret' | 'agent' | 'notify' | 'account';
+type Section = VaultSection;
 
 const SECTIONS: { id: Section; label: string; icon: React.ElementType }[] = [
   { id: 'profiles', label: 'GitLab profiles', icon: Server },
@@ -35,6 +40,7 @@ const SECTIONS: { id: Section; label: string; icon: React.ElementType }[] = [
   { id: 'runner', label: 'Runner tokens', icon: Cpu },
   { id: 'secret', label: 'Secrets', icon: KeyRound },
   { id: 'agent', label: 'Agent tokens', icon: Bot },
+  { id: 'notify', label: 'Notifications', icon: Bell },
   { id: 'account', label: 'Account', icon: ShieldCheck }
 ];
 
@@ -117,8 +123,12 @@ const Card: React.FC<{ title: string; description: string; children: React.React
 
 const Empty: React.FC<{ text: string }> = ({ text }) => <p className="text-xs text-zinc-500 italic">{text}</p>;
 
-export const VaultView: React.FC<VaultViewProps> = ({ projects, onProfileChanged, onLocked, showToast }) => {
-  const [section, setSection] = useState<Section>('profiles');
+export const VaultView: React.FC<VaultViewProps> = ({ projects, onProfileChanged, onLocked, showToast, initialSection }) => {
+  const [section, setSection] = useState<Section>(initialSection ?? 'profiles');
+
+  useEffect(() => {
+    if (initialSection) setSection(initialSection);
+  }, [initialSection]);
   const [profiles, setProfiles] = useState<VaultProfile[]>([]);
   const [entries, setEntries] = useState<VaultEntry[]>([]);
   const [agentTokens, setAgentTokens] = useState<AgentTokenInfo[]>([]);
@@ -162,7 +172,13 @@ export const VaultView: React.FC<VaultViewProps> = ({ projects, onProfileChanged
         </div>
         {SECTIONS.map(({ id, label, icon: Icon }) => {
           const count =
-            id === 'profiles' ? profiles.length : id === 'agent' ? agentTokens.length : id === 'account' ? null : entries.filter((e) => e.kind === id).length;
+            id === 'profiles'
+              ? profiles.length
+              : id === 'agent'
+                ? agentTokens.length
+                : id === 'account' || id === 'notify'
+                  ? null
+                  : entries.filter((e) => e.kind === id).length;
           return (
             <button
               key={id}
@@ -207,6 +223,7 @@ export const VaultView: React.FC<VaultViewProps> = ({ projects, onProfileChanged
           />
         )}
         {section === 'agent' && <AgentSection tokens={agentTokens} run={run} showToast={showToast} />}
+        {section === 'notify' && <NotifySection run={run} showToast={showToast} />}
         {section === 'account' && <AccountSection run={run} onLocked={onLocked} />}
       </div>
     </div>
@@ -494,6 +511,172 @@ const CiSection: React.FC<{ entries: VaultEntry[]; projects: GitLabProject[]; ru
       />
       <AddEntryForm kind="ci" run={run} namePlaceholder="name, e.g. NPM_TOKEN" />
     </Card>
+  );
+};
+
+// ---- notifications -------------------------------------------------------------
+
+const RULE_LABELS: { key: keyof NotifyRules; label: string; hint: string }[] = [
+  { key: 'myMrPipelines', label: 'Watch my MR pipelines', hint: 'Auto-watch the running pipeline of each of your open MRs' },
+  { key: 'reviewRequests', label: 'New review requests', hint: 'Notify when someone asks you to review an MR' },
+  { key: 'reReview', label: 'New commits on MRs I review', hint: 'Notify when the author pushes to an MR you are reviewing' },
+  { key: 'runnerOffline', label: 'Runner offline', hint: 'Notify when one of your runners stops contacting GitLab' }
+];
+
+const CHANNEL_HELP: Record<NotifyChannelType, { url: string; hint: string }> = {
+  ntfy: { url: 'https://ntfy.sh', hint: 'Server URL and topic. Install the ntfy app on your phone and subscribe to the same topic. Token only for protected topics.' },
+  gotify: { url: 'https://gotify.example.lan', hint: 'Server URL and an application token created in Gotify.' },
+  webhook: { url: 'https://hooks.slack.com/services/…', hint: 'Any URL that accepts a JSON POST. Pick Slack or Discord for their incoming-webhook format.' }
+};
+
+const NotifySection: React.FC<{ run: Run; showToast: (m: string) => void }> = ({ run, showToast }) => {
+  const [state, setState] = useState<NotifyState | null>(null);
+  const [form, setForm] = useState<NotifyChannelInput>({ type: 'ntfy', name: '', url: CHANNEL_HELP.ntfy.url, topic: '', events: 'all' });
+  const [testing, setTesting] = useState<string | null>(null);
+
+  const reload = useCallback(async () => setState(await notifyApi.state()), []);
+  useEffect(() => {
+    reload().catch(() => undefined);
+  }, [reload]);
+
+  const act = async (fn: () => Promise<unknown>, msg?: string) => {
+    const ok = await run(fn, msg);
+    await reload().catch(() => undefined);
+    return ok;
+  };
+
+  const setType = (type: NotifyChannelType) =>
+    setForm({ type, name: form.name, url: CHANNEL_HELP[type].url, events: form.events, format: type === 'webhook' ? 'json' : undefined });
+
+  return (
+    <>
+      <Card title="Rules" description="What lazylab watches for you in the background. Notifications appear in the bell menu, as desktop notifications, and on every enabled channel below.">
+        <div className="space-y-2">
+          {RULE_LABELS.map(({ key, label, hint }) => (
+            <label key={key} className="flex items-start gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-orange-500"
+                checked={state?.rules[key] ?? false}
+                disabled={!state}
+                onChange={(e) => act(() => notifyApi.updateRules({ [key]: e.target.checked }))}
+              />
+              <span>
+                <span className="text-zinc-100">{label}</span>
+                <span className="block text-zinc-500">{hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </Card>
+
+      <Card title="Push channels" description="Deliver notifications to your phone or chat while you are away from the browser. Tokens and webhook URLs are stored encrypted in the vault.">
+        {!state || state.channels.length === 0 ? (
+          <Empty text="No channels. Browser notifications only." />
+        ) : (
+          <ul className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg">
+            {state.channels.map((c) => (
+              <li key={c.id} className="flex items-center gap-3 px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-zinc-100 flex items-center gap-2">
+                    {c.name}
+                    <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] font-mono text-zinc-400">
+                      {c.type}
+                      {c.format && c.format !== 'json' ? `·${c.format}` : ''}
+                    </span>
+                    {c.events === 'failures' && <span className="text-[10px] text-rose-300">failures only</span>}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 font-mono truncate">
+                    {c.urlHint}
+                    {c.topic ? ` / ${c.topic}` : ''}
+                    {c.tokenHint ? ` · token ${c.tokenHint}` : ''}
+                  </div>
+                  {c.lastError ? (
+                    <div className="text-[11px] text-red-400 truncate">Last error: {c.lastError}</div>
+                  ) : c.lastDeliveredAt ? (
+                    <div className="text-[11px] text-emerald-400">Last delivered {fmtDate(c.lastDeliveredAt)}</div>
+                  ) : null}
+                </div>
+                <label className="flex items-center gap-1 text-[11px] text-zinc-400">
+                  <input
+                    type="checkbox"
+                    className="accent-orange-500"
+                    checked={c.enabled}
+                    onChange={(e) => act(() => notifyApi.updateChannel(c.id, { enabled: e.target.checked }))}
+                  />
+                  on
+                </label>
+                <button
+                  className={btnGhost}
+                  disabled={testing === c.id}
+                  onClick={async () => {
+                    setTesting(c.id);
+                    await act(() => notifyApi.testChannel(c.id), 'Test notification sent');
+                    setTesting(null);
+                  }}
+                >
+                  {testing === c.id ? 'Sending…' : 'Test'}
+                </button>
+                <button className={btnDanger} onClick={() => confirm(`Delete channel ${c.name}?`) && act(() => notifyApi.deleteChannel(c.id), 'Channel deleted')}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form
+          className="space-y-2 border-t border-zinc-800 pt-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (await act(() => notifyApi.addChannel(form), 'Channel added')) {
+              setForm({ ...form, name: '', token: '', topic: '' });
+            }
+          }}
+        >
+          <div className="flex gap-2">
+            <select className={`${inputClass} w-32`} value={form.type} onChange={(e) => setType(e.target.value as NotifyChannelType)}>
+              <option value="ntfy">ntfy</option>
+              <option value="gotify">Gotify</option>
+              <option value="webhook">Webhook</option>
+            </select>
+            <input className={inputClass} placeholder="name, e.g. phone" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            <select className={`${inputClass} w-36`} value={form.events} onChange={(e) => setForm({ ...form, events: e.target.value as 'all' | 'failures' })}>
+              <option value="all">all events</option>
+              <option value="failures">failures only</option>
+            </select>
+          </div>
+          <input className={inputClass} placeholder={CHANNEL_HELP[form.type].url} value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} required />
+          <div className="flex gap-2">
+            {form.type === 'ntfy' && (
+              <input className={inputClass} placeholder="topic" value={form.topic ?? ''} onChange={(e) => setForm({ ...form, topic: e.target.value })} required />
+            )}
+            {form.type !== 'webhook' && (
+              <input
+                className={inputClass}
+                type="password"
+                autoComplete="off"
+                placeholder={form.type === 'gotify' ? 'application token' : 'access token (optional)'}
+                value={form.token ?? ''}
+                onChange={(e) => setForm({ ...form, token: e.target.value })}
+                required={form.type === 'gotify'}
+              />
+            )}
+            {form.type === 'webhook' && (
+              <select className={`${inputClass} w-40`} value={form.format} onChange={(e) => setForm({ ...form, format: e.target.value as 'json' | 'slack' | 'discord' })}>
+                <option value="json">plain JSON</option>
+                <option value="slack">Slack</option>
+                <option value="discord">Discord</option>
+              </select>
+            )}
+            <button className={btnPrimary} type="submit">
+              <Plus className="w-3.5 h-3.5" /> Add
+            </button>
+          </div>
+          <p className="text-[11px] text-zinc-500">{CHANNEL_HELP[form.type].hint}</p>
+        </form>
+      </Card>
+    </>
   );
 };
 

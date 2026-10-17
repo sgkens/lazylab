@@ -68,6 +68,8 @@ interface NavbarProps {
   onSelectSettingsSection?: (section: 'general' | 'badges' | 'pages') => void;
   username?: string | null;
   onLogout?: () => void;
+  /** Rendered next to the Vault button (notification centre). */
+  notificationSlot?: React.ReactNode;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -90,7 +92,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   settingsSection = 'badges',
   onSelectSettingsSection,
   username,
-  onLogout
+  onLogout,
+  notificationSlot
 }) => {
   const [navCategory, setNavCategory] = useState<NavCategory>(() => {
     if (['inbox', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) return 'plan';
@@ -224,6 +227,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Settings className="w-4 h-4" />
           </button>
+
+          {notificationSlot}
 
           {/* Vault: GitLab profiles, secrets, agent tokens, account */}
           <button
