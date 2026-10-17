@@ -75,7 +75,7 @@ flowchart LR
 ### Roadmap
 
 1. **Foundation, blocks everything else:** GL-1, GL-14, GL-15, GL-2, CACHE-1/2/4, BUILD-3. Cross-project views are wrong while list calls hit non-existent endpoints and swallow errors.
-2. **First differentiators, most QoL for the effort:** INBOX-1/2, WATCH-1..4, TRIAGE-1/6, ENV-4, AGENT-1.
+2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, TRIAGE-1/6, ENV-4, AGENT-1.
 3. **Away from the browser:** CLI-1/2/4, ENV-1/2, REPO-1..4.
 4. **Chores at scale:** REL, FLEET, DEPLOY, REG, RL.
 
@@ -212,6 +212,32 @@ Follow-ups found on the way:
 - [ ] GL-17 Make `AGGREGATE_PROJECT_LIMIT` (15) a setting, or let the user pin the projects the all-projects views aggregate
 - [ ] GL-18 MR list pipeline status for the MR view (single-MR fetch or `/pipelines?ref=`) — list responses have none
 
+## Done 2026-10-17 (fourth pass): watches and notifications
+
+```mermaid
+flowchart LR
+  UI[Watch button] --> W[(watches in vault)]
+  AG[POST /api/agent/watches] --> W
+  AF[auto-fetch: inbox + runners] -->|rules| WM[watchManager]
+  W --> P[poller 15 s] --> WM
+  WM -->|evaluateWatch| N[notification]
+  N --> SSE[SSE -> toast / desktop Notification]
+  N --> CH[ntfy / Gotify / webhook]
+```
+
+- [x] WATCH-1 Watches on pipelines, jobs and MRs (`server/watch.ts`): 15 s poller; pipelines/jobs end on a terminal state (incl. `manual`), MRs on merged/closed and notify on conflicts and finished head pipelines. Stored in the vault per GitLab profile; 404 removes the watch
+- [x] WATCH-2 SSE `notification` / `watches_changed`; toast in the foreground, desktop `Notification` when the tab is hidden; bell menu with history and active watches
+- [x] WATCH-3 Push channels in the vault: ntfy (JSON publish, bearer token), Gotify (`X-Gotify-Key`), webhook (`json` / `slack` / `discord`); all or failures only; test send; delivery health
+- [x] WATCH-4 Rules: auto-watch running pipelines of my MRs, new review requests, new commits on MRs I review, runner offline / back online. First refresh after unlock is a silent baseline
+- Agent API: `GET/POST /api/agent/watches`
+- Verified: 34 tests (wire formats, evaluation, manager with a real vault), curl end-to-end against a capture server (formats, failures-only filter, masking, agent bearer, restart persistence), headless Chromium (watch toggle, bell menu, add channel), no page errors
+
+Follow-ups:
+- [ ] WATCH-7 Snooze / mute a watch or rule for N hours; quiet hours for push channels
+- [ ] WATCH-8 Notification history survives restart (today in memory, cleared on lock)
+- [ ] WATCH-9 MR watch: notify on new approvals and new comments (needs notes polling)
+- [ ] WATCH-10 Poll interval setting; back off on GitLab rate-limit headers
+
 ## Epic SEC: hardening follow-ups
 
 - [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
@@ -293,10 +319,10 @@ Follow-ups found on the way:
 
 ## Epic WATCH: notifications and background watching
 
-- [ ] WATCH-1 Watch a pipeline, job or MR; the server polls it until a terminal state and records the outcome
-- [ ] WATCH-2 Browser notifications over SSE (Notification API needs HTTPS or localhost)
-- [ ] WATCH-3 Push channels stored in the vault: ntfy, Gotify, generic JSON webhook (covers Slack/Discord/Matrix)
-- [ ] WATCH-4 Auto-watch rules: pipelines of my MRs, MRs where I am reviewer (new push → re-review), runner offline
+- [x] WATCH-1 Watch a pipeline, job or MR; the server polls it until a terminal state and records the outcome
+- [x] WATCH-2 Browser notifications over SSE (Notification API needs HTTPS or localhost)
+- [x] WATCH-3 Push channels stored in the vault: ntfy, Gotify, generic JSON webhook (covers Slack/Discord/Matrix)
+- [x] WATCH-4 Auto-watch rules: pipelines of my MRs, MRs where I am reviewer (new push → re-review), runner offline
 - [ ] WATCH-5 GitLab webhook receiver `POST /hooks/gitlab` with a secret token, replacing polling when GitLab can reach the host
 - [ ] WATCH-6 PWA manifest + service worker so the laptop and phone can install lazylab and receive Web Push
 

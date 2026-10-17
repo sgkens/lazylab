@@ -4,6 +4,7 @@ import { GitLabClient } from './gitlabClient.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
 import { getInbox } from './inbox.js';
+import { watchManager } from './watch.js';
 
 export const apiRouter = Router();
 
@@ -46,9 +47,11 @@ async function runAutoFetch() {
     await gitlabClient.getWorkItems(undefined, 'all', true);
     await gitlabClient.getMergeRequests(undefined, 'all', true);
     await gitlabClient.getPipelines(undefined, true);
-    await gitlabClient.getRunners(true);
+    const runners = await gitlabClient.getRunners(true);
+    watchManager.onRunners(runners);
     const inbox = await getInbox(gitlabClient, true);
     broadcastEvent('inbox_updated', { counts: inbox.counts, generatedAt: inbox.generatedAt });
+    await watchManager.onInbox(inbox);
 
     broadcastEvent('sync_completed', {
       timestamp: lastSyncTime,
@@ -73,16 +76,23 @@ function restartAutoFetchTimer() {
 // Initialize SQLite cache. Auto-fetch starts only once the vault is unlocked.
 const cacheReady = cacheDb.init();
 
+watchManager.attach(() => gitlabClient);
+watchManager.on('notification', (n) => broadcastEvent('notification', n));
+watchManager.on('watches-changed', () => broadcastEvent('watches_changed', { at: Date.now() }));
+
 vault.on('unlocked', async () => {
   await cacheReady;
   rebuildClientFromVault();
   restartAutoFetchTimer();
+  watchManager.start();
   runAutoFetch();
 });
 
 vault.on('profile-changed', async () => {
   await cacheReady;
   rebuildClientFromVault();
+  // Rule baselines belong to the previous GitLab host; watches are filtered by profile.
+  watchManager.start();
   cacheDb.clear();
   const profile = vault.getActiveProfile();
   cacheDb.logWal('AUTH_CHANGE', 'system', 'auth', profile ? `Switched to profile ${profile.name}` : 'Switched to demo mode');
@@ -92,6 +102,7 @@ vault.on('profile-changed', async () => {
 vault.on('locked', () => {
   if (autoFetchTimer) clearInterval(autoFetchTimer);
   autoFetchTimer = null;
+  watchManager.reset();
   gitlabClient = new GitLabClient();
 });
 
@@ -1101,6 +1112,7 @@ Send \`Authorization: Bearer <token>\` with an agent token issued from the lazyl
 
 ## Endpoints Summary
 - **GET** \`/api/agent/inbox\` - What needs the user: review requests, own MRs with pipeline state, assigned issues, To-Dos
+- **GET / POST** \`/api/agent/watches\` - List watches / watch a pipeline, job or MR (body: kind, projectId, targetId); the user is notified when it finishes
 - **GET** \`/api/agent/work-items\` - List work items
 - **GET** \`/api/agent/work-items/:iid\` - Get specific work item & comments
 - **POST** \`/api/agent/work-items\` - Create new work item
@@ -1144,6 +1156,7 @@ apiRouter.get('/agent/skill', (_req: Request, res: Response) => {
     markdown_url: '/api/agent/skill.md',
     endpoints: {
       inbox: 'GET /api/agent/inbox',
+      watches: { list: 'GET /api/agent/watches', create: 'POST /api/agent/watches' },
       work_items: {
         list: 'GET /api/agent/work-items',
         get: 'GET /api/agent/work-items/:iid',
@@ -1242,6 +1255,27 @@ apiRouter.get('/agent/inbox', async (req: Request, res: Response) => {
     res.json({ success: true, ...inbox });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Watches: agents (and the `lazy` CLI) ask to be told when a pipeline, job or MR finishes
+apiRouter.get('/agent/watches', (_req: Request, res: Response) => {
+  res.json({ success: true, watches: watchManager.listWatches() });
+});
+
+apiRouter.post('/agent/watches', async (req: Request, res: Response) => {
+  try {
+    const { kind, projectId, targetId } = req.body || {};
+    if (!['pipeline', 'job', 'merge_request'].includes(kind)) {
+      return res.status(400).json({ success: false, error: 'kind must be pipeline, job or merge_request' });
+    }
+    if (!Number(projectId) || !Number(targetId)) {
+      return res.status(400).json({ success: false, error: 'projectId and targetId are required' });
+    }
+    const watch = await watchManager.addWatch({ kind, project_id: Number(projectId), target_id: Number(targetId), source: 'agent' });
+    res.json({ success: true, watch });
+  } catch (err: any) {
+    res.status(/not found|404/i.test(err.message) ? 404 : 500).json({ success: false, error: err.message });
   }
 });
 

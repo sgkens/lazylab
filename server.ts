@@ -7,6 +7,7 @@ import { apiRouter } from './server/apiRouter.js';
 import { announceSetupIfNeeded, apiGuard, securityHeaders, sessionRouter } from './server/session.js';
 import { loadTlsMaterial, tlsEnabled } from './server/tls.js';
 import { vaultRouter } from './server/vaultRouter.js';
+import { notifyRouter } from './server/notifyRouter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +39,7 @@ async function startServer() {
   app.use('/api/session', sessionRouter);
   app.use('/api', apiGuard);
   app.use('/api/vault', vaultRouter);
+  app.use('/api/notify', notifyRouter);
   app.use('/api', apiRouter);
 
   const useTls = tlsEnabled();

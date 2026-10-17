@@ -24,6 +24,7 @@ import {
   MetricsSummary
 } from '../types/gitlab';
 import { Inbox } from '../types/inbox';
+import { NotifyChannelInfo, NotifyChannelInput, NotifyRules, NotifyState, WatchKind, WatchView } from '../types/notify';
 import { DeviceSession, SessionState, VaultEntryKind, VaultSummary } from '../types/vault';
 
 const post = (body?: unknown): RequestInit => ({ method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
@@ -486,6 +487,16 @@ export const api = {
           onEvent('metrics_updated', JSON.parse(e.data));
         } catch {}
       });
+      es.addEventListener('notification', (e: any) => {
+        try {
+          onEvent('notification', JSON.parse(e.data));
+        } catch {}
+      });
+      es.addEventListener('watches_changed', (e: any) => {
+        try {
+          onEvent('watches_changed', JSON.parse(e.data));
+        } catch {}
+      });
       es.addEventListener('inbox_updated', (e: any) => {
         try {
           onEvent('inbox_updated', JSON.parse(e.data));
@@ -541,4 +552,23 @@ export const api = {
       return () => {};
     }
   }
+};
+
+const put = (body: unknown): RequestInit => ({ method: 'PUT', body: JSON.stringify(body) });
+
+export const notifyApi = {
+  state: () => request<{ success: boolean } & NotifyState>('/notify/state'),
+  addWatch: (kind: WatchKind, projectId: number, targetId: number) =>
+    request<{ success: boolean; watch: WatchView }>('/notify/watches', post({ kind, projectId, targetId })),
+  removeWatch: (id: string) => request<{ success: boolean }>(`/notify/watches/${id}`, { method: 'DELETE' }),
+  updateRules: (rules: Partial<NotifyRules>) =>
+    request<{ success: boolean; rules: NotifyRules }>('/notify/rules', put(rules)),
+  addChannel: (input: NotifyChannelInput) =>
+    request<{ success: boolean; channel: NotifyChannelInfo }>('/notify/channels', post(input)),
+  updateChannel: (id: string, patch: Partial<NotifyChannelInput>) =>
+    request<{ success: boolean; channel: NotifyChannelInfo }>(`/notify/channels/${id}`, put(patch)),
+  deleteChannel: (id: string) => request<{ success: boolean }>(`/notify/channels/${id}`, { method: 'DELETE' }),
+  testChannel: (id: string) => request<{ success: boolean }>(`/notify/channels/${id}/test`, post()),
+  markRead: () => request<{ success: boolean }>('/notify/notifications/read', post()),
+  clearNotifications: () => request<{ success: boolean }>('/notify/notifications', { method: 'DELETE' })
 };
