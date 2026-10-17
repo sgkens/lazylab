@@ -4,6 +4,7 @@ import { parseGitLabCiYaml } from './yamlParser.js';
 import { mapLimit } from './concurrency.js';
 import { extractFailure, FailureExcerpt } from './triage.js';
 import { buildReleaseNotes, CommitLike, ReleaseNotes } from './releaseNotes.js';
+import type { TrackedToken } from './tokenExpiry.js';
 
 // GitLab has no instance-wide list endpoint for milestones, pipelines, labels or packages,
 // so "all projects" views fan out over the most recently active member projects.
@@ -3872,5 +3873,87 @@ Execution finished in 38s
     cacheDb.logWal('UPDATE_PAGES', String(projectId), 'pages', `Updated GitLab Pages HTTPS settings`);
     return this.getPagesInfo(projectId);
   }
+
+  // ENV-4: token expiry
+  /** The token this client uses. Needs GitLab 16.0+; any scope can read itself. */
+  async getPersonalAccessTokenSelf(): Promise<{ id: number; name: string; scopes: string[]; expires_at: string | null; last_used_at: string | null }> {
+    if (this.isDemoMode) throw new Error('No personal access token in demo mode');
+    const { data } = await this.fetchApi<any>('/personal_access_tokens/self');
+    return { id: data.id, name: data.name, scopes: data.scopes || [], expires_at: data.expires_at ?? null, last_used_at: data.last_used_at ?? null };
+  }
+
+  /**
+   * Rotates the token this client uses (GitLab 16.10+, needs the `api` or `self_rotate` scope).
+   * GitLab revokes the old token immediately, so the caller must store the returned one.
+   */
+  async rotatePersonalAccessTokenSelf(expiresAt: string): Promise<{ token: string; expires_at: string | null; name: string }> {
+    if (this.isDemoMode) throw new Error('No personal access token in demo mode');
+    const { data } = await this.fetchApi<any>('/personal_access_tokens/self/rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expires_at: expiresAt })
+    });
+    if (!data?.token) throw new Error('GitLab did not return a new token');
+    return { token: data.token, expires_at: data.expires_at ?? null, name: data.name };
+  }
+
+  /**
+   * Project access, group access and deploy tokens of the aggregated projects. Listing them needs the
+   * Maintainer role, so 403 and 404 are skipped silently; other failures are reported per source.
+   */
+  async getResourceTokens(): Promise<{ tokens: Omit<TrackedToken, 'days_left'>[]; errors: string[] }> {
+    if (this.isDemoMode) {
+      const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
+      const p = DEMO_PROJECTS[0];
+      return {
+        tokens: [
+          { key: `project:demo:${p.id}:1`, kind: 'project', name: 'release-bot', owner: p.path_with_namespace, host: this.host, expires_at: inDays(5), scopes: ['api'], last_used_at: null, web_url: `${p.web_url}/-/settings/access_tokens` },
+          { key: `deploy:demo:${p.id}:2`, kind: 'deploy', name: 'k8s-pull', owner: p.path_with_namespace, host: this.host, expires_at: inDays(40), scopes: ['read_registry'], web_url: `${p.web_url}/-/settings/repository` },
+          { key: `project:demo:${p.id}:3`, kind: 'project', name: 'docs-publish', owner: p.path_with_namespace, host: this.host, expires_at: null, scopes: ['read_api'], last_used_at: null, web_url: `${p.web_url}/-/settings/access_tokens` }
+        ],
+        errors: []
+      };
+    }
+
+    const projects = (await this.getProjects()).slice(0, AGGREGATE_PROJECT_LIMIT);
+    const tokens: Omit<TrackedToken, 'days_left'>[] = [];
+    const errors: string[] = [];
+    const skippable = (err: any) => /\((403|404)\)/.test(String(err?.message));
+    const active = (t: any) => !t.revoked && t.active !== false && t.expired !== true;
+
+    const sources: { label: string; endpoint: string; map: (t: any) => Omit<TrackedToken, 'days_left'> }[] = [];
+    for (const p of projects) {
+      sources.push({
+        label: `${p.path_with_namespace} access tokens`,
+        endpoint: `/projects/${p.id}/access_tokens`,
+        map: (t) => ({ key: `project:${this.host}:${p.id}:${t.id}`, kind: 'project', name: t.name, owner: p.path_with_namespace, host: this.host, expires_at: t.expires_at ?? null, scopes: t.scopes || [], last_used_at: t.last_used_at ?? null, web_url: `${p.web_url}/-/settings/access_tokens` })
+      });
+      sources.push({
+        label: `${p.path_with_namespace} deploy tokens`,
+        endpoint: `/projects/${p.id}/deploy_tokens`,
+        map: (t) => ({ key: `deploy:${this.host}:${p.id}:${t.id}`, kind: 'deploy', name: t.name, owner: p.path_with_namespace, host: this.host, expires_at: t.expires_at ? String(t.expires_at).slice(0, 10) : null, scopes: t.scopes || [], web_url: `${p.web_url}/-/settings/repository` })
+      });
+    }
+    const groups = new Map<number, { id: number; full_path: string }>();
+    for (const p of projects) if (p.namespace?.kind === 'group') groups.set(p.namespace.id, p.namespace);
+    for (const g of groups.values()) {
+      sources.push({
+        label: `${g.full_path} group access tokens`,
+        endpoint: `/groups/${g.id}/access_tokens`,
+        map: (t) => ({ key: `group:${this.host}:${g.id}:${t.id}`, kind: 'group', name: t.name, owner: g.full_path, host: this.host, expires_at: t.expires_at ?? null, scopes: t.scopes || [], last_used_at: t.last_used_at ?? null, web_url: `${this.host}/groups/${g.full_path}/-/settings/access_tokens` })
+      });
+    }
+
+    const results = await mapLimit(sources, AGGREGATE_CONCURRENCY, async (src) => (await this.fetchApi<any[]>(`${src.endpoint}?per_page=100`)).data);
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        for (const t of r.value || []) if (active(t)) tokens.push(sources[i].map(t));
+      } else if (!skippable(r.reason)) {
+        errors.push(`${sources[i].label}: ${r.reason?.message ?? r.reason}`);
+      }
+    });
+    return { tokens, errors };
+  }
+
 }
 

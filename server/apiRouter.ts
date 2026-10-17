@@ -4,6 +4,7 @@ import express, { Router, Request, Response } from 'express';
 import { cacheDb } from './cacheDb.js';
 import { GitLabClient } from './gitlabClient.js';
 import { redactVariable } from './variables.js';
+import { TokenExpiryMonitor } from './tokenExpiry.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
 import { getInbox } from './inbox.js';
@@ -94,11 +95,15 @@ watchManager.attach(() => gitlabClient);
 watchManager.on('notification', (n) => broadcastEvent('notification', n));
 watchManager.on('watches-changed', () => broadcastEvent('watches_changed', { at: Date.now() }));
 
+// ENV-4: token expiry warnings go through the watch manager, so they reach the push channels too.
+const tokenMonitor = new TokenExpiryMonitor(() => gitlabClient, (n) => watchManager.notify(n));
+
 vault.on('unlocked', async () => {
   await cacheReady;
   rebuildClientFromVault();
   restartAutoFetchTimer();
   watchManager.start();
+  tokenMonitor.start();
   runAutoFetch();
 });
 
@@ -110,6 +115,7 @@ vault.on('profile-changed', async () => {
   cacheDb.clear();
   const profile = vault.getActiveProfile();
   cacheDb.logWal('AUTH_CHANGE', 'system', 'auth', profile ? `Switched to profile ${profile.name}` : 'Switched to demo mode');
+  tokenMonitor.start();
   runAutoFetch();
 });
 
@@ -117,7 +123,49 @@ vault.on('locked', () => {
   if (autoFetchTimer) clearInterval(autoFetchTimer);
   autoFetchTimer = null;
   watchManager.reset();
+  tokenMonitor.reset();
   gitlabClient = new GitLabClient();
+});
+
+// ---- Token expiry (ENV-4) ----
+apiRouter.get('/tokens/expiry', async (req: Request, res: Response) => {
+  try {
+    const overview = await tokenMonitor.getOverview(req.query.force === 'true');
+    res.json({ success: true, ...overview });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+apiRouter.post('/tokens/personal/:profileId/rotate', async (req: Request, res: Response) => {
+  const expiresAt = String(req.body?.expiresAt || '');
+  if (!ISO_DATE.test(expiresAt) || Date.parse(`${expiresAt}T00:00:00Z`) <= Date.now()) {
+    return res.status(400).json({ success: false, error: 'expiresAt must be a future date (YYYY-MM-DD)' });
+  }
+  let profile;
+  try {
+    profile = vault.getProfile(req.params.profileId);
+  } catch (err: any) {
+    return res.status(404).json({ success: false, error: err.message });
+  }
+  let rotated;
+  try {
+    rotated = await new GitLabClient(profile.host, profile.token).rotatePersonalAccessTokenSelf(expiresAt);
+  } catch (err: any) {
+    return res.status(502).json({ success: false, error: err.message });
+  }
+  try {
+    // GitLab has already revoked the old token: store the new one before anything else.
+    vault.upsertProfile({ id: profile.id, name: profile.name, host: profile.host, token: rotated.token });
+  } catch (err: any) {
+    // The only copy of the new token is this response; hand it over so it is not lost.
+    return res.status(500).json({ success: false, error: `Rotated, but saving to the vault failed: ${err.message}. Store this token now.`, token: rotated.token });
+  }
+  cacheDb.logWal('ROTATE_TOKEN', profile.id, 'auth', `Rotated the personal access token of ${profile.name}; expires ${rotated.expires_at}`);
+  const overview = await tokenMonitor.check().catch(() => null);
+  res.json({ success: true, expires_at: rotated.expires_at, overview });
 });
 
 // 1. Status & Configuration
