@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "lazy": "cli/lazy.ts"
+  },
   "scripts": {
     "dev": "bun --watch server.ts",
     "build": "vite build",
@@ -13,7 +16,9 @@
     "test": "bun test",
     "docker:build": "docker build -t lazylab:local .",
     "docker:up": "docker compose up -d --build",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "lazy": "bun cli/lazy.ts",
+    "cli:build": "bun build cli/lazy.ts --compile --minify --outfile dist-cli/lazy"
   },
   "dependencies": {
     "express": "^4.21.2",
