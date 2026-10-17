@@ -29,6 +29,43 @@ Activating another profile:
 
 Deleting a profile removes its watches.
 
+## Token expiry
+
+lazylab checks when your GitLab tokens expire when you sign in, when you switch profiles, and every 6 hours.
+
+| Token | Read from | Shown in |
+|---|---|---|
+| Personal access token of each profile | `GET /personal_access_tokens/self` with that profile's token (GitLab 16.0+) | A badge on the profile row |
+| Project access tokens | `GET /projects/:id/access_tokens` | **Token expiry** card |
+| Deploy tokens | `GET /projects/:id/deploy_tokens` | **Token expiry** card |
+| Group access tokens | `GET /groups/:id/access_tokens` for the projects' parent groups | **Token expiry** card |
+
+Project, deploy and group tokens are read for the projects the active profile aggregates (the 15 most recently active). Listing them needs the Maintainer role; projects where you lack it are skipped without an error.
+
+Days are counted in calendar days (UTC), as GitLab shows them. GitLab revokes a token at 00:00 UTC on its expiry date, so a token whose expiry date is today has already expired.
+
+### Warnings
+
+With the **Token expiry** rule on (the default), lazylab sends one notification when a token reaches 14, 7, 3 and 1 days left, and one when it has expired. Notifications at 3 days or less use the failure level, so channels set to "failures only" receive them. Which warnings were sent is stored in the vault, so a restart does not repeat them, and a rotated token starts over.
+
+### Rotating a personal access token
+
+**Rotate** on a profile asks for the new expiry date (90 days ahead by default) and calls `POST /personal_access_tokens/self/rotate` (GitLab 16.10+, the token needs the `api` or `self_rotate` scope).
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant L as lazylab
+  participant G as GitLab
+  B->>L: POST /api/tokens/personal/:profileId/rotate {expiresAt}
+  L->>G: POST /personal_access_tokens/self/rotate (old token)
+  G-->>L: new token; old token revoked
+  L->>L: save the new token in the profile
+  L-->>B: new expiry date
+```
+
+GitLab revokes the old token at once. If saving to the vault fails after that, the response carries the new token and the profile row shows it with a copy button: store it before leaving the page.
+
 ## Backup and recovery
 
 - Back up `<data dir>/vault.json`. It is useless without the password.

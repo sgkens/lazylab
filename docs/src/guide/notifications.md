@@ -43,6 +43,7 @@ unit:concurrency: admission_test.go:88: fatal: deadlock detected on controller s
 | New review requests | A notification when you are added as a reviewer |
 | New commits on MRs I review | A notification when the source branch of an MR you review gets a new head commit |
 | Runner offline | A notification when one of your runners goes offline, and when it comes back |
+| Token expiry | A warning 14, 7, 3 and 1 days before a GitLab token expires, and when it has expired. See [Token expiry](/guide/vault/#token-expiry) |
 
 The first refresh after sign-in is a silent baseline, so existing review requests do not all notify at once.
 
