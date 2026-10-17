@@ -5,6 +5,7 @@ import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
 import { getInbox } from './inbox.js';
 import { watchManager } from './watch.js';
+import { extractFailure, parseRunPipelineInput } from './triage.js';
 
 export const apiRouter = Router();
 
@@ -555,6 +556,22 @@ apiRouter.post('/jobs/:id/play', async (req: Request, res: Response) => {
   }
 });
 
+apiRouter.post('/jobs/:id/retry', async (req: Request, res: Response) => {
+  try {
+    const jobId = Number(req.params.id);
+    const projectId = Number(req.body?.projectId);
+    const job = await gitlabClient.retryJob(projectId, jobId);
+    broadcastEvent('job_updated', { jobId: job.id, status: job.status });
+    const watch =
+      req.body?.watch === false
+        ? null
+        : await watchManager.addWatch({ kind: 'job', project_id: projectId, target_id: job.id, source: 'manual' }).catch(() => null);
+    res.json({ success: true, job, watch });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 7. Runners
 apiRouter.get('/runners', async (req: Request, res: Response) => {
   try {
@@ -792,11 +809,79 @@ apiRouter.post('/projects/:projectId/releases', async (req: Request, res: Respon
   }
 });
 
+// TRIAGE: failure excerpts
+apiRouter.get('/projects/:projectId/jobs/:jobId/failure', async (req: Request, res: Response) => {
+  try {
+    const failure = await gitlabClient.getJobFailure(Number(req.params.projectId), Number(req.params.jobId));
+    res.json({ success: true, failure });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/projects/:projectId/pipelines/:pipelineId/failures', async (req: Request, res: Response) => {
+  try {
+    const failures = await gitlabClient.getPipelineFailures(Number(req.params.projectId), Number(req.params.pipelineId));
+    res.json({ success: true, failures });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// TRIAGE: run a pipeline for a ref with variables
+apiRouter.get('/projects/:projectId/branches', async (req: Request, res: Response) => {
+  try {
+    const branches = await gitlabClient.getBranches(Number(req.params.projectId), String(req.query.search || ''));
+    res.json({ success: true, branches });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/projects/:projectId/pipeline-variables', async (req: Request, res: Response) => {
+  try {
+    const ref = String(req.query.ref || '');
+    if (!ref) return res.status(400).json({ success: false, error: 'ref is required' });
+    const variables = await gitlabClient.getDeclaredVariables(Number(req.params.projectId), ref);
+    res.json({ success: true, variables });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+async function runPipeline(req: Request, res: Response, projectId: number, source: 'manual' | 'agent') {
+  const parsed = parseRunPipelineInput(req.body);
+  if ('error' in parsed) return res.status(400).json({ success: false, error: parsed.error });
+  try {
+    const pipeline = await gitlabClient.createPipeline(projectId, parsed.ref, parsed.variables);
+    broadcastEvent('pipeline_updated', { pipelineId: pipeline.id, status: pipeline.status });
+    let watch = null;
+    if (parsed.watch) {
+      watch = await watchManager
+        .addWatch({ kind: 'pipeline', project_id: pipeline.project_id, target_id: pipeline.id, source })
+        .catch((err) => {
+          console.warn('Watch on new pipeline failed:', err.message);
+          return null;
+        });
+    }
+    res.json({ success: true, pipeline, watch });
+  } catch (err: any) {
+    // GitLab answers 400 with the reason for refs it cannot run (missing ref, no jobs, rules exclude all).
+    res.status(/\(400\)/.test(err.message) ? 400 : 500).json({ success: false, error: err.message });
+  }
+}
+
+apiRouter.post('/projects/:projectId/pipelines', (req: Request, res: Response) =>
+  runPipeline(req, res, Number(req.params.projectId), 'manual')
+);
+
 // Job Trace & Runner Jobs Endpoints
 apiRouter.get('/projects/:projectId/jobs/:jobId/trace', async (req: Request, res: Response) => {
   try {
     const trace = await gitlabClient.getJobTrace(Number(req.params.projectId), Number(req.params.jobId));
-    res.json({ success: true, trace });
+    // Failed jobs carry the excerpt too, so the log view does not fetch the trace twice.
+    const failure = trace.status === 'failed' ? extractFailure(trace.trace, { failureReason: trace.failure_reason }) : null;
+    res.json({ success: true, trace, failure });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1157,6 +1242,11 @@ apiRouter.get('/agent/skill', (_req: Request, res: Response) => {
     endpoints: {
       inbox: 'GET /api/agent/inbox',
       watches: { list: 'GET /api/agent/watches', create: 'POST /api/agent/watches' },
+      pipelines: {
+        run: 'POST /api/agent/pipelines',
+        failures: 'GET /api/agent/pipelines/:pipelineId/failures',
+        job_failure: 'GET /api/agent/jobs/:jobId/failure'
+      },
       work_items: {
         list: 'GET /api/agent/work-items',
         get: 'GET /api/agent/work-items/:iid',
@@ -1179,6 +1269,29 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
     service: 'LazyLab AI Agent API',
     authentication: 'Authorization: Bearer <agent token> (issue tokens in the Vault view)',
     endpoints: [
+      {
+        method: 'POST',
+        path: '/api/agent/pipelines',
+        description: 'Run a pipeline for a ref with variables; watches it by default so a notification arrives when it finishes',
+        body: {
+          ref: 'string (required)',
+          projectId: 'number (optional, defaults to primary project)',
+          variables: '{ key, value, variable_type?: env_var | file }[] (optional)',
+          watch: 'boolean (optional, default true)'
+        }
+      },
+      {
+        method: 'GET',
+        path: '/api/agent/pipelines/:pipelineId/failures',
+        description: 'Failing section of each failed job (allowed failures excluded): error line, exit code, failure reason, retryable',
+        queryParams: { projectId: 'number (optional)' }
+      },
+      {
+        method: 'GET',
+        path: '/api/agent/jobs/:jobId/failure',
+        description: 'Failing section of one job log',
+        queryParams: { projectId: 'number (optional)' }
+      },
       {
         method: 'GET',
         path: '/api/agent/work-items',
@@ -1276,6 +1389,36 @@ apiRouter.post('/agent/watches', async (req: Request, res: Response) => {
     res.json({ success: true, watch });
   } catch (err: any) {
     res.status(/not found|404/i.test(err.message) ? 404 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// Triage and pipelines for agents and the `lazy` CLI
+apiRouter.get('/agent/jobs/:jobId/failure', async (req: Request, res: Response) => {
+  try {
+    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const failure = await gitlabClient.getJobFailure(projectId, Number(req.params.jobId));
+    res.json({ success: true, failure });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/agent/pipelines/:pipelineId/failures', async (req: Request, res: Response) => {
+  try {
+    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const failures = await gitlabClient.getPipelineFailures(projectId, Number(req.params.pipelineId));
+    res.json({ success: true, failures });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/agent/pipelines', async (req: Request, res: Response) => {
+  try {
+    const projectId = await resolveAgentProjectId(req.body?.projectId);
+    return runPipeline(req, res, projectId, 'agent');
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

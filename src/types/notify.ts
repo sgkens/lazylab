@@ -9,6 +9,7 @@ export interface LazyNotification {
   url?: string;
   level: NotifyLevel;
   source: string;
+  failedJob?: { projectId: number; jobId: number; name: string };
   createdAt: number;
   read: boolean;
 }

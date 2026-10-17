@@ -57,6 +57,17 @@ describe('watchManager', () => {
     expect(watchManager.listWatches()).toHaveLength(0);
   });
 
+  test('a failed pipeline notification names the failing job and its error line', async () => {
+    received.length = 0;
+    await watchManager.addWatch({ kind: 'pipeline', project_id: 902, target_id: 30103, source: 'manual' });
+    expect(received).toHaveLength(1);
+    const n = received[0];
+    expect(n.level).toBe('failure');
+    expect(n.body).toContain('unit:concurrency: ');
+    expect(n.body).toContain('deadlock detected');
+    expect(n.failedJob).toEqual({ projectId: 902, jobId: 7021, name: 'unit:concurrency' });
+  });
+
   test('a watch on a running pipeline stays, is de-duplicated and persisted in the vault', async () => {
     received.length = 0;
     const a = await watchManager.addWatch({ kind: 'pipeline', project_id: 901, target_id: 30102, source: 'manual' });

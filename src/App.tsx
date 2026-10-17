@@ -25,6 +25,7 @@ import { RegisterRunnerModal } from './components/RegisterRunnerModal';
 import { SettingsModal } from './components/SettingsModal';
 import { WalMonitorModal } from './components/WalMonitorModal';
 import { JobTraceModal } from './components/JobTraceModal';
+import { RunPipelineModal } from './components/RunPipelineModal';
 import { PackagesView } from './components/PackagesView';
 import { ReleasesTagsView } from './components/ReleasesTagsView';
 import { PipelineEditorView } from './components/PipelineEditorView';
@@ -144,6 +145,8 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     jobName?: string;
   }>({ isOpen: false, projectId: 901, jobId: null });
 
+  const [isRunPipelineOpen, setIsRunPipelineOpen] = useState(false);
+
   const handleOpenJobTrace = (projectId: number, jobId: number, jobName?: string) => {
     setTraceModal({ isOpen: true, projectId, jobId, jobName });
   };
@@ -248,7 +251,15 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     showToast(`${n.title}${n.body ? ` · ${n.body}` : ''}`);
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
       const desktop = new Notification(n.title, { body: n.body, tag: n.id });
-      if (n.url) desktop.onclick = () => window.open(n.url, '_blank', 'noopener');
+      const job = n.failedJob;
+      if (job) {
+        desktop.onclick = () => {
+          window.focus();
+          handleOpenJobTrace(job.projectId, job.jobId, job.name);
+        };
+      } else if (n.url) {
+        desktop.onclick = () => window.open(n.url, '_blank', 'noopener');
+      }
     }
   };
 
@@ -833,6 +844,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
               setVaultSection('notify');
               setActiveTab('vault');
             }}
+            onOpenFailure={handleOpenJobTrace}
           />
         }
         onLogout={async () => {
@@ -923,6 +935,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
             onCancelPipeline={handleCancelPipeline}
             onPlayJob={handlePlayJob}
             onViewJobTrace={handleOpenJobTrace}
+            onRunPipeline={() => setIsRunPipelineOpen(true)}
           />
         )}
 
@@ -1055,6 +1068,22 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         projectId={traceModal.projectId}
         jobId={traceModal.jobId}
         jobName={traceModal.jobName}
+        onJobRetried={(newJobId) => {
+          setTraceModal((prev) => ({ ...prev, jobId: newJobId }));
+          loadNotify();
+        }}
+      />
+
+      <RunPipelineModal
+        isOpen={isRunPipelineOpen}
+        onClose={() => setIsRunPipelineOpen(false)}
+        projects={projects}
+        defaultProjectId={selectedProjectId}
+        onStarted={(pipeline, watched) => {
+          showToast(`Pipeline #${pipeline.id} started on ${pipeline.ref}${watched ? '. You will be notified when it finishes.' : ''}`);
+          loadTabData('pipelines', selectedProjectId, true);
+          loadNotify();
+        }}
       />
 
       {/* Global Search & Command Switcher Modal */}

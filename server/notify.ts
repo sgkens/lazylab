@@ -14,6 +14,8 @@ export interface LazyNotification {
   level: NotifyLevel;
   /** What produced it: watch, review, runner, test. */
   source: string;
+  /** Failed job to open in the failure view, when the notification is about a failure. */
+  failedJob?: { projectId: number; jobId: number; name: string };
   createdAt: number;
   read: boolean;
 }

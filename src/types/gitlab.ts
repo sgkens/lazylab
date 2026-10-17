@@ -330,12 +330,64 @@ export interface JobTrace {
   status: string;
   duration?: number;
   trace: string;
+  failure_reason?: string;
+  web_url?: string;
   runner?: {
     id: number;
     description: string;
     ip_address?: string;
   };
   artifacts?: { filename: string; size: number }[];
+}
+
+export interface ExcerptLine {
+  n: number;
+  text: string;
+  hl: boolean;
+}
+
+export interface FailureExcerpt {
+  section: string | null;
+  sectionHeader: string | null;
+  lines: ExcerptLine[];
+  errorLine: string | null;
+  exitCode: number | null;
+  failureReason: string | null;
+  failureHint: string | null;
+  retryable: boolean;
+  totalLines: number;
+}
+
+export interface JobFailure {
+  job_id: number;
+  project_id: number;
+  pipeline_id?: number;
+  job_name: string;
+  stage: string;
+  status: string;
+  web_url?: string;
+  excerpt: FailureExcerpt;
+}
+
+export interface GitLabBranch {
+  name: string;
+  default: boolean;
+  protected: boolean;
+  commit_sha?: string;
+  committed_date?: string;
+}
+
+export interface DeclaredVariable {
+  key: string;
+  value: string;
+  description?: string;
+  options?: string[];
+}
+
+export interface PipelineVariableInput {
+  key: string;
+  value: string;
+  variable_type?: 'env_var' | 'file';
 }
 
 export interface RunnerJob {
