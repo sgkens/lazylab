@@ -3,6 +3,7 @@ import path from 'path';
 import express, { Router, Request, Response } from 'express';
 import { cacheDb } from './cacheDb.js';
 import { GitLabClient } from './gitlabClient.js';
+import { redactVariable } from './variables.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
 import { getInbox } from './inbox.js';
@@ -958,8 +959,24 @@ apiRouter.get('/variables', async (req: Request, res: Response) => {
   try {
     const scope = (req.query.scope as any) || 'project';
     const id = req.query.id ? Number(req.query.id) : undefined;
-    const variables = await gitlabClient.getVariables(scope, id);
+    const variables = (await gitlabClient.getVariables(scope, id)).map(redactVariable);
     res.json({ success: true, variables });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/variables/value', async (req: Request, res: Response) => {
+  try {
+    const scope = req.query.scope === 'group' ? 'group' : 'project';
+    const id = Number(req.query.id);
+    const key = String(req.query.key || '');
+    if (!id || !key) return res.status(400).json({ success: false, error: 'id and key are required' });
+    const environmentScope = String(req.query.environment_scope || '*');
+    const variable = await gitlabClient.getVariable(scope, id, key, environmentScope);
+    cacheDb.logWal('READ_VARIABLE', `${scope}:${key}`, 'variables', `Revealed ${scope} variable "${key}" (${environmentScope})`);
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, value: variable.value });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -967,7 +984,7 @@ apiRouter.get('/variables', async (req: Request, res: Response) => {
 
 apiRouter.post('/variables', async (req: Request, res: Response) => {
   try {
-    const variable = await gitlabClient.saveVariable(req.body);
+    const variable = redactVariable(await gitlabClient.saveVariable(req.body));
     broadcastEvent('variable_saved', variable);
     res.json({ success: true, variable });
   } catch (err: any) {

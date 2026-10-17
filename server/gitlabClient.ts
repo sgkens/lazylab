@@ -3556,25 +3556,47 @@ Execution finished in 38s
     }
 
     if (!id) throw new Error(`${scope} id is required`);
-    try {
-      const endpoint = scope === 'project'
-        ? `/projects/${id}/variables`
-        : `/groups/${id}/variables`;
-      const { data } = await this.fetchApi<any[]>(endpoint);
-      return data.map(v => ({
-        key: v.key,
-        value: v.value,
-        variable_type: v.variable_type || 'env_var',
-        protected: Boolean(v.protected),
-        masked: Boolean(v.masked),
-        raw: Boolean(v.raw),
-        environment_scope: v.environment_scope || '*',
-        scope_type: scope,
-        scope_id: id || 0
-      }));
-    } catch {
-      return [];
+    const endpoint = scope === 'project'
+      ? `/projects/${id}/variables`
+      : `/groups/${id}/variables`;
+    const { data } = await this.fetchApi<any[]>(endpoint);
+    return data.map(v => ({
+      key: v.key,
+      value: v.value,
+      variable_type: v.variable_type || 'env_var',
+      protected: Boolean(v.protected),
+      masked: Boolean(v.masked),
+      raw: Boolean(v.raw),
+      environment_scope: v.environment_scope || '*',
+      scope_type: scope,
+      scope_id: id || 0
+    }));
+  }
+
+  /** One variable with its value. The list response leaves masked values out; this is the explicit reveal. */
+  async getVariable(scope: 'project' | 'group', id: number, key: string, environmentScope = '*'): Promise<GitLabVariable> {
+    if (this.isDemoMode) {
+      const v = DEMO_VARIABLES.find(
+        (d) => d.scope_type === scope && d.scope_id === id && d.key === key && d.environment_scope === environmentScope
+      ) ?? DEMO_VARIABLES.find((d) => d.scope_type === scope && d.key === key && d.environment_scope === environmentScope);
+      if (!v) throw new Error(`Variable ${key} not found`);
+      return v;
     }
+    const base = scope === 'project' ? `/projects/${id}/variables` : `/groups/${id}/variables`;
+    const { data: v } = await this.fetchApi<any>(
+      `${base}/${encodeURIComponent(key)}?filter[environment_scope]=${encodeURIComponent(environmentScope)}`
+    );
+    return {
+      key: v.key,
+      value: v.value,
+      variable_type: v.variable_type || 'env_var',
+      protected: Boolean(v.protected),
+      masked: Boolean(v.masked),
+      raw: Boolean(v.raw),
+      environment_scope: v.environment_scope || '*',
+      scope_type: scope,
+      scope_id: id
+    };
   }
 
   async saveVariable(payload: GitLabVariable): Promise<GitLabVariable> {
@@ -3595,6 +3617,19 @@ Execution finished in 38s
       ? `/projects/${payload.scope_id}/variables`
       : `/groups/${payload.scope_id}/variables`;
 
+    const toVariable = (v: any): GitLabVariable => ({
+      key: v.key,
+      value: v.value,
+      variable_type: v.variable_type || 'env_var',
+      protected: Boolean(v.protected),
+      masked: Boolean(v.masked),
+      raw: Boolean(v.raw),
+      environment_scope: v.environment_scope || '*',
+      scope_type: payload.scope_type,
+      scope_id: payload.scope_id,
+      scope_name: payload.scope_name
+    });
+
     // Try POST, if exists then PUT
     try {
       const { data } = await this.fetchApi<any>(endpoint, {
@@ -3610,9 +3645,10 @@ Execution finished in 38s
         })
       });
       cacheDb.logWal('SAVE_VARIABLE', `${payload.scope_type}:${payload.key}`, 'variables', `Created variable "${payload.key}"`);
-      return data;
+      return toVariable(data);
     } catch {
-      const { data } = await this.fetchApi<any>(`${endpoint}/${encodeURIComponent(payload.key)}`, {
+      const scopeFilter = `filter[environment_scope]=${encodeURIComponent(payload.environment_scope || '*')}`;
+      const { data } = await this.fetchApi<any>(`${endpoint}/${encodeURIComponent(payload.key)}?${scopeFilter}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3624,7 +3660,7 @@ Execution finished in 38s
         })
       });
       cacheDb.logWal('SAVE_VARIABLE', `${payload.scope_type}:${payload.key}`, 'variables', `Updated variable "${payload.key}"`);
-      return data;
+      return toVariable(data);
     }
   }
 

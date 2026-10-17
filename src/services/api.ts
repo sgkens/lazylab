@@ -450,6 +450,11 @@ export const api = {
     return request<{ success: boolean; variables: GitLabVariable[] }>(`/variables?${params.toString()}`);
   },
 
+  getVariableValue: (scope: 'project' | 'group' | 'instance', id: number, key: string, environmentScope = '*') => {
+    const params = new URLSearchParams({ scope, id: String(id), key, environment_scope: environmentScope });
+    return request<{ success: boolean; value: string }>(`/variables/value?${params.toString()}`);
+  },
+
   saveVariable: (payload: GitLabVariable) =>
     request<{ success: boolean; variable: GitLabVariable }>('/variables', {
       method: 'POST',

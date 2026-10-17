@@ -43,7 +43,8 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
   const [scopeFilter, setScopeFilter] = useState<'all' | 'project' | 'group'>('all');
   const [envFilter, setEnvFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [revealedKeys, setRevealedKeys] = useState<Record<string, boolean>>({});
+  // Masked values arrive empty (value_hidden); revealing one fetches it and keeps it here until hidden again.
+  const [revealedValues, setRevealedValues] = useState<Record<string, string>>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Modal State
@@ -105,23 +106,51 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
     }
   };
 
-  const toggleReveal = (varKey: string) => {
-    setRevealedKeys((prev) => ({
-      ...prev,
-      [varKey]: !prev[varKey]
-    }));
+  const variableId = (v: GitLabVariable) => `${v.scope_type}:${v.scope_id}:${v.key}:${v.environment_scope}`;
+
+  const resolveValue = async (v: GitLabVariable): Promise<string> => {
+    if (!v.value_hidden) return v.value;
+    const id = variableId(v);
+    if (id in revealedValues) return revealedValues[id];
+    const res = await api.getVariableValue(v.scope_type, v.scope_id, v.key, v.environment_scope);
+    return res.value;
   };
 
-  const handleCopy = (value: string, id: string) => {
-    navigator.clipboard.writeText(value);
-    setCopiedKey(id);
-    setTimeout(() => setCopiedKey(null), 2000);
+  const toggleReveal = async (v: GitLabVariable) => {
+    const id = variableId(v);
+    if (id in revealedValues) {
+      setRevealedValues(({ [id]: _hidden, ...rest }) => rest);
+      return;
+    }
+    try {
+      const value = await resolveValue(v);
+      setRevealedValues((prev) => ({ ...prev, [id]: value }));
+    } catch (err) {
+      reportError(`Could not reveal ${v.key}`, err);
+    }
   };
 
-  const handleClone = (v: GitLabVariable) => {
+  const handleCopy = async (v: GitLabVariable) => {
+    try {
+      await navigator.clipboard.writeText(await resolveValue(v));
+      setCopiedKey(variableId(v));
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch (err) {
+      reportError(`Could not copy ${v.key}`, err);
+    }
+  };
+
+  const handleClone = async (v: GitLabVariable) => {
+    let value: string;
+    try {
+      value = await resolveValue(v);
+    } catch (err) {
+      reportError(`Could not read ${v.key}`, err);
+      return;
+    }
     setFormData({
       key: `${v.key}_COPY`,
-      value: v.value,
+      value,
       variable_type: v.variable_type,
       protected: v.protected,
       masked: v.masked,
@@ -243,7 +272,10 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
 
   const generateEnvFileContent = () => {
     const header = `# GitLab CI/CD Variables Export\n# Project ID: ${currentProjectId}\n# Exported on: ${new Date().toISOString()}\n\n`;
-    const lines = filteredVars.map((v) => `${v.key}="${v.value}"`).join('\n');
+    // Masked values are not in the list response and are not fetched in bulk; reveal one to copy it.
+    const lines = filteredVars
+      .map((v) => (v.value_hidden ? `# ${v.key} is masked; value not exported` : `${v.key}="${v.value}"`))
+      .join('\n');
     return header + lines;
   };
 
@@ -443,8 +475,8 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
                 </thead>
                 <tbody className="divide-y divide-zinc-800">
                   {filteredVars.map((v) => {
-                    const uniqueId = `${v.scope_type}:${v.key}`;
-                    const isRevealed = revealedKeys[uniqueId];
+                    const uniqueId = variableId(v);
+                    const isRevealed = uniqueId in revealedValues;
 
                     return (
                       <tr key={uniqueId} className="hover:bg-zinc-900/50 transition-colors">
@@ -479,13 +511,15 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
                         <td className="px-4 py-3.5 font-mono text-zinc-300">
                           <div className="flex items-center gap-2 max-w-xs">
                             <span className="truncate">
-                              {isRevealed || !v.masked
+                              {!v.masked
                                 ? v.value
-                                : '••••••••••••••••••••••••'}
+                                : isRevealed
+                                  ? revealedValues[uniqueId] ?? v.value
+                                  : '••••••••••••••••••••••••'}
                             </span>
                             {v.masked && (
                               <button
-                                onClick={() => toggleReveal(uniqueId)}
+                                onClick={() => toggleReveal(v)}
                                 className="text-zinc-500 hover:text-zinc-300 shrink-0"
                                 title={isRevealed ? 'Mask value' : 'Reveal value'}
                               >
@@ -493,7 +527,7 @@ export const VariablesView: React.FC<VariablesViewProps> = ({
                               </button>
                             )}
                             <button
-                              onClick={() => handleCopy(v.value, uniqueId)}
+                              onClick={() => handleCopy(v)}
                               className="text-zinc-500 hover:text-zinc-300 shrink-0"
                               title="Copy value"
                             >
