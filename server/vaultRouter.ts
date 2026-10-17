@@ -175,7 +175,7 @@ vaultRouter.post('/agent-tokens', (req: Request, res: Response) => {
   try {
     const name = String(req.body?.name || '').trim();
     if (!name) throw new Error('name is required');
-    const { token } = vault.createAgentToken(name);
+    const { token } = vault.createAgentToken(name, { secrets: req.body?.secrets === true });
     res.json({ success: true, token, agentTokens: vault.listAgentTokens() });
   } catch (err) {
     fail(res, err);

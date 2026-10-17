@@ -70,6 +70,8 @@ export interface AgentToken {
   name: string;
   prefix: string;
   hash: string;
+  /** May read CI variable values and vault secrets (get_env, for `lazy env pull` and `lazy run`). */
+  secrets?: boolean;
   createdAt: string;
 }
 
@@ -395,6 +397,11 @@ class Vault extends EventEmitter {
     return entry;
   }
 
+  /** Entries with their values, for server-side use only (env resolution). Never send these to a browser. */
+  entriesWithValues(kinds: EntryKind[]): VaultEntry[] {
+    return this.requireOpen().entries.filter((e) => kinds.includes(e.kind));
+  }
+
   deleteEntry(id: string) {
     const p = this.requireOpen();
     p.entries = p.entries.filter((e) => e.id !== id);
@@ -425,10 +432,17 @@ class Vault extends EventEmitter {
   }
 
   /** Returns the plaintext token once; only its SHA-256 is stored. */
-  createAgentToken(name: string): { token: string; record: Omit<AgentToken, 'hash'> } {
+  createAgentToken(name: string, opts: { secrets?: boolean } = {}): { token: string; record: Omit<AgentToken, 'hash'> } {
     const p = this.requireOpen();
     const token = `llab_${randomBytes(32).toString('base64url')}`;
-    const record: AgentToken = { id: randomUUID(), name, prefix: token.slice(0, 9), hash: hashAgentToken(token), createdAt: new Date().toISOString() };
+    const record: AgentToken = {
+      id: randomUUID(),
+      name,
+      prefix: token.slice(0, 9),
+      hash: hashAgentToken(token),
+      secrets: Boolean(opts.secrets),
+      createdAt: new Date().toISOString()
+    };
     p.agentTokens.push(record);
     this.persist();
     const { hash, ...rest } = record;

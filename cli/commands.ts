@@ -2,9 +2,13 @@
  * `lazy` commands. Each takes parsed options and a client, prints for humans (or JSON with --json),
  * and returns the process exit code.
  */
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { CliError, LazyClient } from './client.js';
+import { describeSource, dotenvCaveats, EnvVar, HEADER_MARK, renderDotenv } from './env.js';
 import { currentBranch, headSha, lastCommit, mrFromCommit, pushedRemote, tryGit } from './git.js';
-import { Cell, duration, out, paint, relativeTime, statusCell, table, toneFor, UI } from './ui.js';
+import { Cell, duration, err, out, paint, relativeTime, statusCell, table, toneFor, UI } from './ui.js';
 
 export interface Ctx {
   client: LazyClient;
@@ -261,3 +265,136 @@ export async function push(
   }
   return follow(ctx, pipeline.id, { intervalMs: opts.intervalMs, watched });
 }
+
+// ---- environment (ENV-1, ENV-2) --------------------------------------------------------
+
+export interface EnvOpts {
+  environment: string | null;
+  secrets: { name: string; key?: string }[];
+}
+
+interface EnvResult {
+  project: string;
+  environment: string | null;
+  variables: EnvVar[];
+  errors: string[];
+}
+
+const fetchEnv = (ctx: Ctx, opts: EnvOpts) =>
+  ctx.client.call<EnvResult>('get_env', {
+    project: ctx.project(),
+    ...(opts.environment ? { environment: opts.environment } : {}),
+    ...(opts.secrets.length ? { secrets: opts.secrets } : {})
+  });
+
+function warnEnv(env: EnvResult, print: (line: string) => void) {
+  for (const e of env.errors) print(paint('warn', `Skipped ${e}`));
+  for (const v of env.variables.filter((x) => x.value === null)) print(paint('warn', `${UI.mark} ${v.key} has no value: ${v.missing}`));
+}
+
+/** `lazy env`: which variables apply and where each comes from. Values are not printed. */
+export async function envList(ctx: Ctx, opts: EnvOpts): Promise<number> {
+  const env = await fetchEnv(ctx, opts);
+  if (ctx.json) return printJson({ ...env, variables: env.variables.map(({ value, ...v }) => ({ ...v, has_value: value !== null })) }), 0;
+  out(`${paint('bold', `${UI.arrow} ${env.project}`)} ${UI.sep} environment ${env.environment ?? paint('dim', 'none (only * scoped variables)')}`);
+  if (env.variables.length === 0) out(paint('dim', 'No variables apply.'));
+  const rows: Cell[][] = env.variables.map((v) => [
+    { text: v.key, tone: v.value === null ? 'fail' : undefined },
+    { text: v.variable_type === 'file' ? 'file' : '', tone: 'dim' },
+    { text: [v.protected ? 'protected' : '', v.masked ? 'masked' : ''].filter(Boolean).join(' '), tone: 'dim' },
+    { text: describeSource(v), flex: true, tone: 'dim' }
+  ]);
+  for (const line of table(rows)) out(`  ${line}`);
+  warnEnv(env, out);
+  return 0;
+}
+
+/** Ignored by git, or not in a git work tree at all. */
+function gitIgnores(file: string): boolean {
+  const res = Bun.spawnSync(['git', 'check-ignore', '-q', file], { stdout: 'ignore', stderr: 'ignore' });
+  return res.exitCode !== 1;
+}
+
+function requireIgnored(file: string) {
+  if (gitIgnores(file)) return;
+  const shown = path.relative(process.cwd(), file) || file;
+  throw new CliError(`${shown} is not ignored by git and would hold secrets. Add it to .gitignore, or pass --force.`);
+}
+
+/** `lazy env pull`: write the variables to a .env file (mode 600); file variables go to <out>.d/. */
+export async function envPull(ctx: Ctx, opts: EnvOpts & { out: string; force: boolean }): Promise<number> {
+  const file = path.resolve(opts.out);
+  const filesDir = `${file}.d`;
+  if (!opts.force) {
+    if (existsSync(file) && !readFileSync(file, 'utf8').startsWith(HEADER_MARK)) {
+      throw new CliError(`${opts.out} exists and was not written by lazy. Pass --force to replace it.`);
+    }
+    requireIgnored(file);
+  }
+  const env = await fetchEnv(ctx, opts);
+  const filePaths = new Map<string, string>();
+  const fileVars = env.variables.filter((v) => v.variable_type === 'file' && v.value !== null);
+  if (fileVars.length) {
+    if (!opts.force) requireIgnored(path.join(filesDir, fileVars[0].key));
+    mkdirSync(filesDir, { recursive: true, mode: 0o700 });
+    for (const v of fileVars) {
+      const p = path.join(filesDir, v.key);
+      writeFileSync(p, v.value!, { mode: 0o600 });
+      chmodSync(p, 0o600);
+      filePaths.set(v.key, p);
+    }
+  }
+  writeFileSync(file, renderDotenv(env.variables, { project: env.project, environment: env.environment, at: new Date() }, filePaths), { mode: 0o600 });
+  chmodSync(file, 0o600); // an existing file keeps its mode on write
+  if (ctx.json) return printJson({ file, files: Object.fromEntries(filePaths), keys: env.variables.map((v) => v.key), errors: env.errors }), 0;
+  const written = env.variables.filter((v) => v.value !== null).length;
+  out(`${paint('ok', `${UI.mark} Wrote ${written} variable${written === 1 ? '' : 's'}`)} to ${opts.out}${fileVars.length ? ` (${fileVars.length} file${fileVars.length === 1 ? '' : 's'} in ${path.relative(process.cwd(), filesDir)})` : ''}`);
+  warnEnv(env, out);
+  const caveats = dotenvCaveats(env.variables);
+  if (caveats.dollar.length) out(paint('dim', `Contains $: ${caveats.dollar.join(', ')}. Bun's .env loader expands $NAME even in single quotes; use lazy run for exact values.`));
+  if (caveats.escaped.length) out(paint('dim', `Has both quote kinds: ${caveats.escaped.join(', ')}. Written with escapes that some loaders keep literally; use lazy run for exact values.`));
+  return 0;
+}
+
+/**
+ * `lazy run -- <cmd>`: run a command with the variables in its environment, nothing written to the
+ * project. File variables go to a private temporary directory that is removed afterwards.
+ */
+export async function envRun(ctx: Ctx, opts: EnvOpts & { command: string[] }): Promise<number> {
+  if (opts.command.length === 0) throw new CliError('Usage: lazy run [--env <name>] [--secret …] -- <command> [args…]', 2);
+  const env = await fetchEnv(ctx, opts);
+  warnEnv(env, err);
+  const childEnv: Record<string, string> = { ...(process.env as Record<string, string>) };
+  let tmp: string | null = null;
+  for (const v of env.variables) {
+    if (v.value === null) continue;
+    if (v.variable_type === 'file') {
+      tmp ??= mkdtempSync(path.join(tmpdir(), 'lazy-run-'));
+      const p = path.join(tmp, v.key);
+      writeFileSync(p, v.value, { mode: 0o600 });
+      childEnv[v.key] = p;
+    } else {
+      childEnv[v.key] = v.value;
+    }
+  }
+  // Ctrl+C reaches the child through the terminal; stay alive to clean up and pass on its exit code.
+  const ignore = () => {};
+  process.on('SIGINT', ignore);
+  process.on('SIGTERM', ignore);
+  try {
+    let proc;
+    try {
+      proc = Bun.spawn(opts.command, { env: childEnv, stdio: ['inherit', 'inherit', 'inherit'] });
+    } catch (e: any) {
+      throw new CliError(`Cannot run ${opts.command[0]}: ${e?.message ?? e}`);
+    }
+    const code = await proc.exited;
+    return proc.signalCode ? 128 + (signalNumbers[proc.signalCode] ?? 0) : code;
+  } finally {
+    process.off('SIGINT', ignore);
+    process.off('SIGTERM', ignore);
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+const signalNumbers: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };

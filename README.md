@@ -77,7 +77,7 @@ See [MCP server](docs/src/agents/mcp.md) for Codex and the full tool list.
 
 ## Command line
 
-`lazy` follows the pipeline after a push, prints why a job failed, and opens merge requests from the last commit. It finds the project from the git remote. Shell: bash, repository root.
+`lazy` follows the pipeline after a push, prints why a job failed, opens merge requests from the last commit, and runs local commands with the project's CI/CD variables. It finds the project from the git remote. Shell: bash, repository root.
 
 ```bash
 bun run cli:build && install -m 755 dist-cli/lazy ~/.local/bin/lazy
@@ -85,6 +85,7 @@ lazy login https://<your-host>        # agent token from Vault → Agent tokens
 lazy push                              # push, then follow the pipeline; exit 1 if it fails
 lazy job log --failed                  # failure excerpt of the latest failed pipeline
 lazy mr create --draft                 # MR from the current branch
+lazy run -- bun test                   # run with the project's CI/CD variables (token with "Can read secrets")
 ```
 
 See [Command line](docs/src/cli.md).
@@ -120,7 +121,7 @@ cd docs && bun install && bun run dev    # http://localhost:8090
 - One admin account. Sign-in is throttled after 4 failures per IP.
 - The vault (`<data dir>/vault.json`) uses AES-256-GCM, with a data key wrapped by an scrypt-derived key. The key lives only in memory while you are signed in.
 - Session cookies are `HttpOnly` and `SameSite=Strict`, and `Secure` over HTTPS. Every write must come from lazylab's own origin.
-- Agent tokens are stored as SHA-256 hashes and can be revoked. They act as the active GitLab profile.
+- Agent tokens are stored as SHA-256 hashes and can be revoked. They act as the active GitLab profile. Only tokens created with **Can read secrets** can read variable values and vault secrets.
 - The GitLab response cache is not encrypted.
 
 Details: [Security model](docs/src/security.md).

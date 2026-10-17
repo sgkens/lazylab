@@ -46,7 +46,7 @@ flowchart LR
 - A token authenticates `/api/agent/*` and `/mcp`. It does not open the vault or the browser UI.
 - `/mcp` also rejects requests whose `Origin` header names a different host. This prevents DNS rebinding.
 - Revoking a token takes effect on its next request.
-- All tokens have the same rights: they act as the GitLab profile that is active at the time. Per-token scopes are planned.
+- Tokens act as the GitLab profile that is active at the time. The one per-token right is **Can read secrets**, set at creation: only such tokens can call `get_env`, which returns CI/CD variable values and named vault secrets (for `lazy env pull` and `lazy run`). Give agents tokens without it. Each `get_env` call is written to the journal with the token name. Other scopes are planned.
 
 ## What is not encrypted
 

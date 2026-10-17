@@ -50,7 +50,7 @@ describe('protocol', () => {
     const run = tools.find((t) => t.name === 'run_pipeline')!;
     expect(run.annotations.readOnlyHint).toBe(false);
     expect(run.annotations.idempotentHint).toBe(false);
-    expect(new Set(tools.map((t) => t.name)).size).toBe(TOOLS.length);
+    expect(new Set(listTools(true).map((t) => t.name)).size).toBe(TOOLS.length);
   });
 
   test('unknown tool is a protocol error; bad arguments are a tool error', async () => {

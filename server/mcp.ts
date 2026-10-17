@@ -10,6 +10,8 @@
  */
 import { readFileSync } from 'fs';
 import { NextFunction, Request, Response, Router } from 'express';
+import { cacheDb } from './cacheDb.js';
+import { loadEnvLevels, resolveEnv } from './envResolve.js';
 import { GitLabClient, GitLabMergeRequest, GitLabWorkItem } from './gitlabClient.js';
 import { getInbox } from './inbox.js';
 import { originMatches } from './session.js';
@@ -67,6 +69,8 @@ type JsonSchema = {
 
 export interface ToolContext {
   client: GitLabClient;
+  /** The agent token making the call; absent in tests and treated as a token without secret access. */
+  token?: { name: string; secrets: boolean };
 }
 
 export interface ToolDef {
@@ -77,6 +81,8 @@ export interface ToolDef {
   readOnly: boolean;
   /** Creates something new each call (idempotentHint false); updates are treated as idempotent. */
   creates?: boolean;
+  /** Returns secret values: listed and callable only for agent tokens created with secret access. */
+  secrets?: boolean;
   run: (args: any, ctx: ToolContext) => Promise<unknown>;
 }
 
@@ -510,6 +516,41 @@ export const TOOLS: ToolDef[] = [
     }
   },
   {
+    name: 'get_env',
+    title: 'Get environment',
+    description:
+      'The CI/CD variables a job in the project would get (project, then inherited group variables), with values, for one environment or none. Hidden values come from the lazylab vault. Named vault secrets can be added. Only for agent tokens with secret access.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project,
+        environment: { type: 'string', description: 'Environment name such as "production"; without it only variables scoped to * apply' },
+        secrets: {
+          type: 'array',
+          description: 'Vault secrets to add, by entry name; key is the variable name (derived from the name when left out)',
+          items: { type: 'object', properties: { name: { type: 'string' }, key: { type: 'string' } }, required: ['name'] }
+        }
+      },
+      required: ['project']
+    },
+    readOnly: true,
+    secrets: true,
+    run: async (args, { client, token }) => {
+      const projectId = await resolveProject(client, args.project);
+      const label = (await client.getProjects()).find((p) => p.id === projectId)?.path_with_namespace ?? String(projectId);
+      const environment = args.environment?.trim() || null;
+      const { levels, errors } = await loadEnvLevels(client, projectId, label);
+      const variables = resolveEnv({ levels, environment, entries: vault.entriesWithValues(['ci', 'secret']), secrets: args.secrets });
+      cacheDb.logWal(
+        'READ_ENV',
+        String(projectId),
+        'variables',
+        `Agent token "${token?.name ?? 'unknown'}" read ${variables.length} variables of ${label} (${environment ?? 'no environment'})`
+      );
+      return { project_id: projectId, project: label, environment, variables, errors };
+    }
+  },
+  {
     name: 'list_watches',
     title: 'List watches',
     description: 'Pipelines, jobs and merge requests currently watched for the user.',
@@ -563,8 +604,8 @@ export function validateArgs(schema: JsonSchema, args: any): string | null {
 
 // ---- JSON-RPC dispatch (no I/O apart from the tools themselves) --------------
 
-export function listTools() {
-  return TOOLS.map((t) => ({
+export function listTools(canReadSecrets = false) {
+  return TOOLS.filter((t) => canReadSecrets || !t.secrets).map((t) => ({
     name: t.name,
     title: t.title,
     description: t.description,
@@ -611,16 +652,21 @@ export async function handleMessage(msg: any, getCtx: () => ToolContext): Promis
     case 'ping':
       return { jsonrpc: '2.0', id, result: {} };
     case 'tools/list':
-      return { jsonrpc: '2.0', id, result: { tools: listTools() } };
+      return { jsonrpc: '2.0', id, result: { tools: listTools(Boolean(getCtx().token?.secrets)) } };
     case 'tools/call': {
       const tool = TOOLS.find((t) => t.name === req.params?.name);
       if (!tool) return rpcError(id, INVALID_PARAMS, `Unknown tool: ${req.params?.name}`);
+      const ctx = getCtx();
+      if (tool.secrets && !ctx.token?.secrets) {
+        const text = `${tool.name} needs an agent token with secret access. Create one in Vault → Agent tokens with "Can read secrets" ticked.`;
+        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: true } };
+      }
       const args = req.params?.arguments ?? {};
       const invalid = validateArgs(tool.inputSchema, args);
       // Bad arguments are reported as a tool error so the model can correct itself.
       if (invalid) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: invalid }], isError: true } };
       try {
-        const data = await tool.run(args, getCtx());
+        const data = await tool.run(args, ctx);
         return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(data) }], isError: false } };
       } catch (err: any) {
         return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: err?.message || String(err) }], isError: true } };
@@ -645,10 +691,12 @@ function mcpAuth(req: Request, res: Response, next: NextFunction) {
   if (!vault.isUnlocked()) {
     return res.status(503).json(rpcError(null, INVALID_REQUEST, 'lazylab is locked. Log in to lazylab in a browser to unlock it.'));
   }
-  if (!vault.verifyAgentToken(auth.slice(7).trim())) {
+  const token = vault.verifyAgentToken(auth.slice(7).trim());
+  if (!token) {
     res.setHeader('WWW-Authenticate', 'Bearer realm="lazylab", error="invalid_token"');
     return res.status(401).json(rpcError(null, INVALID_REQUEST, 'Invalid agent token'));
   }
+  res.locals.agentToken = { name: token.name, secrets: Boolean(token.secrets) };
   next();
 }
 
@@ -661,7 +709,7 @@ export function createMcpRouter(getClient: () => GitLabClient) {
     if (body === undefined || (typeof body === 'object' && body !== null && Object.keys(body).length === 0 && !Array.isArray(body))) {
       return res.status(400).json(rpcError(null, PARSE_ERROR, 'Expected a JSON-RPC message with Content-Type: application/json'));
     }
-    const getCtx = () => ({ client: getClient() });
+    const getCtx = (): ToolContext => ({ client: getClient(), token: res.locals.agentToken });
     if (Array.isArray(body)) {
       if (body.length === 0) return res.status(400).json(rpcError(null, INVALID_REQUEST, 'Empty batch'));
       const responses = (await Promise.all(body.map((m) => handleMessage(m, getCtx)))).filter(Boolean);

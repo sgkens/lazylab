@@ -5,7 +5,8 @@
  */
 import { CliConfig, CliError, configPath, LazyClient, loadConfig, normalizeUrl, saveConfig } from './client.js';
 import * as cmd from './commands.js';
-import { detectProject, GitError } from './git.js';
+import { parseSecretSpecs } from './env.js';
+import { detectProject, GitError, tryGit } from './git.js';
 import { err, out, paint, resetTerminal, UI } from './ui.js';
 
 export const VERSION = '0.1.0';
@@ -28,6 +29,16 @@ Commands:
   push [--detach] [-- <git push args>]
                                    git push, then follow the new pipeline; lazylab also
                                    notifies you when it finishes
+  env [--env <name>]               CI/CD variables that apply here and where each comes from
+                                   (values not shown)
+  env pull [--env <name>] [--out .env] [--force]
+                                   Write them to a .env file (mode 600); refuses a file git
+                                   does not ignore unless --force
+  run [--env <name>] -- <command>  Run a command with them in its environment; nothing is written
+
+  env and run need an agent token with "Can read secrets" (Vault → Agent tokens).
+  --env defaults to git config lazylab.environment; without one only * scoped variables apply.
+  --secret KEY=name,name adds vault secrets by entry name (also: git config --add lazylab.secret)
 
 Options:
   --project <path|id>   GitLab project (default: git config lazylab.project, else the origin remote)
@@ -40,7 +51,7 @@ Options:
 Environment: LAZYLAB_URL and LAZYLAB_TOKEN override ${configPath()}
 Exit codes: 0 done or pipeline passed, 1 error or pipeline failed, 2 usage error, 130 interrupted`;
 
-const BOOLEAN_FLAGS = new Set(['json', 'refresh', 'all', 'failed', 'follow', 'draft', 'watch', 'detach', 'no-notify', 'help', 'version']);
+const BOOLEAN_FLAGS = new Set(['json', 'refresh', 'all', 'failed', 'follow', 'draft', 'watch', 'detach', 'no-notify', 'force', 'help', 'version']);
 const SHORT: Record<string, string> = { h: 'help', v: 'version' };
 
 export interface ParsedArgs {
@@ -62,10 +73,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (a.startsWith('--')) {
       const [name, inline] = a.slice(2).split(/=(.*)/s, 2);
-      if (BOOLEAN_FLAGS.has(name)) flags[name] = true;
-      else if (inline !== undefined) flags[name] = inline;
-      else if (i + 1 < argv.length && !argv[i + 1].startsWith('-')) flags[name] = argv[++i];
+      let value: string;
+      if (BOOLEAN_FLAGS.has(name)) {
+        flags[name] = true;
+        continue;
+      } else if (inline !== undefined) value = inline;
+      else if (i + 1 < argv.length && !argv[i + 1].startsWith('-')) value = argv[++i];
       else throw new CliError(`--${name} needs a value`, 2);
+      // A repeated option adds to the list: --label a --label b is --label a,b.
+      flags[name] = typeof flags[name] === 'string' ? `${flags[name]},${value}` : value;
     } else if (/^-[a-z]$/i.test(a) && SHORT[a[1]]) {
       flags[SHORT[a[1]]] = true;
     } else {
@@ -83,6 +99,13 @@ function intArg(value: string | undefined, what: string): number | undefined {
 }
 
 const str = (v: string | boolean | undefined) => (typeof v === 'string' ? v : undefined);
+
+/** --env and --secret, with defaults from git config in the checkout. */
+function envOptions(flags: ParsedArgs['flags']): cmd.EnvOpts {
+  const environment = str(flags.env) ?? tryGit(['config', '--get', 'lazylab.environment']) ?? null;
+  const configured = (tryGit(['config', '--get-all', 'lazylab.secret']) ?? '').split('\n');
+  return { environment: environment?.trim() || null, secrets: parseSecretSpecs([...configured, str(flags.secret) ?? '']) };
+}
 
 async function readSecret(prompt: string): Promise<string> {
   process.stderr.write(prompt);
@@ -154,6 +177,13 @@ export async function main(argv: string[]): Promise<number> {
         waitPipelineMs: (intArg(str(flags['wait-pipeline']), '--wait-pipeline') ?? 60) * 1000,
         intervalMs
       });
+    case 'env':
+      if (!sub || sub === 'list') return cmd.envList(ctx, envOptions(flags));
+      if (sub === 'pull') return cmd.envPull(ctx, { ...envOptions(flags), out: str(flags.out) ?? '.env', force: Boolean(flags.force) });
+      throw new CliError(`Unknown: lazy env ${sub}. See lazy --help`, 2);
+    case 'run':
+      if (positionals.length > 1) throw new CliError('Put the command after --: lazy run -- <command> [args…]', 2);
+      return cmd.envRun(ctx, { ...envOptions(flags), command: rest });
     default:
       throw new CliError(`Unknown command "${command}". See lazy --help`, 2);
   }

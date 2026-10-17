@@ -1,6 +1,6 @@
 ---
 title: Command line (lazy)
-abstract: lazy is a terminal client for lazylab that finds the GitLab project from the current git checkout, follows pipelines after a push, prints why a job failed, and opens merge requests from the last commit.
+abstract: lazy is a terminal client for lazylab that finds the GitLab project from the current git checkout, follows pipelines after a push, prints why a job failed, opens merge requests from the last commit, and gives local commands the project's CI/CD variables.
 ---
 
 ## Install
@@ -55,6 +55,9 @@ The token acts as the active GitLab profile in lazylab, like any agent token. la
 | `lazy retry <job-id> [--follow]` | Retries a job (lazylab watches the new one); `--follow` follows its pipeline |
 | `lazy mr create [--draft] [--target <b>] [--title <t>] [--label a,b] [--watch]` | Opens an MR from the current branch |
 | `lazy push [--detach] [-- <git push args>]` | `git push`, then follows the pipeline GitLab created for `HEAD` |
+| `lazy env [--env <name>]` | The CI/CD variables that apply to the project, and where each comes from (no values) |
+| `lazy env pull [--env <name>] [--out .env] [--force]` | Writes them to a `.env` file with mode 600 |
+| `lazy run [--env <name>] -- <command>` | Runs a command with them in its environment; nothing is written to the project |
 
 Common options: `--project`, `--json` (raw tool result for scripts), `--interval <seconds>` while following (default 5), `--no-notify`.
 
@@ -88,11 +91,52 @@ sequenceDiagram
 
 The title is the last commit's subject, and the description is its body. A branch named `<number>-slug` or `type/<number>-slug` adds `Closes #<number>` unless the body already mentions the issue. `--draft` adds the `Draft:` prefix. The target is the project's default branch unless `--target` is given. The branch must be pushed first.
 
+### Local environment: lazy env and lazy run
+
+`lazy env pull` and `lazy run` give a local command the variables a CI job in the project would get, so the app runs against the same configuration without copying values out of GitLab by hand.
+
+```bash
+# Shell: bash, inside the project checkout
+lazy env                                   # what applies, from where; no values printed
+lazy run -- bun test                       # variables only in the test process's environment
+lazy run --env staging -- bun run dev      # include variables scoped to the staging environment
+lazy env pull --secret 'STRIPE_KEY=Stripe test key'   # .env with CI variables and one vault secret
+```
+
+These commands need an agent token created with **Can read secrets** ticked (Vault → Agent tokens). Other tokens get an error, and agents connected with them do not see the `get_env` tool.
+
+Which variables apply follows GitLab's rules:
+
+- Project variables win over group variables, and a subgroup's win over its parent's. Instance variables are left out.
+- Without `--env`, only variables scoped to `*` apply, as for a job without `environment:`. With `--env production`, a variable scoped to `production` wins over one scoped to a pattern such as `prod*`, which wins over `*`.
+- Protected variables are included. Choose the environment with that in mind.
+- Hidden variables (masked and hidden, GitLab 17.4+) have no readable value. `lazy` uses the vault CI secret that was pushed to that key and scope when there is one, else reports the variable as missing.
+- `--secret KEY=name` adds the generic vault secret with that entry name; without `KEY=` the name is converted, so `Stripe test key` becomes `STRIPE_TEST_KEY`. Several are comma-separated or repeated. These win over CI variables with the same key.
+- File-type variables are written to a file, and the variable holds its path, as in CI: `<out>.d/<KEY>` for `env pull`, a private temporary directory for `run` (removed when the command exits).
+- `$NAME` references inside values are not expanded.
+
+Defaults for a checkout can live in git config:
+
+```bash
+# Shell: bash, inside the project checkout
+git config lazylab.environment staging
+git config --add lazylab.secret 'STRIPE_KEY=Stripe test key'
+```
+
+`lazy env pull` protects the file:
+
+- It refuses to write a file that git does not ignore (and `.env.d/` when there are file variables). `--force` skips the check.
+- It refuses to replace a `.env` it did not write. Files it writes start with `# Written by lazy env pull`.
+- Values are single-quoted where needed, which Node's `--env-file`, dotenv and Docker Compose read literally. Bun's loader expands `$NAME` even inside single quotes; `lazy` lists the affected keys. Prefer `lazy run` when values must be exact.
+
+`lazy run` passes Ctrl+C to the command and exits with the command's exit code. Each read is recorded in the lazylab journal with the token name, project and environment.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Done; a followed pipeline passed, is waiting for a manual job, or was skipped |
+| n | `lazy run`: the command's own exit code (128 + signal number when it was killed by a signal) |
 | 1 | Error, or a followed pipeline failed or was canceled |
 | 2 | Usage error |
 | 130 | Interrupted while following |

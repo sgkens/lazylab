@@ -63,6 +63,8 @@ export interface AgentTokenInfo {
   id: string;
   name: string;
   prefix: string;
+  /** May read CI variable values and vault secrets (lazy env pull, lazy run). */
+  secrets?: boolean;
   createdAt: string;
 }
 
