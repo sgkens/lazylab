@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bell,
   Bot,
@@ -7,10 +7,13 @@ import {
   Cpu,
   Eye,
   EyeOff,
+  ExternalLink,
   KeyRound,
   Laptop,
   Lock,
   Plus,
+  RefreshCw,
+  RotateCw,
   Server,
   ShieldCheck,
   Trash2,
@@ -20,7 +23,8 @@ import {
 import { notifyApi, sessionApi, vaultApi } from '../services/api';
 import { NotifyChannelInput, NotifyChannelType, NotifyRules, NotifyState } from '../types/notify';
 import { GitLabProject } from '../types/gitlab';
-import { AgentTokenInfo, DeviceSession, VaultEntry, VaultEntryKind, VaultProfile } from '../types/vault';
+import { AgentTokenInfo, DeviceSession, TokenOverview, TrackedToken, VaultEntry, VaultEntryKind, VaultProfile } from '../types/vault';
+import { reportError } from '../utils/reportError';
 
 interface VaultViewProps {
   projects: GitLabProject[];
@@ -234,6 +238,25 @@ type Run = (fn: () => Promise<unknown>, okMsg?: string) => Promise<boolean>;
 
 // ---- GitLab profiles ------------------------------------------------------------
 
+const isoDateIn = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+/** Days until a token expires, coloured by how soon. */
+const ExpiryBadge: React.FC<{ days: number | null }> = ({ days }) => {
+  const [text, tone] =
+    days === null
+      ? ['no expiry', 'text-zinc-400 bg-zinc-900 border-zinc-700']
+      : days <= 0
+        ? ['expired', 'text-red-300 bg-red-950/50 border-red-800/60']
+        : days <= 3
+          ? [days === 1 ? 'last day' : `${days}d left`, 'text-red-300 bg-red-950/50 border-red-800/60']
+          : days <= 14
+            ? [`${days}d left`, 'text-amber-300 bg-amber-950/40 border-amber-800/60']
+            : [`${days}d left`, 'text-zinc-300 bg-zinc-900 border-zinc-700'];
+  return <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${tone}`}>{text}</span>;
+};
+
+const KIND_LABEL: Record<TrackedToken['kind'], string> = { personal: 'Personal', project: 'Project', group: 'Group', deploy: 'Deploy' };
+
 const ProfilesSection: React.FC<{ profiles: VaultProfile[]; run: Run; showToast: (m: string) => void; onProfileChanged: () => void }> = ({
   profiles,
   run,
@@ -244,73 +267,213 @@ const ProfilesSection: React.FC<{ profiles: VaultProfile[]; run: Run; showToast:
   const [host, setHost] = useState('https://gitlab.com');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
+  const [overview, setOverview] = useState<TokenOverview | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [rotate, setRotate] = useState<{ id: string; expiresAt: string; busy: boolean; error?: string; rescued?: string } | null>(null);
 
   const changed = async (fn: () => Promise<unknown>, msg: string) => {
     if (await run(fn, msg)) onProfileChanged();
   };
 
-  return (
-    <Card title="GitLab profiles" description="Host + personal access token pairs. The active profile is used for all GitLab calls; none active means demo mode.">
-      {profiles.length === 0 ? (
-        <Empty text="No profiles. lazylab is running in demo mode." />
-      ) : (
-        <ul className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg">
-          {profiles.map((p) => (
-            <li key={p.id} className="flex items-center gap-3 px-3 py-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100">
-                  {p.name}
-                  {p.active && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-950/50 border border-emerald-800/60 rounded px-1.5 py-0.5">
-                      <CheckCircle2 className="w-3 h-3" /> active
-                    </span>
-                  )}
-                </div>
-                <div className="text-[11px] text-zinc-500 font-mono truncate">{p.host}</div>
-              </div>
-              <SecretValue kind="profile" id={p.id} hint={p.tokenHint} showToast={showToast} />
-              {p.active ? (
-                <button className={btnGhost} onClick={() => changed(() => vaultApi.deactivateProfile(), 'Switched to demo mode')}>
-                  Deactivate
-                </button>
-              ) : (
-                <button className={btnGhost} onClick={() => changed(() => vaultApi.activateProfile(p.id), `Switched to ${p.name}`)}>
-                  Activate
-                </button>
-              )}
-              <button
-                className={btnDanger}
-                onClick={() => confirm(`Delete profile ${p.name}?`) && changed(() => vaultApi.deleteProfile(p.id), 'Profile deleted')}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+  const loadOverview = useCallback(async (force: boolean) => {
+    setChecking(true);
+    try {
+      setOverview(await vaultApi.tokenExpiry(force));
+    } catch (err) {
+      reportError('Could not check token expiry', err);
+    } finally {
+      setChecking(false);
+    }
+  }, []);
 
-      <form
-        className="grid grid-cols-1 md:grid-cols-[1fr_1.5fr_1.5fr_auto] gap-2 items-end"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          const ok = await run(() => vaultApi.addProfile({ name: name || undefined, host, token, activate: true }), 'Profile verified and activated');
-          setBusy(false);
-          if (ok) {
-            setName('');
-            setToken('');
-            onProfileChanged();
-          }
-        }}
+  // The first load may use the server's last check; later profile changes need a fresh one.
+  const profileKey = profiles.map((p) => `${p.id}:${p.updatedAt}`).join(',');
+  const loaded = useRef(false);
+  useEffect(() => {
+    loadOverview(loaded.current);
+    loaded.current = true;
+  }, [profileKey, loadOverview]);
+
+  const submitRotate = async (p: VaultProfile) => {
+    if (!rotate) return;
+    setRotate({ ...rotate, busy: true, error: undefined });
+    try {
+      const res = await vaultApi.rotatePersonalToken(p.id, rotate.expiresAt);
+      if (res.overview) setOverview(res.overview);
+      setRotate(null);
+      showToast(`Token for ${p.name} rotated; new one saved, expires ${res.expires_at ?? 'never'}`);
+      await run(async () => undefined);
+      if (p.active) onProfileChanged();
+    } catch (err: any) {
+      // A failed save after a successful rotation returns the new token: it must be shown, not lost.
+      setRotate({ ...rotate, busy: false, error: err.message, rescued: err?.data?.token });
+    }
+  };
+
+  const others = overview?.tokens.filter((t) => t.kind !== 'personal') ?? [];
+
+  return (
+    <>
+      <Card title="GitLab profiles" description="Host + personal access token pairs. The active profile is used for all GitLab calls; none active means demo mode.">
+        {profiles.length === 0 ? (
+          <Empty text="No profiles. lazylab is running in demo mode." />
+        ) : (
+          <ul className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg">
+            {profiles.map((p) => {
+              const pat = overview?.tokens.find((t) => t.profileId === p.id);
+              return (
+                <li key={p.id} className="px-3 py-2 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100">
+                        {p.name}
+                        {p.active && (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-950/50 border border-emerald-800/60 rounded px-1.5 py-0.5">
+                            <CheckCircle2 className="w-3 h-3" /> active
+                          </span>
+                        )}
+                        {pat && <ExpiryBadge days={pat.days_left} />}
+                      </div>
+                      <div className="text-[11px] text-zinc-500 font-mono truncate">
+                        {p.host}
+                        {pat?.expires_at && ` · expires ${pat.expires_at}`}
+                      </div>
+                    </div>
+                    <SecretValue kind="profile" id={p.id} hint={p.tokenHint} showToast={showToast} />
+                    <button
+                      className={btnGhost}
+                      title="Rotate the personal access token on GitLab and save the new one here"
+                      onClick={() => setRotate(rotate?.id === p.id ? null : { id: p.id, expiresAt: isoDateIn(90), busy: false })}
+                    >
+                      <RotateCw className="w-3.5 h-3.5" /> Rotate
+                    </button>
+                    {p.active ? (
+                      <button className={btnGhost} onClick={() => changed(() => vaultApi.deactivateProfile(), 'Switched to demo mode')}>
+                        Deactivate
+                      </button>
+                    ) : (
+                      <button className={btnGhost} onClick={() => changed(() => vaultApi.activateProfile(p.id), `Switched to ${p.name}`)}>
+                        Activate
+                      </button>
+                    )}
+                    <button
+                      className={btnDanger}
+                      onClick={() => confirm(`Delete profile ${p.name}?`) && changed(() => vaultApi.deleteProfile(p.id), 'Profile deleted')}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {rotate?.id === p.id && (
+                    <form
+                      className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400 bg-zinc-950 border border-zinc-800 rounded-md p-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        submitRotate(p);
+                      }}
+                    >
+                      <label htmlFor={`rotate-${p.id}`}>New token expires on</label>
+                      <input
+                        id={`rotate-${p.id}`}
+                        type="date"
+                        className={`${inputClass} w-auto`}
+                        min={isoDateIn(1)}
+                        value={rotate.expiresAt}
+                        onChange={(e) => setRotate({ ...rotate, expiresAt: e.target.value })}
+                        required
+                      />
+                      <button className={btnPrimary} disabled={rotate.busy}>
+                        {rotate.busy ? 'Rotating…' : 'Rotate now'}
+                      </button>
+                      <button type="button" className={btnGhost} onClick={() => setRotate(null)}>
+                        Cancel
+                      </button>
+                      <span className="basis-full">
+                        GitLab revokes the current token at once and returns a new one, which lazylab saves in this profile. Needs the `api` or `self_rotate` scope.
+                      </span>
+                      {rotate.error && <span className="basis-full text-red-400">{rotate.error}</span>}
+                      {rotate.rescued && (
+                        <span className="basis-full flex items-center gap-2">
+                          <input readOnly className={inputClass} value={rotate.rescued} aria-label="New token" />
+                          <button type="button" className={btnGhost} onClick={() => copyText(rotate.rescued!).then(() => showToast('New token copied'))}>
+                            <Copy className="w-3.5 h-3.5" /> Copy
+                          </button>
+                        </span>
+                      )}
+                    </form>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <form
+          className="grid grid-cols-1 md:grid-cols-[1fr_1.5fr_1.5fr_auto] gap-2 items-end"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            const ok = await run(() => vaultApi.addProfile({ name: name || undefined, host, token, activate: true }), 'Profile verified and activated');
+            setBusy(false);
+            if (ok) {
+              setName('');
+              setToken('');
+              onProfileChanged();
+            }
+          }}
+        >
+          <input className={inputClass} placeholder="name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className={inputClass} placeholder="https://gitlab.example.com" value={host} onChange={(e) => setHost(e.target.value)} required />
+          <input className={inputClass} type="password" placeholder="glpat-…" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" required />
+          <button className={btnPrimary} disabled={busy}>
+            <Plus className="w-3.5 h-3.5" /> {busy ? 'Verifying…' : 'Add'}
+          </button>
+        </form>
+      </Card>
+
+      <Card
+        title="Token expiry"
+        description="Project, group and deploy tokens of the projects lazylab aggregates, checked every 6 hours. Listing them needs the Maintainer role; projects where you lack it are skipped."
       >
-        <input className={inputClass} placeholder="name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
-        <input className={inputClass} placeholder="https://gitlab.example.com" value={host} onChange={(e) => setHost(e.target.value)} required />
-        <input className={inputClass} type="password" placeholder="glpat-…" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" required />
-        <button className={btnPrimary} disabled={busy}>
-          <Plus className="w-3.5 h-3.5" /> {busy ? 'Verifying…' : 'Add'}
-        </button>
-      </form>
-    </Card>
+        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+          <span>{overview ? `Checked ${new Date(overview.checkedAt).toLocaleString()}` : checking ? 'Checking…' : 'Not checked yet'}</span>
+          <button className={btnGhost} onClick={() => loadOverview(true)} disabled={checking}>
+            <RefreshCw className={`w-3.5 h-3.5 ${checking ? 'animate-spin' : ''}`} /> Check now
+          </button>
+        </div>
+        {others.length === 0 ? (
+          <Empty text={checking ? 'Checking…' : 'No project, group or deploy tokens found.'} />
+        ) : (
+          <ul className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg">
+            {others.map((t) => (
+              <li key={t.key} className="flex items-center gap-3 px-3 py-2 text-xs">
+                <span className="w-14 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">{KIND_LABEL[t.kind]}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-zinc-100 truncate">{t.name}</div>
+                  <div className="text-[11px] text-zinc-500 font-mono truncate">
+                    {t.owner} · {t.scopes.join(', ') || 'no scopes'}
+                    {t.expires_at && ` · expires ${t.expires_at}`}
+                  </div>
+                </div>
+                <ExpiryBadge days={t.days_left} />
+                {t.web_url && (
+                  <a className={btnGhost} href={t.web_url} target="_blank" rel="noreferrer" title="Manage in GitLab">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {overview && overview.errors.length > 0 && (
+          <ul className="text-[11px] text-amber-300 space-y-0.5">
+            {overview.errors.map((e) => (
+              <li key={e}>Could not read {e}</li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
   );
 };
 
@@ -520,7 +683,8 @@ const RULE_LABELS: { key: keyof NotifyRules; label: string; hint: string }[] = [
   { key: 'myMrPipelines', label: 'Watch my MR pipelines', hint: 'Auto-watch the running pipeline of each of your open MRs' },
   { key: 'reviewRequests', label: 'New review requests', hint: 'Notify when someone asks you to review an MR' },
   { key: 'reReview', label: 'New commits on MRs I review', hint: 'Notify when the author pushes to an MR you are reviewing' },
-  { key: 'runnerOffline', label: 'Runner offline', hint: 'Notify when one of your runners stops contacting GitLab' }
+  { key: 'runnerOffline', label: 'Runner offline', hint: 'Notify when one of your runners stops contacting GitLab' },
+  { key: 'tokenExpiry', label: 'Token expiry', hint: 'Warn 14, 7, 3 and 1 days before a GitLab token expires, and when it has expired' }
 ];
 
 const CHANNEL_HELP: Record<NotifyChannelType, { url: string; hint: string }> = {

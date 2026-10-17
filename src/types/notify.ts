@@ -50,6 +50,7 @@ export interface NotifyRules {
   reviewRequests: boolean;
   reReview: boolean;
   runnerOffline: boolean;
+  tokenExpiry: boolean;
 }
 
 export interface NotifyState {
