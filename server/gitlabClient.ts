@@ -365,6 +365,8 @@ export interface GitLabVariable {
   protected: boolean;
   masked: boolean;
   raw?: boolean;
+  /** Masked and hidden (GitLab 17.4+): the API never returns the value. */
+  hidden?: boolean;
   environment_scope: string;
   scope_type: 'project' | 'group' | 'instance';
   scope_id: number;
@@ -3553,7 +3555,7 @@ Execution finished in 38s
         return DEMO_VARIABLES.filter(v => v.scope_type === 'project' && v.scope_id === id);
       }
       if (scope === 'group') {
-        return DEMO_VARIABLES.filter(v => v.scope_type === 'group');
+        return DEMO_VARIABLES.filter(v => v.scope_type === 'group' && (!id || v.scope_id === id));
       }
       return DEMO_VARIABLES;
     }
@@ -3562,18 +3564,40 @@ Execution finished in 38s
     const endpoint = scope === 'project'
       ? `/projects/${id}/variables`
       : `/groups/${id}/variables`;
-    const { data } = await this.fetchApi<any[]>(endpoint);
+    // GitLab pages variables 20 at a time by default; read them all (100 per page, 20 pages at most).
+    const data: any[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const { data: rows } = await this.fetchApi<any[]>(`${endpoint}?per_page=100&page=${page}`);
+      data.push(...rows);
+      if (rows.length < 100) break;
+    }
     return data.map(v => ({
       key: v.key,
-      value: v.value,
+      value: v.value ?? '',
       variable_type: v.variable_type || 'env_var',
       protected: Boolean(v.protected),
       masked: Boolean(v.masked),
       raw: Boolean(v.raw),
+      hidden: Boolean(v.hidden) || v.value === null,
       environment_scope: v.environment_scope || '*',
       scope_type: scope,
       scope_id: id || 0
     }));
+  }
+
+  /**
+   * The groups a project inherits CI variables from, closest first (subgroup before its parent).
+   * Empty for projects in a user namespace.
+   */
+  async getProjectAncestorGroups(projectId: number): Promise<{ id: number; full_path: string }[]> {
+    if (this.isDemoMode) {
+      const ns = DEMO_PROJECTS.find((p) => p.id === projectId)?.namespace;
+      return ns?.kind === 'group' ? [{ id: ns.id, full_path: ns.full_path }] : [];
+    }
+    const { data } = await this.fetchApi<any[]>(`/projects/${projectId}/groups?per_page=100`);
+    return data
+      .map((g) => ({ id: g.id as number, full_path: String(g.full_path) }))
+      .sort((a, b) => b.full_path.split('/').length - a.full_path.split('/').length);
   }
 
   /** One variable with its value. The list response leaves masked values out; this is the explicit reveal. */
