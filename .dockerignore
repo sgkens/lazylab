@@ -6,5 +6,6 @@ dist
 !.env.example
 .git
 *.log
-skills
+docs
+tests
 devtracker-pending.md
