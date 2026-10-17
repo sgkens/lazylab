@@ -340,9 +340,9 @@ apiRouter.post('/work_items/:iid/subtasks', async (req: Request, res: Response) 
     if (!projectId || !title) {
       return res.status(400).json({ success: false, error: 'projectId and title are required' });
     }
-    const subtask = await gitlabClient.addSubTask(Number(projectId), issueIid, title);
+    const { subtask, workItem } = await gitlabClient.addSubTask(Number(projectId), issueIid, title);
     broadcastEvent('work_item_updated', { iid: issueIid, subtask });
-    res.json({ success: true, subtask });
+    res.json({ success: true, subtask, workItem });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -356,9 +356,9 @@ apiRouter.patch('/work_items/:iid/subtasks/:subtaskId', async (req: Request, res
     if (!projectId) {
       return res.status(400).json({ success: false, error: 'projectId is required' });
     }
-    const subtasks = await gitlabClient.toggleSubTask(Number(projectId), issueIid, subtaskId, Boolean(completed));
+    const workItem = await gitlabClient.toggleSubTask(Number(projectId), issueIid, subtaskId, Boolean(completed));
     broadcastEvent('work_item_updated', { iid: issueIid, subtaskId, completed });
-    res.json({ success: true, subtasks });
+    res.json({ success: true, subtasks: workItem.subtasks ?? [], workItem });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -433,26 +433,32 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     }
   };
 
+  // Live subtasks are checklist lines in the description, so the server's item replaces the local one:
+  // description, subtask ids and counts all change together.
+  const applyWorkItem = (updated: GitLabWorkItem) => {
+    const same = (item: GitLabWorkItem) => item.iid === updated.iid && item.project_id === updated.project_id;
+    setWorkItems((prev) => prev.map((item) => (same(item) ? { ...item, ...updated } : item)));
+    setSelectedWorkItem((prev) => (prev && same(prev) ? { ...prev, ...updated } : prev));
+  };
+
+  const setSubtaskCompleted = (projectId: number, issueIid: number, subtaskId: number, completed: boolean) => {
+    const update = (item: GitLabWorkItem) =>
+      item.iid === issueIid && item.project_id === projectId
+        ? { ...item, subtasks: (item.subtasks || []).map((s) => (s.id === subtaskId ? { ...s, completed } : s)) }
+        : item;
+    setWorkItems((prev) => prev.map(update));
+    setSelectedWorkItem((prev) => (prev ? update(prev) : null));
+  };
+
   const handleAddSubTask = async (projectId: number, issueIid: number, title: string) => {
     try {
       const res = await api.addSubTask(projectId, issueIid, title);
-      if (res.success && res.subtask) {
-        setWorkItems((prev) =>
-          prev.map((item) =>
-            item.iid === issueIid && item.project_id === projectId
-              ? { ...item, subtasks: [...(item.subtasks || []), res.subtask] }
-              : item
-          )
-        );
-        if (selectedWorkItem && selectedWorkItem.iid === issueIid && selectedWorkItem.project_id === projectId) {
-          setSelectedWorkItem((prev) =>
-            prev ? { ...prev, subtasks: [...(prev.subtasks || []), res.subtask] } : null
-          );
-        }
+      if (res.success && res.workItem) {
+        applyWorkItem(res.workItem);
         showToast(`Subtask added to #${issueIid}`);
       }
     } catch (err: any) {
-      showToast(`Failed adding subtask: ${err.message}`);
+      reportError('Could not add subtask', err);
     }
   };
 
@@ -462,35 +468,13 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     subtaskId: number,
     completed: boolean
   ) => {
-    setWorkItems((prev) =>
-      prev.map((item) =>
-        item.iid === issueIid && item.project_id === projectId
-          ? {
-              ...item,
-              subtasks: (item.subtasks || []).map((s) =>
-                s.id === subtaskId ? { ...s, completed } : s
-              )
-            }
-          : item
-      )
-    );
-    if (selectedWorkItem && selectedWorkItem.iid === issueIid && selectedWorkItem.project_id === projectId) {
-      setSelectedWorkItem((prev) =>
-        prev
-          ? {
-              ...prev,
-              subtasks: (prev.subtasks || []).map((s) =>
-                s.id === subtaskId ? { ...s, completed } : s
-              )
-            }
-          : null
-      );
-    }
-
+    setSubtaskCompleted(projectId, issueIid, subtaskId, completed);
     try {
-      await api.toggleSubTask(projectId, issueIid, subtaskId, completed);
+      const res = await api.toggleSubTask(projectId, issueIid, subtaskId, completed);
+      if (res.workItem) applyWorkItem(res.workItem);
     } catch (err: any) {
-      showToast(`Failed toggling subtask: ${err.message}`);
+      setSubtaskCompleted(projectId, issueIid, subtaskId, !completed);
+      reportError('Could not update subtask', err);
     }
   };
 

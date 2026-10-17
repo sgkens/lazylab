@@ -94,7 +94,8 @@ export const WorkItemsView: React.FC<WorkItemsViewProps> = ({
       setNotes([]);
       setNewCommentBody('');
     }
-  }, [selectedItem]);
+    // Keyed by identity: subtask and label updates replace the item object and must not reload comments.
+  }, [selectedItem?.project_id, selectedItem?.iid]);
 
   const handleSendComment = async (e: React.FormEvent) => {
     e.preventDefault();

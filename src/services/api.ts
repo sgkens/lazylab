@@ -177,13 +177,13 @@ export const api = {
     }),
 
   addSubTask: (projectId: number, issueIid: number, title: string) =>
-    request<{ success: boolean; subtask: SubTask }>(`/work_items/${issueIid}/subtasks`, {
+    request<{ success: boolean; subtask: SubTask; workItem: GitLabWorkItem }>(`/work_items/${issueIid}/subtasks`, {
       method: 'POST',
       body: JSON.stringify({ projectId, title })
     }),
 
   toggleSubTask: (projectId: number, issueIid: number, subtaskId: number, completed: boolean) =>
-    request<{ success: boolean; subtasks: SubTask[] }>(`/work_items/${issueIid}/subtasks/${subtaskId}`, {
+    request<{ success: boolean; subtasks: SubTask[]; workItem: GitLabWorkItem }>(`/work_items/${issueIid}/subtasks/${subtaskId}`, {
       method: 'PATCH',
       body: JSON.stringify({ projectId, completed })
     }),

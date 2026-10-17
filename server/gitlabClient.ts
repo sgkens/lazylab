@@ -2149,26 +2149,27 @@ export class GitLabClient {
   }
 
   // Subtasks helper
-  async toggleSubTask(projectId: number, issueIid: number, subtaskId: number, completed: boolean): Promise<SubTask[]> {
+  /** Returns the updated item: live subtasks are checklist lines, so the description changes with them. */
+  async toggleSubTask(projectId: number, issueIid: number, subtaskId: number, completed: boolean): Promise<GitLabWorkItem> {
     if (this.isDemoMode) {
       const item = DEMO_WORK_ITEMS.find(i => i.project_id === projectId && i.iid === issueIid);
-      if (item && item.subtasks) {
-        const sub = item.subtasks.find(s => s.id === subtaskId);
-        if (sub) sub.completed = completed;
-        cacheDb.logWal('TOGGLE_SUBTASK', `${issueIid}:${subtaskId}`, 'work_items', `Subtask ${completed ? 'completed' : 'uncompleted'}`);
-        return item.subtasks;
-      }
-      return [];
+      const sub = item?.subtasks?.find(s => s.id === subtaskId);
+      if (!item || !sub) throw new Error(`Subtask ${subtaskId} of #${issueIid} not found`);
+      sub.completed = completed;
+      cacheDb.logWal('TOGGLE_SUBTASK', `${issueIid}:${subtaskId}`, 'work_items', `Subtask ${completed ? 'completed' : 'uncompleted'}`);
+      return { ...item, subtasks: [...item.subtasks!] };
     }
 
     // In remote GitLab, update description checklist line
     const item = await this.fetchApi<any>(`/projects/${projectId}/issues/${issueIid}`);
     let desc = item.data.description || '';
     let counter = 1;
+    let found = false;
     const lines = desc.split('\n').map((line: string) => {
       const match = line.match(/^([\s-]*\[)([ xX])(\]\s*.+)$/);
       if (match) {
         if (counter === subtaskId) {
+          found = true;
           counter++;
           return `${match[1]}${completed ? 'x' : ' '}${match[3]}`;
         }
@@ -2177,13 +2178,13 @@ export class GitLabClient {
       return line;
     });
 
-    const newDesc = lines.join('\n');
-    await this.updateWorkItem(projectId, issueIid, { description: newDesc });
+    if (!found) throw new Error(`Subtask ${subtaskId} of #${issueIid} not found; the description may have changed`);
+    const updated = await this.updateWorkItem(projectId, issueIid, { description: lines.join('\n') });
     cacheDb.logWal('TOGGLE_SUBTASK', `${issueIid}:${subtaskId}`, 'work_items', `Subtask toggled`);
-    return [];
+    return updated;
   }
 
-  async addSubTask(projectId: number, issueIid: number, title: string): Promise<SubTask> {
+  async addSubTask(projectId: number, issueIid: number, title: string): Promise<{ subtask: SubTask; workItem: GitLabWorkItem }> {
     if (this.isDemoMode) {
       const item = DEMO_WORK_ITEMS.find(i => i.project_id === projectId && i.iid === issueIid);
       if (!item) throw new Error(`Work item #${issueIid} not found`);
@@ -2197,16 +2198,17 @@ export class GitLabClient {
         };
         item.subtasks.push(newSub);
         cacheDb.logWal('ADD_SUBTASK', String(newSub.id), 'work_items', `Added subtask "${title}" to #${issueIid}`);
-        return newSub;
+        return { subtask: newSub, workItem: { ...item, subtasks: [...item.subtasks] } };
       }
     }
 
     const item = await this.fetchApi<any>(`/projects/${projectId}/issues/${issueIid}`);
     const currentDesc = item.data.description || '';
     const newDesc = `${currentDesc}${currentDesc && !currentDesc.endsWith('\n') ? '\n' : ''}- [ ] ${title}`;
-    await this.updateWorkItem(projectId, issueIid, { description: newDesc });
+    const workItem = await this.updateWorkItem(projectId, issueIid, { description: newDesc });
     // Live subtask ids are 1-based positions among checkbox lines (see mapWorkItem).
-    return { id: mapWorkItem({ ...item.data, description: newDesc }).subtasks!.length, title, completed: false, parent_iid: issueIid };
+    const subtask = workItem.subtasks?.[workItem.subtasks.length - 1] ?? { id: 1, title, completed: false, parent_iid: issueIid };
+    return { subtask, workItem };
   }
 
   // 5. Notes & Comments
