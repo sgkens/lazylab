@@ -75,7 +75,7 @@ flowchart LR
 ### Roadmap
 
 1. **Foundation, blocks everything else:** GL-1, GL-14, GL-15, GL-2, CACHE-1/2/4, BUILD-3. Cross-project views are wrong while list calls hit non-existent endpoints and swallow errors.
-2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, TRIAGE-1/6, ENV-4, AGENT-1.
+2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, ~~TRIAGE-1/6~~, ENV-4, AGENT-1.
 3. **Away from the browser:** CLI-1/2/4, ENV-1/2, REPO-1..4.
 4. **Chores at scale:** REL, FLEET, DEPLOY, REG, RL.
 
@@ -109,8 +109,8 @@ Classification of the live (token configured) code path. With no token everythin
 | MRs | update | PARTIAL | `draft` is ignored live |
 | MRs | create | WIRED | Agent API only; no UI |
 | Pipelines | list | WIRED | Third pass: per-project fan-out, newest 50 |
-| Pipelines | jobs, retry, cancel, play job | WIRED | |
-| Jobs | trace | WIRED | Whole log per request, no incremental tail; errors are masked as a fake trace |
+| Pipelines | jobs, retry, cancel, play job, run with variables | WIRED | Fifth pass: `POST /projects/:id/pipeline`; job retry uses `/jobs/:id/retry` (the log view used `play`, which only works on manual jobs) |
+| Jobs | trace, failure excerpt | WIRED | Whole log per request (tail capped at 2 MB), no incremental tail; errors are masked as a fake trace. Failed jobs return a failure excerpt with the trace |
 | Runners | list | WIRED | `/runners` returns only runners the user owns, not the admin `/runners/all` |
 | Runners | pause, assign, unassign, delete, runner jobs | WIRED | |
 | Runners | register | WIRED | Fixed in the second pass (GL-6): uses the returned token, saves it to the vault, surfaces API errors |
@@ -238,6 +238,33 @@ Follow-ups:
 - [ ] WATCH-9 MR watch: notify on new approvals and new comments (needs notes polling)
 - [ ] WATCH-10 Poll interval setting; back off on GitLab rate-limit headers
 
+## Done 2026-10-17 (fifth pass): CI failure triage and run pipeline
+
+```mermaid
+flowchart LR
+  T[raw job trace] --> C[cleanTrace: markers, ANSI, CR overwrites]
+  C --> X[extractFailure: failing section, last 40 lines, error line]
+  X --> LV[log view: Failure tab]
+  X --> PV[CI/CD: Why it failed]
+  X --> WN[failure notification body + failedJob]
+  X --> AG[GET /api/agent/.../failures]
+```
+
+- [x] TRIAGE-1 `server/triage.ts`: parses `section_start`/`section_end`, skips post-script runner sections, keeps the last 40 lines of the failing section, highlights error lines, picks an `errorLine` (cause lines such as `error:`/`fatal` before summary lines such as `1 fail`), exit code, `failure_reason` hint and `retryable`
+  - Log view opens on a Failure tab for failed jobs (copy excerpt, GitLab link); the trace response carries the excerpt so the log is fetched once
+  - CI/CD: failed pipelines list each failed job's error line (allowed failures excluded)
+  - Watch failure notifications append `job: error line` and carry `failedJob`; "Why it failed" in the bell and a click on the desktop notification open the excerpt
+- [x] TRIAGE-6 Run pipeline: ref with branch suggestions, variables prefilled from GraphQL `ciConfigVariables` (descriptions, option lists), last run per project in localStorage, watch by default. Variables left at the declared default are not sent
+- Fixed: the log view's Retry called `play` (manual jobs only); finished jobs now use `/jobs/:id/retry` and the new job is watched and opened
+- Agent API: `POST /api/agent/pipelines`, `GET /api/agent/pipelines/:id/failures`, `GET /api/agent/jobs/:id/failure`
+- Verified: 49 tests (trace parsing on runner-shaped traces, nested sections, CR progress, window cap, input validation, enriched notification through the manager), curl end-to-end in demo mode (excerpt, failures, branches, declared variables, run, validation errors, cross-origin rejection, retry, ntfy body with the error line, agent bearer), headless Chromium (Why it failed, Failure tab, run form with an option variable), no page errors
+- Not verified against live GitLab: `ciConfigVariables` (GraphQL field availability varies by version), `/jobs/:id/retry` response, trace section markers from a real runner
+
+Follow-ups:
+- [ ] TRIAGE-8 Run pipeline from the Inbox and from an MR row (prefill the source branch)
+- [ ] TRIAGE-9 Excerpt for very large logs without downloading the whole trace (needs TRIAGE-5 offset fetch)
+- [ ] TRIAGE-10 Show failures for jobs in child/downstream pipelines (bridges)
+
 ## Epic SEC: hardening follow-ups
 
 - [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
@@ -328,12 +355,12 @@ Follow-ups:
 
 ## Epic TRIAGE: CI failure triage
 
-- [ ] TRIAGE-1 Failure excerpt: the failing section of a job trace (collapsed `section_start` markers, last N lines before `ERROR: Job failed`), plus `failure_reason`
+- [x] TRIAGE-1 Failure excerpt: the failing section of a job trace (collapsed `section_start` markers, last N lines before `ERROR: Job failed`), plus `failure_reason`
 - [ ] TRIAGE-2 Flaky detection: pass/fail history per job name on the default branch; "retry flaky" action
 - [ ] TRIAGE-3 Auto-retry policy for infrastructure failures (`runner_system_failure`, `stuck_or_timeout_failure`, `scheduler_failure`), with a cap
 - [ ] TRIAGE-4 Pipeline duration trend and slowest jobs per project
 - [ ] TRIAGE-5 Incremental trace tail with live follow (offset-based fetch instead of the whole log per poll)
-- [ ] TRIAGE-6 Run pipeline for a ref with a variables form (`POST /projects/:id/pipeline`); missing today
+- [x] TRIAGE-6 Run pipeline for a ref with a variables form (`POST /projects/:id/pipeline`); missing today
 - [ ] TRIAGE-7 "Hand to agent": bundle MR diff + failure excerpt + `.gitlab-ci.yml` as a prompt or an MCP resource
 
 ## Epic REPO: local checkouts on the lazylab host

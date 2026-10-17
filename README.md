@@ -107,6 +107,26 @@ Push channels are stored encrypted in the vault:
 
 Each channel can take all events or failures only. Use **Test** to check it.
 
+## CI failure triage
+
+A failed job opens on a **Failure** view instead of the full log. It shows the failure reason, the exit code, the error line, and the last lines of the section that failed (40 at most). Runner output after the script is left out: artifact upload, cache archive and cleanup.
+
+- **CI/CD:** a failed pipeline lists the error line of each failed job under "Why it failed". Jobs allowed to fail are left out.
+- **Notifications:** a failure notification includes the failing job's error line, and "Why it failed" opens the excerpt. A desktop failure notification also opens it when clicked.
+- **Retry:** retrying a failed job creates a new job and watches it. Failure reasons that usually pass on retry (runner system failure, stuck or timeout, scheduler, API) are marked "likely passes on retry".
+- **Copy excerpt:** copies the excerpt as plain text, ready for a ticket or an agent prompt.
+
+### Run pipeline
+
+**Run pipeline** in CI/CD starts a pipeline for a branch or tag. The form fills in the variables declared under `variables:` in `.gitlab-ci.yml` for that ref, with their descriptions and option lists. It reads these through GitLab GraphQL `ciConfigVariables`. If the query fails, you add the variables by hand. Variables left at their declared default are not sent. The last ref and variables used in each project are remembered in the browser. By default lazylab watches the new pipeline and notifies you when it finishes.
+
+```bash
+# Shell: bash, with LAZYLAB_URL and LAZYLAB_TOKEN (an agent token) exported
+curl -s -H "Authorization: Bearer $LAZYLAB_TOKEN" -H "Content-Type: application/json" \
+  -X POST "$LAZYLAB_URL/api/agent/pipelines" \
+  -d '{"projectId": 42, "ref": "main", "variables": [{"key": "DEPLOY_ENV", "value": "staging"}]}'
+```
+
 ## Agent skills
 
 `skills/` contains a `lazylab-agent` skill for Claude Code, Codex and Antigravity. See [skills/README.md](skills/README.md).
@@ -129,6 +149,7 @@ Open epics, tasks and the wired/stub audit are in [devtracker-pending.md](devtra
 | `server/watch.ts` | Watch poller, notification rules, history |
 | `server/notify.ts` | Push delivery: ntfy, Gotify, webhook |
 | `server/notifyRouter.ts` | `/api/notify/*` routes |
+| `server/triage.ts` | Job trace failure excerpt, run-pipeline input validation |
 | `server/gitlabClient.ts` | GitLab REST v4 client plus demo-mode dataset |
 | `server/cacheDb.ts` | sql.js cache snapshot + append-only journal in `.data/` |
 | `server/metricsManager.ts` | API/cache hit counters and rate-limit tracking |
