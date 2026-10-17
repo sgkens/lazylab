@@ -125,6 +125,8 @@ export interface GitLabMergeRequest {
   web_url: string;
   /** Full reference, e.g. `group/project!12`. Live mode only. */
   reference?: string;
+  /** Head commit of the source branch. */
+  sha?: string;
   created_at: string;
   updated_at: string;
   approved?: boolean;
@@ -1679,6 +1681,7 @@ export function mapMergeRequest(m: any): GitLabMergeRequest {
       sha: (m.head_pipeline || m.pipeline).sha
     } : undefined,
     reference: m.references?.full,
+    sha: m.sha,
     has_conflicts: Boolean(m.has_conflicts),
     web_url: m.web_url,
     created_at: m.created_at,
@@ -2574,6 +2577,60 @@ export class GitLabClient {
     } catch {
       return [];
     }
+  }
+
+  // Single-item reads used by watches. Never cached: the caller polls for a fresh status.
+  async getPipeline(projectId: number, pipelineId: number): Promise<GitLabPipeline> {
+    if (this.isDemoMode) {
+      const p = DEMO_PIPELINES.find((x) => x.id === pipelineId && x.project_id === projectId);
+      if (!p) throw new Error(`Pipeline ${pipelineId} not found`);
+      return p;
+    }
+    const { data: p } = await this.fetchApi<any>(`/projects/${projectId}/pipelines/${pipelineId}`);
+    return {
+      id: p.id,
+      project_id: p.project_id || projectId,
+      status: p.status,
+      ref: p.ref,
+      sha: p.sha,
+      web_url: p.web_url,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      duration: p.duration ?? undefined,
+      user: p.user ? { name: p.user.name, username: p.user.username, avatar_url: p.user.avatar_url } : undefined
+    };
+  }
+
+  async getJob(projectId: number, jobId: number): Promise<GitLabJob & { failure_reason?: string }> {
+    if (this.isDemoMode) {
+      const job = Object.values(DEMO_JOBS).flat().find((j) => j.id === jobId);
+      if (!job) throw new Error(`Job ${jobId} not found`);
+      return job;
+    }
+    const { data: j } = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}`);
+    return {
+      id: j.id,
+      name: j.name,
+      stage: j.stage,
+      status: j.status,
+      duration: j.duration ?? undefined,
+      started_at: j.started_at,
+      finished_at: j.finished_at,
+      pipeline_id: j.pipeline?.id,
+      project_id: projectId,
+      web_url: j.web_url,
+      failure_reason: j.failure_reason
+    };
+  }
+
+  async getMergeRequest(projectId: number, mrIid: number): Promise<GitLabMergeRequest> {
+    if (this.isDemoMode) {
+      const mr = DEMO_MRS.find((m) => m.project_id === projectId && m.iid === mrIid);
+      if (!mr) throw new Error(`Merge request !${mrIid} not found`);
+      return mr;
+    }
+    const { data } = await this.fetchApi<any>(`/projects/${projectId}/merge_requests/${mrIid}`);
+    return mapMergeRequest(data);
   }
 
   async getPipelineJobs(projectId: number, pipelineId: number): Promise<{ stages: string[]; jobs: GitLabJob[] }> {

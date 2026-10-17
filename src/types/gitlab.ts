@@ -117,6 +117,8 @@ export interface GitLabMergeRequest {
   web_url: string;
   /** Full reference, e.g. `group/project!12`. Live mode only. */
   reference?: string;
+  /** Head commit of the source branch. */
+  sha?: string;
   created_at: string;
   updated_at: string;
   approved?: boolean;
