@@ -1,0 +1,1406 @@
+import { Router, Request, Response } from 'express';
+import { cacheDb } from './cacheDb.js';
+import { GitLabClient } from './gitlabClient.js';
+import { metricsManager } from './metricsManager.js';
+import { vault } from './vault.js';
+
+export const apiRouter = Router();
+
+// Runtime configuration. The GitLab host/token come from the active vault profile;
+// with no active profile (or while the vault is locked) the client runs in demo mode.
+let autoFetchIntervalSec = 30; // default 30s auto-fetch
+let lastSyncTime = Date.now();
+let gitlabClient = new GitLabClient();
+
+function rebuildClientFromVault() {
+  const profile = vault.getActiveProfile();
+  gitlabClient = profile ? new GitLabClient(profile.host, profile.token) : new GitLabClient();
+}
+
+// SSE connection pool for real-time live push updates
+const sseClients = new Set<Response>();
+
+export function broadcastEvent(event: string, payload: any) {
+  const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(message);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
+// Background auto-fetching scheduler
+let autoFetchTimer: NodeJS.Timeout | null = null;
+
+async function runAutoFetch() {
+  if (!vault.isUnlocked()) return;
+  try {
+    lastSyncTime = Date.now();
+    // Refresh core caches
+    const projects = await gitlabClient.getProjects(true);
+    await gitlabClient.getMilestones(undefined, true);
+    await gitlabClient.getWorkItems(undefined, 'all', true);
+    await gitlabClient.getMergeRequests(undefined, 'all', true);
+    await gitlabClient.getPipelines(undefined, true);
+    await gitlabClient.getRunners(true);
+
+    broadcastEvent('sync_completed', {
+      timestamp: lastSyncTime,
+      projectsCount: projects.length,
+      walStats: cacheDb.getStats()
+    });
+  } catch (err) {
+    console.warn('Auto-fetch background error:', err);
+  }
+}
+
+function restartAutoFetchTimer() {
+  if (autoFetchTimer) {
+    clearInterval(autoFetchTimer);
+    autoFetchTimer = null;
+  }
+  if (autoFetchIntervalSec > 0 && vault.isUnlocked()) {
+    autoFetchTimer = setInterval(runAutoFetch, autoFetchIntervalSec * 1000);
+  }
+}
+
+// Initialize SQLite cache. Auto-fetch starts only once the vault is unlocked.
+const cacheReady = cacheDb.init();
+
+vault.on('unlocked', async () => {
+  await cacheReady;
+  rebuildClientFromVault();
+  restartAutoFetchTimer();
+  runAutoFetch();
+});
+
+vault.on('profile-changed', async () => {
+  await cacheReady;
+  rebuildClientFromVault();
+  cacheDb.clear();
+  const profile = vault.getActiveProfile();
+  cacheDb.logWal('AUTH_CHANGE', 'system', 'auth', profile ? `Switched to profile ${profile.name}` : 'Switched to demo mode');
+  runAutoFetch();
+});
+
+vault.on('locked', () => {
+  if (autoFetchTimer) clearInterval(autoFetchTimer);
+  autoFetchTimer = null;
+  gitlabClient = new GitLabClient();
+});
+
+// 1. Status & Configuration
+apiRouter.get('/status', async (_req: Request, res: Response) => {
+  try {
+    let user = null;
+    try {
+      user = await gitlabClient.getCurrentUser();
+    } catch (e) {
+      console.warn('Could not fetch user info:', e);
+    }
+
+    const walStats = cacheDb.getStats();
+    const metrics = metricsManager.getSummary();
+    const profile = vault.getActiveProfile();
+    res.json({
+      success: true,
+      host: gitlabClient.getHost(),
+      hasToken: Boolean(profile),
+      profileName: profile?.name ?? null,
+      isDemo: gitlabClient.isDemo(),
+      user,
+      autoFetchIntervalSec,
+      lastSyncTime,
+      walStats,
+      metrics
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/auth/verify', async (req: Request, res: Response) => {
+  try {
+    const { host, token } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Token is required' });
+    }
+    const testClient = new GitLabClient(host || 'https://gitlab.com', token);
+    const user = await testClient.getCurrentUser();
+    res.json({ success: true, user });
+  } catch (err: any) {
+    res.status(401).json({ success: false, error: err.message });
+  }
+});
+
+// Saves host+token as a vault profile (updating the profile for the same host if one exists) and activates it.
+apiRouter.post('/auth/save', async (req: Request, res: Response) => {
+  try {
+    const { host, token } = req.body;
+    const cleanHost = (host || 'https://gitlab.com').replace(/\/+$/, '');
+    const cleanToken = typeof token === 'string' ? token.trim() : '';
+    if (!cleanToken) {
+      return res.status(400).json({ success: false, error: 'Token is required' });
+    }
+
+    const user = await new GitLabClient(cleanHost, cleanToken).getCurrentUser();
+    const existing = vault.listProfiles().find((p) => p.host === cleanHost);
+    const profile = vault.upsertProfile({ id: existing?.id, name: existing?.name || new URL(cleanHost).host, host: cleanHost, token: cleanToken });
+    vault.setActiveProfile(profile.id);
+
+    res.json({ success: true, host: cleanHost, isDemo: false, user });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// Deactivates the current profile (demo mode). Stored profiles are kept in the vault.
+apiRouter.post('/auth/clear', async (_req: Request, res: Response) => {
+  try {
+    vault.setActiveProfile(null);
+    res.json({ success: true, isDemo: true });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/config/autofetch', (req: Request, res: Response) => {
+  const { intervalSec } = req.body;
+  autoFetchIntervalSec = Number(intervalSec) || 0;
+  restartAutoFetchTimer();
+  res.json({ success: true, autoFetchIntervalSec });
+});
+
+apiRouter.post('/sync/refresh', async (_req: Request, res: Response) => {
+  await runAutoFetch();
+  res.json({ success: true, lastSyncTime, walStats: cacheDb.getStats() });
+});
+
+// SSE Endpoint for Live Updates
+apiRouter.get('/events', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  sseClients.add(res);
+  res.write(`data: ${JSON.stringify({ type: 'connected', time: Date.now() })}\n\n`);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
+});
+
+// 2. Projects
+apiRouter.get('/projects', async (req: Request, res: Response) => {
+  try {
+    const force = req.query.force === 'true';
+    const projects = await gitlabClient.getProjects(force);
+    res.json({ success: true, projects });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Milestones
+apiRouter.get('/milestones', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
+    const force = req.query.force === 'true';
+    const milestones = await gitlabClient.getMilestones(projectId, force);
+    res.json({ success: true, milestones });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/milestones', async (req: Request, res: Response) => {
+  try {
+    const { projectId, title, description, due_date, start_date } = req.body;
+    if (!projectId || !title) {
+      return res.status(400).json({ success: false, error: 'projectId and title are required' });
+    }
+    const milestone = await gitlabClient.createMilestone(Number(projectId), {
+      title,
+      description,
+      due_date,
+      start_date
+    });
+    broadcastEvent('milestone_created', milestone);
+    res.json({ success: true, milestone });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Work-Items & Issues
+apiRouter.get('/work_items', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
+    const state = (req.query.state as any) || 'all';
+    const force = req.query.force === 'true';
+    const items = await gitlabClient.getWorkItems(projectId, state, force);
+    res.json({ success: true, workItems: items });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/work_items', async (req: Request, res: Response) => {
+  try {
+    const { projectId, title, description, issue_type, labels, assignee_ids, weight, milestone_id } = req.body;
+    if (!projectId || !title) {
+      return res.status(400).json({ success: false, error: 'projectId and title are required' });
+    }
+    const item = await gitlabClient.createWorkItem(Number(projectId), {
+      title,
+      description,
+      issue_type,
+      labels,
+      assignee_ids,
+      weight,
+      milestone_id
+    });
+    broadcastEvent('work_item_created', item);
+    res.json({ success: true, workItem: item });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.patch('/work_items/:iid', async (req: Request, res: Response) => {
+  try {
+    const issueIid = Number(req.params.iid);
+    const { projectId, title, description, state_event, labels, add_labels, remove_labels, milestone_id } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const updated = await gitlabClient.updateWorkItem(Number(projectId), issueIid, {
+      title,
+      description,
+      state_event,
+      labels,
+      add_labels,
+      remove_labels,
+      milestone_id
+    });
+    broadcastEvent('work_item_updated', updated);
+    res.json({ success: true, workItem: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Sub-tasks routes
+apiRouter.post('/work_items/:iid/subtasks', async (req: Request, res: Response) => {
+  try {
+    const issueIid = Number(req.params.iid);
+    const { projectId, title } = req.body;
+    if (!projectId || !title) {
+      return res.status(400).json({ success: false, error: 'projectId and title are required' });
+    }
+    const subtask = await gitlabClient.addSubTask(Number(projectId), issueIid, title);
+    broadcastEvent('work_item_updated', { iid: issueIid, subtask });
+    res.json({ success: true, subtask });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.patch('/work_items/:iid/subtasks/:subtaskId', async (req: Request, res: Response) => {
+  try {
+    const issueIid = Number(req.params.iid);
+    const subtaskId = Number(req.params.subtaskId);
+    const { projectId, completed } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const subtasks = await gitlabClient.toggleSubTask(Number(projectId), issueIid, subtaskId, Boolean(completed));
+    broadcastEvent('work_item_updated', { iid: issueIid, subtaskId, completed });
+    res.json({ success: true, subtasks });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Notes / Comments
+apiRouter.get('/work_items/:iid/notes', async (req: Request, res: Response) => {
+  try {
+    const issueIid = Number(req.params.iid);
+    const projectId = Number(req.query.projectId);
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId query param is required' });
+    }
+    const notes = await gitlabClient.getWorkItemNotes(projectId, issueIid);
+    res.json({ success: true, notes });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/work_items/:iid/notes', async (req: Request, res: Response) => {
+  try {
+    const issueIid = Number(req.params.iid);
+    const { projectId, body, attachment } = req.body;
+    if (!projectId || !body) {
+      return res.status(400).json({ success: false, error: 'projectId and body are required' });
+    }
+    const note = await gitlabClient.createWorkItemNote(Number(projectId), issueIid, body, attachment);
+    broadcastEvent('note_created', { issueIid, note });
+    res.json({ success: true, note });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Merge Requests
+apiRouter.get('/merge_requests', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
+    const state = (req.query.state as any) || 'all';
+    const force = req.query.force === 'true';
+    const mrs = await gitlabClient.getMergeRequests(projectId, state, force);
+    res.json({ success: true, mergeRequests: mrs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.patch('/merge_requests/:iid', async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const { projectId, title, description, draft, labels, state_event } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const updated = await gitlabClient.updateMergeRequest(Number(projectId), mrIid, {
+      title,
+      description,
+      draft,
+      labels,
+      state_event
+    });
+    broadcastEvent('merge_request_updated', updated);
+    res.json({ success: true, mergeRequest: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/merge_requests/:iid/approve', async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const { projectId } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const result = await gitlabClient.approveMergeRequest(Number(projectId), mrIid);
+    broadcastEvent('merge_request_updated', { mrIid, approved: true });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/merge_requests/:iid/unapprove', async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const { projectId } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const result = await gitlabClient.unapproveMergeRequest(Number(projectId), mrIid);
+    broadcastEvent('merge_request_updated', { mrIid, approved: false });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/merge_requests/:iid/merge', async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const { projectId, shouldRemoveSourceBranch, squash, squashCommitMessage, commitMessage } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const result = await gitlabClient.mergeMergeRequest(Number(projectId), mrIid, {
+      shouldRemoveSourceBranch,
+      squash,
+      squashCommitMessage,
+      commitMessage
+    });
+    broadcastEvent('merge_request_merged', { mrIid, projectId });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/merge_requests/:iid/notes', async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const projectId = Number(req.query.projectId);
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId query param is required' });
+    }
+    const notes = await gitlabClient.getMergeRequestNotes(projectId, mrIid);
+    res.json({ success: true, notes });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/merge_requests/:iid/notes', async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const { projectId, body, attachment } = req.body;
+    if (!projectId || !body) {
+      return res.status(400).json({ success: false, error: 'projectId and body are required' });
+    }
+    const note = await gitlabClient.createMergeRequestNote(Number(projectId), mrIid, body, attachment);
+    broadcastEvent('mr_note_created', { mrIid, note });
+    res.json({ success: true, note });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Pipelines & Jobs
+apiRouter.get('/pipelines', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
+    const force = req.query.force === 'true';
+    const pipelines = await gitlabClient.getPipelines(projectId, force);
+    res.json({ success: true, pipelines });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/pipelines/:id/jobs', async (req: Request, res: Response) => {
+  try {
+    const pipelineId = Number(req.params.id);
+    const projectId = Number(req.query.projectId);
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId query param is required' });
+    }
+    const jobsData = await gitlabClient.getPipelineJobs(projectId, pipelineId);
+    res.json({ success: true, ...jobsData });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/pipelines/:id/retry', async (req: Request, res: Response) => {
+  try {
+    const pipelineId = Number(req.params.id);
+    const { projectId } = req.body;
+    const result = await gitlabClient.retryPipeline(Number(projectId), pipelineId);
+    broadcastEvent('pipeline_updated', { pipelineId, status: 'running' });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/pipelines/:id/cancel', async (req: Request, res: Response) => {
+  try {
+    const pipelineId = Number(req.params.id);
+    const { projectId } = req.body;
+    const result = await gitlabClient.cancelPipeline(Number(projectId), pipelineId);
+    broadcastEvent('pipeline_updated', { pipelineId, status: 'canceled' });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/jobs/:id/play', async (req: Request, res: Response) => {
+  try {
+    const jobId = Number(req.params.id);
+    const { projectId } = req.body;
+    const result = await gitlabClient.playJob(Number(projectId), jobId);
+    broadcastEvent('job_updated', { jobId, status: 'running' });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. Runners
+apiRouter.get('/runners', async (req: Request, res: Response) => {
+  try {
+    const force = req.query.force === 'true';
+    const runners = await gitlabClient.getRunners(force);
+    res.json({ success: true, runners });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/runners/:id/toggle', async (req: Request, res: Response) => {
+  try {
+    const runnerId = Number(req.params.id);
+    const { paused } = req.body;
+    const result = await gitlabClient.toggleRunner(runnerId, Boolean(paused));
+    broadcastEvent('runner_updated', { runnerId, paused: Boolean(paused) });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/runners/register', async (req: Request, res: Response) => {
+  try {
+    const { description, tagList, runUntagged, locked, projectId } = req.body;
+    if (!description) {
+      return res.status(400).json({ success: false, error: 'description is required' });
+    }
+    const result = await gitlabClient.registerRunner({
+      description,
+      tagList,
+      runUntagged,
+      locked,
+      projectId: projectId ? Number(projectId) : undefined
+    });
+    if (!gitlabClient.isDemo() && result.registrationToken) {
+      vault.addEntry({
+        kind: 'runner',
+        name: description,
+        value: result.registrationToken,
+        meta: { runnerId: result.runner.id, host: gitlabClient.getHost() }
+      });
+    }
+    broadcastEvent('runner_registered', result.runner);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/runners/:id/assign', async (req: Request, res: Response) => {
+  try {
+    const runnerId = Number(req.params.id);
+    const { projectId } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const result = await gitlabClient.assignRunnerToProject(runnerId, Number(projectId));
+    broadcastEvent('runner_updated', { runnerId });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/runners/:id/unassign', async (req: Request, res: Response) => {
+  try {
+    const runnerId = Number(req.params.id);
+    const { projectId } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+    const result = await gitlabClient.unassignRunnerFromProject(runnerId, Number(projectId));
+    broadcastEvent('runner_updated', { runnerId });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/runners/:id', async (req: Request, res: Response) => {
+  try {
+    const runnerId = Number(req.params.id);
+    const result = await gitlabClient.stopRunner(runnerId);
+    broadcastEvent('runner_stopped', { runnerId });
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Labels
+apiRouter.get('/labels', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
+    const force = req.query.force === 'true';
+    const labels = await gitlabClient.getLabels(projectId, force);
+    res.json({ success: true, labels });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/labels', async (req: Request, res: Response) => {
+  try {
+    const { projectId, name, color, description } = req.body;
+    if (!projectId || !name || !color) {
+      return res.status(400).json({ success: false, error: 'projectId, name, and color are required' });
+    }
+    const label = await gitlabClient.createLabel(Number(projectId), { name, color, description });
+    broadcastEvent('label_created', label);
+    res.json({ success: true, label });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 9. API Usage & Cache Metrics
+apiRouter.get('/metrics', (_req: Request, res: Response) => {
+  try {
+    const summary = metricsManager.getSummary();
+    res.json({ success: true, metrics: summary });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/metrics/simulate-hit', (req: Request, res: Response) => {
+  try {
+    const type = req.body.type === 'api' ? 'api' : 'cache';
+    const endpoint = req.body.endpoint || (type === 'api' ? 'GET /projects/sync' : 'GET /projects (cached)');
+    if (type === 'api') {
+      const mockHeaders = new Headers();
+      mockHeaders.set('ratelimit-limit', '2000');
+      const currentRemain = metricsManager.getSummary().rateLimit.remaining;
+      mockHeaders.set('ratelimit-remaining', String(Math.max(0, currentRemain - 1)));
+      metricsManager.recordApiHit(endpoint, 200, Math.floor(Math.random() * 80) + 40, mockHeaders);
+    } else {
+      metricsManager.recordCacheHit(endpoint, Math.random() * 1.5 + 0.3);
+    }
+    const updated = metricsManager.getSummary();
+    broadcastEvent('metrics_updated', updated);
+    res.json({ success: true, metrics: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/metrics/reset', (_req: Request, res: Response) => {
+  try {
+    metricsManager.reset();
+    const updated = metricsManager.getSummary();
+    broadcastEvent('metrics_updated', updated);
+    res.json({ success: true, metrics: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Packages Endpoints
+apiRouter.get('/packages', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
+    const packageType = req.query.packageType ? String(req.query.packageType) : undefined;
+    const force = req.query.force === 'true';
+    const packages = await gitlabClient.getPackages(projectId, packageType, force);
+    res.json({ success: true, packages });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/projects/:projectId/packages/:packageId', async (req: Request, res: Response) => {
+  try {
+    const pkg = await gitlabClient.getPackage(Number(req.params.projectId), Number(req.params.packageId));
+    if (!pkg) return res.status(404).json({ success: false, error: 'Package not found' });
+    res.json({ success: true, package: pkg });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Tags & Releases Endpoints
+apiRouter.get('/projects/:projectId/tags', async (req: Request, res: Response) => {
+  try {
+    const force = req.query.force === 'true';
+    const tags = await gitlabClient.getTags(Number(req.params.projectId), force);
+    res.json({ success: true, tags });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/projects/:projectId/tags', async (req: Request, res: Response) => {
+  try {
+    const { tag_name, ref, message } = req.body;
+    if (!tag_name || !ref) {
+      return res.status(400).json({ success: false, error: 'tag_name and ref are required' });
+    }
+    const tag = await gitlabClient.createTag(Number(req.params.projectId), { tag_name, ref, message });
+    broadcastEvent('tag_created', tag);
+    res.json({ success: true, tag });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/projects/:projectId/releases', async (req: Request, res: Response) => {
+  try {
+    const force = req.query.force === 'true';
+    const releases = await gitlabClient.getReleases(Number(req.params.projectId), force);
+    res.json({ success: true, releases });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/projects/:projectId/releases', async (req: Request, res: Response) => {
+  try {
+    const { tag_name, name, description, ref } = req.body;
+    if (!tag_name || !name) {
+      return res.status(400).json({ success: false, error: 'tag_name and name are required' });
+    }
+    const release = await gitlabClient.createRelease(Number(req.params.projectId), {
+      tag_name,
+      name,
+      description: description || '',
+      ref
+    });
+    broadcastEvent('release_created', release);
+    res.json({ success: true, release });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Job Trace & Runner Jobs Endpoints
+apiRouter.get('/projects/:projectId/jobs/:jobId/trace', async (req: Request, res: Response) => {
+  try {
+    const trace = await gitlabClient.getJobTrace(Number(req.params.projectId), Number(req.params.jobId));
+    res.json({ success: true, trace });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/runners/:runnerId/jobs', async (req: Request, res: Response) => {
+  try {
+    // Only fetched when runner details is requested to save API hits!
+    const jobs = await gitlabClient.getRunnerJobs(Number(req.params.runnerId));
+    res.json({ success: true, jobs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// CI/CD Pipeline Editor & Visualizer Endpoints
+apiRouter.get('/projects/:projectId/ci-config', async (req: Request, res: Response) => {
+  try {
+    const config = await gitlabClient.getCiConfig(Number(req.params.projectId));
+    res.json({ success: true, config });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/projects/:projectId/ci-config', async (req: Request, res: Response) => {
+  try {
+    const { content, commit_message, branch } = req.body;
+    if (!content || !commit_message) {
+      return res.status(400).json({ success: false, error: 'content and commit_message are required' });
+    }
+    const result = await gitlabClient.saveCiConfig(Number(req.params.projectId), { content, commit_message, branch });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/ci-lint', async (req: Request, res: Response) => {
+  try {
+    const { content } = req.body;
+    if (!content) return res.status(400).json({ success: false, error: 'content is required' });
+    const result = await gitlabClient.lintCiConfig(content);
+    res.json({ success: true, lint: result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// CI/CD Variables Endpoints
+apiRouter.get('/variables', async (req: Request, res: Response) => {
+  try {
+    const scope = (req.query.scope as any) || 'project';
+    const id = req.query.id ? Number(req.query.id) : undefined;
+    const variables = await gitlabClient.getVariables(scope, id);
+    res.json({ success: true, variables });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/variables', async (req: Request, res: Response) => {
+  try {
+    const variable = await gitlabClient.saveVariable(req.body);
+    broadcastEvent('variable_saved', variable);
+    res.json({ success: true, variable });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/variables', async (req: Request, res: Response) => {
+  try {
+    const scope = (req.query.scope as any) || 'project';
+    const scope_id = Number(req.query.scope_id || req.body.scope_id);
+    const key = String(req.query.key || req.body.key);
+    await gitlabClient.deleteVariable(scope, scope_id, key);
+    broadcastEvent('variable_deleted', { scope, scope_id, key });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Badges Endpoints
+apiRouter.get('/badges', async (req: Request, res: Response) => {
+  try {
+    const kind = (req.query.kind as any) || 'project';
+    const id = Number(req.query.id || 901);
+    const badges = await gitlabClient.getBadges(kind, id);
+    res.json({ success: true, badges });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/badges', async (req: Request, res: Response) => {
+  try {
+    const badge = await gitlabClient.createBadge(req.body);
+    broadcastEvent('badge_created', badge);
+    res.json({ success: true, badge });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/badges/:badgeId', async (req: Request, res: Response) => {
+  try {
+    const kind = (req.query.kind as any) || 'project';
+    const id = Number(req.query.id || 901);
+    const badgeId = Number(req.params.badgeId);
+    await gitlabClient.deleteBadge(kind, id, badgeId);
+    broadcastEvent('badge_deleted', { badgeId });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/projects/:projectId/badges', async (req: Request, res: Response) => {
+  try {
+    const projectId = Number(req.params.projectId);
+    const badges = await gitlabClient.getBadges('project', projectId);
+    res.json({ success: true, badges });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Badges Pipeline Configurator for tags, develop, main
+apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request, res: Response) => {
+  try {
+    const projectId = Number(req.params.projectId);
+    const {
+      targets = ['tags', 'develop', 'main'],
+      includePipeline = true,
+      includeCoverage = true,
+      includeRelease = true,
+      style = 'flat',
+      replaceExisting = true
+    } = req.body;
+
+    const projects = await gitlabClient.getProjects();
+    const project = projects.find((p) => p.id === projectId) || {
+      name: 'gitlab-orchestrator',
+      path_with_namespace: 'platform/gitlab-orchestrator',
+      web_url: 'https://gitlab.com/platform/gitlab-orchestrator'
+    };
+
+    const projectPath = project.path_with_namespace || 'platform/gitlab-orchestrator';
+    const baseUrl = project.web_url || `https://gitlab.com/${projectPath}`;
+
+    // If replaceExisting, purge current pipeline/coverage/release badges for this project
+    if (replaceExisting) {
+      const existing = await gitlabClient.getBadges('project', projectId);
+      const toRemove = existing.filter((b) =>
+        b.name.toLowerCase().includes('pipeline') ||
+        b.name.toLowerCase().includes('coverage') ||
+        b.name.toLowerCase().includes('release')
+      );
+      for (const b of toRemove) {
+        await gitlabClient.deleteBadge('project', projectId, b.id);
+      }
+    }
+
+    const createdBadges = [];
+    const targetOrder = ['main', 'develop', 'tags'];
+    const activeTargets = targetOrder.filter((t) => targets.includes(t));
+
+    for (const target of activeTargets) {
+      if (target === 'main') {
+        if (includePipeline) {
+          const badge = await gitlabClient.createBadge({
+            name: 'Pipeline: main',
+            link_url: `${baseUrl}/-/commits/main`,
+            image_url: `https://gitlab.com/${projectPath}/badges/main/pipeline.svg?style=${style}`,
+            kind: 'project',
+            project_id: projectId
+          });
+          createdBadges.push(badge);
+        }
+        if (includeCoverage) {
+          const badge = await gitlabClient.createBadge({
+            name: 'Coverage: main',
+            link_url: `${baseUrl}/-/commits/main`,
+            image_url: `https://gitlab.com/${projectPath}/badges/main/coverage.svg?style=${style}`,
+            kind: 'project',
+            project_id: projectId
+          });
+          createdBadges.push(badge);
+        }
+      } else if (target === 'develop') {
+        if (includePipeline) {
+          const badge = await gitlabClient.createBadge({
+            name: 'Pipeline: develop',
+            link_url: `${baseUrl}/-/commits/develop`,
+            image_url: `https://gitlab.com/${projectPath}/badges/develop/pipeline.svg?style=${style}`,
+            kind: 'project',
+            project_id: projectId
+          });
+          createdBadges.push(badge);
+        }
+        if (includeCoverage) {
+          const badge = await gitlabClient.createBadge({
+            name: 'Coverage: develop',
+            link_url: `${baseUrl}/-/commits/develop`,
+            image_url: `https://gitlab.com/${projectPath}/badges/develop/coverage.svg?style=${style}`,
+            kind: 'project',
+            project_id: projectId
+          });
+          createdBadges.push(badge);
+        }
+      } else if (target === 'tags') {
+        if (includePipeline) {
+          const badge = await gitlabClient.createBadge({
+            name: 'Pipeline: tags (release)',
+            link_url: `${baseUrl}/-/releases`,
+            image_url: `https://gitlab.com/${projectPath}/badges/tags/pipeline.svg?style=${style}`,
+            kind: 'project',
+            project_id: projectId
+          });
+          createdBadges.push(badge);
+        }
+        if (includeRelease) {
+          const badge = await gitlabClient.createBadge({
+            name: 'Release: latest',
+            link_url: `${baseUrl}/-/releases`,
+            image_url: `https://img.shields.io/badge/release-v2.4.0-blue.svg?style=${style}`,
+            kind: 'project',
+            project_id: projectId
+          });
+          createdBadges.push(badge);
+        }
+      }
+    }
+
+    broadcastEvent('badges_updated', { projectId, badges: createdBadges });
+    res.json({ success: true, count: createdBadges.length, badges: createdBadges });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Repository Settings & Avatar Endpoints
+apiRouter.put('/projects/:projectId/settings', async (req: Request, res: Response) => {
+  try {
+    const updated = await gitlabClient.updateProjectSettings(Number(req.params.projectId), req.body);
+    broadcastEvent('project_updated', updated);
+    res.json({ success: true, project: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/projects/:projectId/avatar', async (req: Request, res: Response) => {
+  try {
+    const { avatar } = req.body;
+    if (!avatar) return res.status(400).json({ success: false, error: 'avatar is required' });
+    const result = await gitlabClient.updateProjectAvatar(Number(req.params.projectId), avatar);
+    broadcastEvent('project_avatar_updated', { projectId: req.params.projectId, avatar_url: result.avatar_url });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GitLab Pages Endpoints
+apiRouter.get('/projects/:projectId/pages', async (req: Request, res: Response) => {
+  try {
+    const pages = await gitlabClient.getPagesInfo(Number(req.params.projectId));
+    res.json({ success: true, pages });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.patch('/projects/:projectId/pages', async (req: Request, res: Response) => {
+  try {
+    const updated = await gitlabClient.updatePagesSettings(Number(req.params.projectId), req.body);
+    broadcastEvent('pages_updated', updated);
+    res.json({ success: true, pages: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================================
+// AGENT API (Scope: Work Items & Merge Requests)
+// Auth: bearer agent token from the vault, or a browser session (see server/session.ts)
+// ============================================================================
+
+const AGENT_SKILL_MARKDOWN = `# LazyLab AI Agent Integration Skill
+
+## Purpose
+Enables coding agents to create, inspect, and update Work Items (Issues) and Merge Requests through the lazylab REST API.
+
+## Authentication
+Send \`Authorization: Bearer <token>\` with an agent token issued from the lazylab Vault view. The vault must be unlocked (someone logged in since the last restart).
+
+## Content Discipline & Tone Rules
+1. **Zero Slop & Zero Jargon**: Eliminate buzzwords ("supercharge", "leverage", "delight", "cutting-edge"). Write direct, technical English.
+2. **Concise & Direct**: Keep descriptions actionable and easy to scan for human engineers.
+3. **Standard Work Item Structure**:
+   - **Summary**: 1-2 sentences stating the problem or goal.
+   - **What Changed / What's Added**: Bulleted list of code or behavior adjustments.
+   - **Features List**: Explicit bullet points if new features or APIs were introduced.
+   - **Acceptance Criteria**: Concrete checkboxes (- [ ] criterion).
+4. **Standard Merge Request Structure**:
+   - **Title**: Imperative and scoped (e.g. \`[agent-api] Add no-auth work items and merge requests routes\`).
+   - **Overview**: High-level motivation.
+   - **Key Changes**: Itemized list of modifications.
+   - **Verification**: How it was verified.
+
+## Endpoints Summary
+- **GET** \`/api/agent/work-items\` - List work items
+- **GET** \`/api/agent/work-items/:iid\` - Get specific work item & comments
+- **POST** \`/api/agent/work-items\` - Create new work item
+- **PUT / PATCH** \`/api/agent/work-items/:iid\` - Update work item (description, content, labels, assignees, state)
+- **GET** \`/api/agent/merge-requests\` - List merge requests
+- **GET** \`/api/agent/merge-requests/:iid\` - Get specific merge request details
+- **POST** \`/api/agent/merge-requests\` - Create new merge request
+- **PUT / PATCH** \`/api/agent/merge-requests/:iid\` - Update merge request (title, description, labels, state)
+`;
+
+// Helper to determine active project ID
+async function resolveAgentProjectId(requestedId?: any): Promise<number> {
+  if (requestedId) return Number(requestedId);
+  try {
+    const projects = await gitlabClient.getProjects();
+    return projects[0]?.id || 901;
+  } catch {
+    return 901;
+  }
+}
+
+// 1. Agent Skill & Documentation
+apiRouter.get('/agent/skill.md', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.send(AGENT_SKILL_MARKDOWN);
+});
+
+apiRouter.get('/agent/skill', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    skill: 'lazylab-agent-integration',
+    version: '1.0.0',
+    description: 'Instructions and rules for AI agents creating/updating work items and merge requests with zero slop.',
+    rules: [
+      'No slop, no corporate jargon, directly to the point.',
+      'Professional and well-worded technical descriptions.',
+      'Always include What Changed / What is Added.',
+      'Include a Features List whenever new features are added.',
+      'Work items and merge requests must follow clean, imperative titles.'
+    ],
+    markdown_url: '/api/agent/skill.md',
+    endpoints: {
+      work_items: {
+        list: 'GET /api/agent/work-items',
+        get: 'GET /api/agent/work-items/:iid',
+        create: 'POST /api/agent/work-items',
+        update: 'PUT /api/agent/work-items/:iid'
+      },
+      merge_requests: {
+        list: 'GET /api/agent/merge-requests',
+        get: 'GET /api/agent/merge-requests/:iid',
+        create: 'POST /api/agent/merge-requests',
+        update: 'PUT /api/agent/merge-requests/:iid'
+      }
+    }
+  });
+});
+
+apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    service: 'LazyLab AI Agent API',
+    authentication: 'Authorization: Bearer <agent token> (issue tokens in the Vault view)',
+    endpoints: [
+      {
+        method: 'GET',
+        path: '/api/agent/work-items',
+        description: 'List work items (issues)',
+        queryParams: { projectId: 'number (optional)', state: 'opened | closed | all (optional)' }
+      },
+      {
+        method: 'POST',
+        path: '/api/agent/work-items',
+        description: 'Create a new work item with clean description and feature list',
+        body: {
+          title: 'string (required)',
+          description: 'string (optional, Markdown)',
+          projectId: 'number (optional, defaults to primary project)',
+          labels: 'string[] (optional)',
+          assignee_ids: 'number[] (optional)',
+          issue_type: 'issue | incident | task (optional)'
+        }
+      },
+      {
+        method: 'PUT / PATCH',
+        path: '/api/agent/work-items/:iid',
+        description: 'Update work item content, description, labels, assignees, or state',
+        body: {
+          title: 'string (optional)',
+          description: 'string (optional, Markdown)',
+          projectId: 'number (optional)',
+          labels: 'string[] (optional)',
+          assignee_ids: 'number[] (optional)',
+          state_event: 'close | reopen (optional)'
+        }
+      },
+      {
+        method: 'GET',
+        path: '/api/agent/merge-requests',
+        description: 'List merge requests',
+        queryParams: { projectId: 'number (optional)', state: 'opened | closed | merged | all (optional)' }
+      },
+      {
+        method: 'POST',
+        path: '/api/agent/merge-requests',
+        description: 'Create a new merge request with clear title and summary',
+        body: {
+          title: 'string (required)',
+          description: 'string (optional, Markdown)',
+          source_branch: 'string (required)',
+          target_branch: 'string (optional, default main)',
+          projectId: 'number (optional)',
+          labels: 'string[] (optional)',
+          assignee_ids: 'number[] (optional)'
+        }
+      },
+      {
+        method: 'PUT / PATCH',
+        path: '/api/agent/merge-requests/:iid',
+        description: 'Update merge request title, description, labels, draft, or state',
+        body: {
+          title: 'string (optional)',
+          description: 'string (optional, Markdown)',
+          projectId: 'number (optional)',
+          labels: 'string[] (optional)',
+          draft: 'boolean (optional)',
+          state_event: 'close | reopen (optional)'
+        }
+      }
+    ]
+  });
+});
+
+// 2. Work Items: List
+apiRouter.get('/agent/work-items', async (req: Request, res: Response) => {
+  try {
+    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const state = (req.query.state as any) || 'all';
+    const items = await gitlabClient.getWorkItems(projectId, state, true);
+    res.json({
+      success: true,
+      count: items.length,
+      projectId,
+      workItems: items
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Work Items: Get single
+apiRouter.get('/agent/work-items/:iid', async (req: Request, res: Response) => {
+  try {
+    const issueIid = Number(req.params.iid);
+    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const items = await gitlabClient.getWorkItems(projectId, 'all', false);
+    const item = items.find((i) => i.iid === issueIid);
+    if (!item) {
+      return res.status(404).json({ success: false, error: `Work item #${issueIid} not found` });
+    }
+    const notes = await gitlabClient.getWorkItemNotes(projectId, issueIid);
+    res.json({ success: true, workItem: item, notes });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Work Items: Create
+apiRouter.post('/agent/work-items', async (req: Request, res: Response) => {
+  try {
+    const { title, description, issue_type = 'issue', labels = [], assignee_ids = [], weight, milestone_id } = req.body;
+    if (!title) {
+      return res.status(400).json({ success: false, error: 'title is required' });
+    }
+    const projectId = await resolveAgentProjectId(req.body.projectId);
+    const item = await gitlabClient.createWorkItem(projectId, {
+      title,
+      description: description || '',
+      issue_type,
+      labels,
+      assignee_ids,
+      weight,
+      milestone_id
+    });
+    broadcastEvent('work_item_created', item);
+    res.status(201).json({
+      success: true,
+      message: `Work item #${item.iid} successfully created by AI Agent`,
+      workItem: item
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Work Items: Update
+const handleAgentWorkItemUpdate = async (req: Request, res: Response) => {
+  try {
+    const issueIid = Number(req.params.iid);
+    const projectId = await resolveAgentProjectId(req.body.projectId || req.query.projectId);
+    const { title, description, state_event, labels, add_labels, remove_labels, assignee_ids, milestone_id } = req.body;
+
+    const updated = await gitlabClient.updateWorkItem(projectId, issueIid, {
+      title,
+      description,
+      state_event,
+      labels,
+      add_labels,
+      remove_labels,
+      assignee_ids,
+      milestone_id
+    });
+
+    broadcastEvent('work_item_updated', updated);
+    res.json({
+      success: true,
+      message: `Work item #${issueIid} successfully updated by AI Agent`,
+      workItem: updated
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+apiRouter.put('/agent/work-items/:iid', handleAgentWorkItemUpdate);
+apiRouter.patch('/agent/work-items/:iid', handleAgentWorkItemUpdate);
+
+// 3. Merge Requests: List
+apiRouter.get('/agent/merge-requests', async (req: Request, res: Response) => {
+  try {
+    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const state = (req.query.state as any) || 'all';
+    const mrs = await gitlabClient.getMergeRequests(projectId, state, true);
+    res.json({
+      success: true,
+      count: mrs.length,
+      projectId,
+      mergeRequests: mrs
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Merge Requests: Get single
+apiRouter.get('/agent/merge-requests/:iid', async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const mrs = await gitlabClient.getMergeRequests(projectId, 'all', false);
+    const mr = mrs.find((m) => m.iid === mrIid);
+    if (!mr) {
+      return res.status(404).json({ success: false, error: `Merge request !${mrIid} not found` });
+    }
+    const notes = await gitlabClient.getMergeRequestNotes(projectId, mrIid);
+    res.json({ success: true, mergeRequest: mr, notes });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Merge Requests: Create
+apiRouter.post('/agent/merge-requests', async (req: Request, res: Response) => {
+  try {
+    const { title, description, source_branch, target_branch = 'main', labels = [], assignee_ids = [] } = req.body;
+    if (!title || !source_branch) {
+      return res.status(400).json({ success: false, error: 'title and source_branch are required' });
+    }
+    const projectId = await resolveAgentProjectId(req.body.projectId);
+    const mr = await gitlabClient.createMergeRequest(projectId, {
+      title,
+      description: description || '',
+      source_branch,
+      target_branch,
+      labels,
+      assignee_ids
+    });
+    broadcastEvent('merge_request_created', mr);
+    res.status(201).json({
+      success: true,
+      message: `Merge request !${mr.iid} successfully created by AI Agent`,
+      mergeRequest: mr
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Merge Requests: Update
+const handleAgentMergeRequestUpdate = async (req: Request, res: Response) => {
+  try {
+    const mrIid = Number(req.params.iid);
+    const projectId = await resolveAgentProjectId(req.body.projectId || req.query.projectId);
+    const { title, description, labels, draft, state_event } = req.body;
+
+    const updated = await gitlabClient.updateMergeRequest(projectId, mrIid, {
+      title,
+      description,
+      labels,
+      draft,
+      state_event
+    });
+
+    broadcastEvent('merge_request_updated', updated);
+    res.json({
+      success: true,
+      message: `Merge request !${mrIid} successfully updated by AI Agent`,
+      mergeRequest: updated
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+apiRouter.put('/agent/merge-requests/:iid', handleAgentMergeRequestUpdate);
+apiRouter.patch('/agent/merge-requests/:iid', handleAgentMergeRequestUpdate);
+
+
