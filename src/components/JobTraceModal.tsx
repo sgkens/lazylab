@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { FailureExcerpt, JobTrace } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface JobTraceModalProps {
   isOpen: boolean;
@@ -87,7 +88,7 @@ export const JobTraceModal: React.FC<JobTraceModalProps> = ({
         }
       }
     } catch (err) {
-      console.error('Failed to load job trace:', err);
+      reportError('Could not load job trace', err);
     } finally {
       setIsLoading(false);
     }

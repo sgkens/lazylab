@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { GitLabProject, GitLabRelease, GitLabTag } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface ReleasesTagsViewProps {
   projects: GitLabProject[];
@@ -35,7 +36,7 @@ export const ReleasesTagsView: React.FC<ReleasesTagsViewProps> = ({
   selectedProjectId,
   onSelectProject
 }) => {
-  const currentProjectId = selectedProjectId || (projects.length > 0 ? projects[0].id : 901);
+  const currentProjectId = selectedProjectId || (projects[0]?.id || 0);
   const [activeTab, setActiveTab] = useState<'releases' | 'tags'>('releases');
   const [releases, setReleases] = useState<GitLabRelease[]>([]);
   const [tags, setTags] = useState<GitLabTag[]>([]);
@@ -52,6 +53,12 @@ export const ReleasesTagsView: React.FC<ReleasesTagsViewProps> = ({
   const [newRelTag, setNewRelTag] = useState('');
   const [newRelName, setNewRelName] = useState('');
   const [newRelDesc, setNewRelDesc] = useState('');
+  const [newRelRef, setNewRelRef] = useState('');
+  const [notesInfo, setNotesInfo] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
+  const [compare, setCompare] = useState<{ markdown: string; commitCount: number; bump: string | null } | null>(null);
+  const [compareError, setCompareError] = useState<string | null>(null);
 
   // Compare Tags Modal
   const [isCompareOpen, setIsCompareOpen] = useState(false);
@@ -83,7 +90,7 @@ export const ReleasesTagsView: React.FC<ReleasesTagsViewProps> = ({
         }
       }
     } catch (err) {
-      console.error('Failed to load releases/tags:', err);
+      reportError('Could not load releases/tags', err);
     } finally {
       setIsLoading(false);
     }
@@ -100,8 +107,8 @@ export const ReleasesTagsView: React.FC<ReleasesTagsViewProps> = ({
         setNewTagName('');
         setNewTagMessage('');
       }
-    } catch (err) {
-      console.error('Failed to create tag:', err);
+    } catch (err: any) {
+      setFormError(err.message || 'Could not create the tag');
     }
   };
 
@@ -109,10 +116,14 @@ export const ReleasesTagsView: React.FC<ReleasesTagsViewProps> = ({
     e.preventDefault();
     if (!newRelTag.trim() || !newRelName.trim()) return;
     try {
+      setFormError(null);
+      const tagExists = tags.some((t) => t.name === newRelTag.trim());
       const res = await api.createRelease(currentProjectId, {
         tag_name: newRelTag.trim(),
         name: newRelName.trim(),
-        description: newRelDesc.trim()
+        description: newRelDesc.trim(),
+        // GitLab creates the tag from `ref` when it does not exist yet.
+        ref: tagExists ? undefined : newRelRef.trim() || defaultBranch
       });
       if (res.success) {
         setReleases([res.release, ...releases]);
@@ -121,32 +132,52 @@ export const ReleasesTagsView: React.FC<ReleasesTagsViewProps> = ({
         setNewRelName('');
         setNewRelDesc('');
       }
-    } catch (err) {
-      console.error('Failed to create release:', err);
+    } catch (err: any) {
+      setFormError(err.message || 'Could not create the release');
     }
   };
 
-  const handleAutoGenerateReleaseNotes = () => {
-    const tagName = newRelTag.trim() || 'v2.4.1';
-    const notes = `### Highlights & Changes in ${tagName}
-- **SQLite WAL Cache Engine**: Sub-millisecond reads with automatic revalidation daemon.
-- **GitLab Work Items**: Unified Issues, Tasks, and Incident hierarchy.
-- **CI/CD Fleet Hub**: Real-time terminal runner job trace streaming and runner orchestration.
-- **Package Registry**: Read-only explorer for npm, PyPI, Maven, and Docker containers.
+  const defaultBranch = projects.find((p) => p.id === currentProjectId)?.default_branch || 'main';
 
-### Verified Artifacts & Checksums
-All build containers and binaries are signed and published to \`registry.gitlab.com\`.
-
-\`\`\`bash
-# Pull production release
-docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
-\`\`\`
-`;
-    setNewRelDesc(notes);
-    if (!newRelName) {
-      setNewRelName(`Release ${tagName} - Performance & Fleet Hub`);
+  // Notes from the commits since the newest tag, grouped by Conventional Commit type.
+  const handleAutoGenerateReleaseNotes = async () => {
+    const tag = newRelTag.trim();
+    const to = tag && tags.some((t) => t.name === tag) ? tag : newRelRef.trim() || defaultBranch;
+    setIsGeneratingNotes(true);
+    setFormError(null);
+    try {
+      const { notes } = await api.getReleaseNotes(currentProjectId, to);
+      setNewRelDesc(notes.markdown);
+      if (!tag && notes.nextVersion) setNewRelTag(notes.nextVersion);
+      if (!newRelName && (tag || notes.nextVersion)) setNewRelName(tag || notes.nextVersion || '');
+      setNotesInfo(
+        `${notes.commitCount} commits from ${notes.from ?? 'the first commit'} to ${to}` +
+          (notes.bump ? `; suggested bump: ${notes.bump}${notes.nextVersion ? ` (${notes.nextVersion})` : ''}` : '')
+      );
+    } catch (err: any) {
+      setFormError(`Could not read commits: ${err.message}`);
+    } finally {
+      setIsGeneratingNotes(false);
     }
   };
+
+  useEffect(() => {
+    if (!isCompareOpen) return;
+    if (!baseTag && tags[1]) setBaseTag(tags[1].name);
+    if (!headTag && tags[0]) setHeadTag(tags[0].name);
+  }, [isCompareOpen, tags]);
+
+  useEffect(() => {
+    if (!isCompareOpen || !baseTag || !headTag || baseTag === headTag) {
+      setCompare(null);
+      return;
+    }
+    setCompareError(null);
+    api
+      .getReleaseNotes(currentProjectId, headTag, baseTag)
+      .then(({ notes }) => setCompare({ markdown: notes.markdown, commitCount: notes.commitCount, bump: notes.bump }))
+      .catch((err) => setCompareError(err.message));
+  }, [isCompareOpen, baseTag, headTag, currentProjectId]);
 
   const handleCopySha = (sha: string) => {
     navigator.clipboard.writeText(sha);
@@ -243,7 +274,7 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
 
           {activeTab === 'releases' ? (
             <button
-              onClick={() => setIsCreateReleaseOpen(true)}
+              onClick={() => (setFormError(null), setNotesInfo(null), setIsCreateReleaseOpen(true))}
               className="px-3 py-1.5 text-xs font-semibold text-white bg-orange-600 hover:bg-orange-500 rounded-md transition-colors flex items-center gap-1.5 shadow-sm"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -251,7 +282,7 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
             </button>
           ) : (
             <button
-              onClick={() => setIsCreateTagOpen(true)}
+              onClick={() => (setFormError(null), setIsCreateTagOpen(true))}
               className="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-md transition-colors flex items-center gap-1.5 shadow-sm"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -470,7 +501,7 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
                                 onClick={() => {
                                   setNewRelTag(t.name);
                                   setNewRelName(`Release ${t.name}`);
-                                  setIsCreateReleaseOpen(true);
+                                  (setFormError(null), setNotesInfo(null), setIsCreateReleaseOpen(true));
                                 }}
                                 className="text-zinc-500 hover:text-orange-400 text-[11px] underline"
                               >
@@ -553,9 +584,20 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
               <div className="bg-zinc-900/80 p-3 rounded-lg border border-zinc-800 text-zinc-400 space-y-1">
                 <div className="text-white font-bold">Comparison Diff Range:</div>
                 <div className="text-orange-400 font-bold">{baseTag}...{headTag}</div>
-                <div className="text-[11px] text-zinc-500 pt-1">
-                  Includes 4 commits, 3 merge requests, and updated WAL cache optimizations.
-                </div>
+                {compareError ? (
+                  <div className="text-[11px] text-rose-300 pt-1">{compareError}</div>
+                ) : baseTag === headTag ? (
+                  <div className="text-[11px] text-zinc-500 pt-1">Pick two different tags.</div>
+                ) : !compare ? (
+                  <div className="text-[11px] text-zinc-500 pt-1">Reading commits…</div>
+                ) : (
+                  <>
+                    <div className="text-[11px] text-zinc-400 pt-1">
+                      {compare.commitCount} commits{compare.bump ? `; Conventional Commits imply a ${compare.bump} bump` : ''}
+                    </div>
+                    <pre className="text-[11px] text-zinc-300 whitespace-pre-wrap max-h-64 overflow-y-auto pt-2">{compare.markdown}</pre>
+                  </>
+                )}
               </div>
             </div>
 
@@ -625,6 +667,7 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
                 />
               </div>
             </div>
+            {formError && <p className="px-6 pb-3 text-[11px] text-rose-300 font-mono">{formError}</p>}
             <div className="px-6 py-3 bg-zinc-900 border-t border-zinc-800 flex justify-end gap-2">
               <button
                 type="button"
@@ -673,9 +716,27 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
                   placeholder="e.g. v2.4.1"
                   value={newRelTag}
                   onChange={(e) => setNewRelTag(e.target.value)}
+                  list="release-tag-options"
                   className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-md text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500"
                 />
+                <datalist id="release-tag-options">
+                  {tags.map((t) => (
+                    <option key={t.name} value={t.name} />
+                  ))}
+                </datalist>
               </div>
+              {newRelTag.trim() && !tags.some((t) => t.name === newRelTag.trim()) && (
+                <div>
+                  <label className="block font-semibold text-zinc-300 mb-1">Create the tag from</label>
+                  <input
+                    type="text"
+                    placeholder={defaultBranch}
+                    value={newRelRef}
+                    onChange={(e) => setNewRelRef(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-md text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+              )}
               <div>
                 <label className="block font-semibold text-zinc-300 mb-1">Release Title *</label>
                 <input
@@ -696,7 +757,7 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
                     className="text-xs text-orange-400 hover:text-orange-300 flex items-center gap-1 font-bold"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Auto-Generate Notes</span>
+                    <span>{isGeneratingNotes ? 'Reading commits…' : 'Generate from commits'}</span>
                   </button>
                 </div>
                 <textarea
@@ -706,7 +767,9 @@ docker pull registry.gitlab.com/platform/gitlab-orchestrator/app:${tagName}
                   onChange={(e) => setNewRelDesc(e.target.value)}
                   className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-md text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 leading-5"
                 />
+                {notesInfo && <p className="mt-1 text-[11px] text-zinc-500">{notesInfo}</p>}
               </div>
+              {formError && <p className="text-[11px] text-rose-300">{formError}</p>}
             </div>
             <div className="px-6 py-3 bg-zinc-900 border-t border-zinc-800 flex justify-end gap-2">
               <button

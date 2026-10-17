@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Bold, Italic, Code, ListChecks, Heading2, Link2, Image, Eye, Edit3, Paperclip } from 'lucide-react';
 import { renderMarkdownToHtml } from '../utils/markdown';
+import { api } from '../services/api';
 
 interface MarkdownEditorProps {
   value: string;
@@ -9,6 +10,8 @@ interface MarkdownEditorProps {
   minHeight?: string;
   allowAttachments?: boolean;
   onAttachmentDropped?: (file: File) => void;
+  /** Project the attachment is uploaded to. Without it the attach controls are hidden. */
+  projectId?: number | null;
 }
 
 export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
@@ -16,9 +19,13 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   onChange,
   placeholder = 'Write in markdown...',
   minHeight = '140px',
-  allowAttachments = true,
-  onAttachmentDropped
+  allowAttachments: allowAttachmentsProp = true,
+  onAttachmentDropped,
+  projectId
 }) => {
+  const allowAttachments = allowAttachmentsProp && Boolean(projectId);
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'write' | 'preview'>('write');
   const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -53,17 +60,19 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     }
   };
 
-  const handleFileUpload = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const isImg = file.type.startsWith('image/');
-      const snippet = isImg
-        ? `\n![${file.name}](${result})\n`
-        : `\n[📎 ${file.name}](${result})\n`;
-      onChange(value + snippet);
-    };
-    reader.readAsDataURL(file);
+  // Uploads to GitLab (POST /projects/:id/uploads) and inserts the markdown GitLab returns.
+  const handleFileUpload = async (file: File) => {
+    if (!projectId) return;
+    setUploading(file.name);
+    setUploadError(null);
+    try {
+      const res = await api.uploadFile(projectId, file);
+      onChange(`${value}${value && !value.endsWith('\n') ? '\n' : ''}${res.markdown}\n`);
+    } catch (err: any) {
+      setUploadError(`${file.name}: ${err.message}`);
+    } finally {
+      setUploading(null);
+    }
   };
 
   const renderHtml = () => {
@@ -153,6 +162,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   if (e.target.files && e.target.files[0]) {
                     handleFileUpload(e.target.files[0]);
                   }
+                  e.target.value = '';
                 }}
               />
             </label>
@@ -208,7 +218,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
       {allowAttachments && (
         <div className="px-3 py-1 bg-zinc-950/40 border-t border-zinc-800/80 text-[10px] text-zinc-500 font-mono flex items-center justify-between">
-          <span>Drop files or screenshots here to attach</span>
+          <span className={uploadError ? 'text-rose-300' : uploading ? 'text-orange-300' : ''}>
+            {uploadError ? `Upload failed: ${uploadError}` : uploading ? `Uploading ${uploading}…` : 'Drop a file or screenshot to upload it to GitLab (10 MB max)'}
+          </span>
           <span>Markdown supported</span>
         </div>
       )}

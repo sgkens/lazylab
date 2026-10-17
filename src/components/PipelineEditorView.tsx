@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { CiConfig, CiLintResult, GitLabProject } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface PipelineEditorViewProps {
   projects: GitLabProject[];
@@ -273,7 +274,7 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
   selectedProjectId,
   onSelectProject
 }) => {
-  const currentProjectId = selectedProjectId || (projects.length > 0 ? projects[0].id : 901);
+  const currentProjectId = selectedProjectId || projects[0]?.id || 0;
   const [originalContent, setOriginalContent] = useState('');
   const [content, setContent] = useState('');
   const [branch, setBranch] = useState('main');
@@ -288,37 +289,57 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
   const [selectedJob, setSelectedJob] = useState<string | null>(null);
   const [isSnippetMenuOpen, setIsSnippetMenuOpen] = useState(false);
   const [formatSuccess, setFormatSuccess] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [fileMissing, setFileMissing] = useState(false);
+  const [lastCommit, setLastCommit] = useState<string | null>(null);
 
   useEffect(() => {
-    loadCiConfig();
+    if (currentProjectId) loadCiConfig();
   }, [currentProjectId]);
 
-  const loadCiConfig = async () => {
+  // GitLab's linter (includes, extends, rules) runs once typing pauses; the local check runs per keystroke.
+  useEffect(() => {
+    if (!currentProjectId || !content.trim()) return;
+    const timer = setTimeout(() => lintContent(content, true), 1500);
+    return () => clearTimeout(timer);
+  }, [content, currentProjectId]);
+
+  const loadCiConfig = async (ref?: string) => {
     try {
       setIsLoading(true);
-      const res = await api.getCiConfig(currentProjectId);
+      setLoadError(null);
+      const res = await api.getCiConfig(currentProjectId, ref);
       if (res.success) {
         setOriginalContent(res.config.content);
         setContent(res.config.content);
         setBranch(res.config.branch || 'main');
+        setFileMissing(Boolean(res.config.missing));
         lintContent(res.config.content);
       }
-    } catch (err) {
-      console.error('Failed to load CI config:', err);
+    } catch (err: any) {
+      setLoadError(err.message || 'Could not read .gitlab-ci.yml');
+      setOriginalContent('');
+      setContent('');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const lintContent = async (yamlText: string) => {
+  const lintContent = async (yamlText: string, remote = false) => {
+    if (!yamlText.trim()) {
+      setLintResult(null);
+      return;
+    }
     try {
       setIsLinting(true);
-      const res = await api.lintCiConfig(yamlText);
+      const res = await api.lintCiConfig(yamlText, currentProjectId, remote);
       if (res.success) {
         setLintResult(res.lint);
       }
     } catch (err) {
-      console.error('Lint error:', err);
+      // Lint runs per keystroke; a failure leaves the last result in place rather than spamming toasts.
+      void err;
     } finally {
       setIsLinting(false);
     }
@@ -357,7 +378,7 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
       setFormatSuccess(true);
       setTimeout(() => setFormatSuccess(false), 2000);
     } catch (err) {
-      console.error('Format YAML failed:', err);
+      reportError('Could not format YAML', err);
     }
   };
 
@@ -366,19 +387,19 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
     if (!content.trim() || !commitMessage.trim()) return;
     try {
       setIsSaving(true);
-      const res = await api.saveCiConfig(currentProjectId, content, commitMessage, branch);
+      setSaveError(null);
+      // GitLab starts a pipeline for every push; "[skip ci]" is how a commit opts out.
+      const message = triggerPipelineOnCommit || /\[(skip ci|ci skip)\]/i.test(commitMessage) ? commitMessage : `${commitMessage} [skip ci]`;
+      const res = await api.saveCiConfig(currentProjectId, content, message, branch);
       if (res.success) {
         setOriginalContent(content);
+        setFileMissing(false);
+        setLastCommit(res.commit_id ? res.commit_id.slice(0, 8) : null);
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
-
-        if (triggerPipelineOnCommit) {
-          // Trigger test pipeline
-          await api.retryPipeline(30101, currentProjectId);
-        }
       }
-    } catch (err) {
-      console.error('Failed to save CI config:', err);
+    } catch (err: any) {
+      setSaveError(err.message || 'Commit failed');
     } finally {
       setIsSaving(false);
     }
@@ -490,14 +511,14 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
         <div className="flex items-center gap-2">
           {/* Lint Status Badge */}
           <button
-            onClick={() => lintContent(content)}
+            onClick={() => lintContent(content, true)}
             className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 font-mono text-xs hover:bg-zinc-800 transition-colors"
-            title="Re-run GitLab CI YAML lint"
+            title={lintResult?.source === 'gitlab' ? 'Checked by GitLab CI lint. Click to re-run.' : 'Local check only. Click to run GitLab CI lint.'}
           >
             {lintResult?.valid ? (
               <>
                 <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400 font-semibold">Valid CI</span>
+                <span className="text-emerald-400 font-semibold">Valid{lintResult.source === 'gitlab' ? ' (GitLab)' : ' (local)'}</span>
               </>
             ) : (
               <>
@@ -545,6 +566,23 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
           </div>
         </div>
       </div>
+
+      {(loadError || saveError || fileMissing || lastCommit) && (
+        <div
+          className={`px-6 py-2 text-xs border-b ${
+            loadError || saveError ? 'bg-rose-950/40 border-rose-900 text-rose-200' : 'bg-zinc-900/60 border-zinc-800 text-zinc-300'
+          }`}
+        >
+          {loadError && <span>Could not read .gitlab-ci.yml: {loadError}</span>}
+          {saveError && <span>Commit failed: {saveError}</span>}
+          {!loadError && !saveError && fileMissing && <span>{branch} has no .gitlab-ci.yml yet. Committing creates it.</span>}
+          {!loadError && !saveError && !fileMissing && lastCommit && (
+            <span>
+              Committed {lastCommit} to {branch}.
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Main Workspace (Split / Editor / DAG Graph / Diff) */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -634,9 +672,17 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
                   type="text"
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
-                  className="bg-transparent text-zinc-200 w-16 focus:outline-none"
-                  title="Target Branch"
+                  className="bg-transparent text-zinc-200 w-24 focus:outline-none"
+                  title="Branch to commit to; a new branch is created from the default branch"
                 />
+                <button
+                  type="button"
+                  onClick={() => loadCiConfig(branch)}
+                  className="text-zinc-500 hover:text-zinc-200"
+                  title="Load .gitlab-ci.yml from this branch (discards unsaved edits)"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
               </div>
 
               <input
@@ -654,7 +700,7 @@ export const PipelineEditorView: React.FC<PipelineEditorViewProps> = ({
                   onChange={(e) => setTriggerPipelineOnCommit(e.target.checked)}
                   className="rounded bg-zinc-950 border-zinc-800 text-orange-600 focus:ring-0"
                 />
-                <span className="hidden xl:inline">Trigger pipeline</span>
+                <span className="hidden xl:inline" title="Unchecked adds [skip ci] to the commit message">Run pipeline</span>
               </label>
 
               <button

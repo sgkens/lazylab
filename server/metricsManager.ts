@@ -33,12 +33,13 @@ export interface MetricsSummary {
 }
 
 class MetricsManager {
-  private totalApiHits = 142; // starting sensible default for demo visualization
-  private totalCacheHits = 488; // sensible default showing WAL cache efficiency
+  private totalApiHits = 0;
+  private totalCacheHits = 0;
+  // GitLab.com's authenticated default until the first response carries RateLimit-* headers.
   private rateLimit: GitLabRateLimitInfo = {
     limit: 2000,
-    remaining: 1858,
-    observed: 142,
+    remaining: 2000,
+    observed: 0,
     resetAt: Date.now() + 45 * 1000,
     resetSeconds: 45,
     lastUpdated: Date.now()
@@ -52,38 +53,22 @@ class MetricsManager {
     this.initBuckets();
   }
 
+  /** Empty one-minute buckets so the chart has a time axis before any traffic. */
   private initBuckets() {
     const now = Date.now();
     for (let i = this.maxBuckets - 1; i >= 0; i--) {
       const time = now - i * 60 * 1000;
       const date = new Date(time);
       const label = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-      
-      // Seed realistic data for the graph
-      const apiHits = Math.floor(Math.random() * 8) + 1;
-      const cacheHits = Math.floor(Math.random() * 25) + 10;
-      const observed = 100 + (30 - i) * 3;
-      const remaining = Math.max(0, 2000 - observed);
-      const usagePercent = Math.min(100, (observed / 2000) * 100);
-
       this.buckets.push({
         timestamp: time,
         label,
-        apiHits,
-        cacheHits,
-        rateLimitRemaining: remaining,
-        usagePercent: Number(usagePercent.toFixed(1))
+        apiHits: 0,
+        cacheHits: 0,
+        rateLimitRemaining: this.rateLimit.remaining,
+        usagePercent: Number(((this.rateLimit.observed / this.rateLimit.limit) * 100).toFixed(1))
       });
     }
-
-    // Seed recent calls
-    this.recentCalls = [
-      { id: 'c-1', endpoint: 'GET /projects', type: 'cache_hit', status: 200, durationMs: 1.2, timestamp: now - 3500 },
-      { id: 'c-2', endpoint: 'GET /projects/901/issues', type: 'cache_hit', status: 200, durationMs: 0.8, timestamp: now - 8200 },
-      { id: 'c-3', endpoint: 'GET /projects/901/pipelines', type: 'api_call', status: 200, durationMs: 145.4, timestamp: now - 15000 },
-      { id: 'c-4', endpoint: 'GET /runners', type: 'cache_hit', status: 200, durationMs: 1.1, timestamp: now - 22000 },
-      { id: 'c-5', endpoint: 'GET /milestones', type: 'cache_hit', status: 200, durationMs: 0.9, timestamp: now - 31000 }
-    ];
   }
 
   private getCurrentBucket(): ApiMetricBucket {

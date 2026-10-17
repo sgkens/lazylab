@@ -15,6 +15,8 @@ export interface GitLabProject {
   name_with_namespace: string;
   path: string;
   path_with_namespace: string;
+  /** Present in list responses (`simple=true`); `kind` is "group" or "user". */
+  namespace?: { id: number; name: string; path: string; kind: 'group' | 'user'; full_path: string };
   default_branch: string;
   visibility: 'private' | 'internal' | 'public';
   web_url: string;
@@ -407,6 +409,8 @@ export interface CiConfig {
   content: string;
   branch: string;
   updated_at?: string;
+  last_commit_id?: string;
+  missing?: boolean;
 }
 
 export interface CiLintResult {
@@ -423,6 +427,7 @@ export interface CiLintResult {
     when?: string;
     allow_failure?: boolean;
   }[];
+  source?: 'gitlab' | 'local';
 }
 
 // 5. CI/CD Variables

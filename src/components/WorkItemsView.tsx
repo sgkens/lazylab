@@ -36,6 +36,7 @@ import {
 } from '../types/gitlab';
 import { MarkdownEditor } from './MarkdownEditor';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 interface WorkItemsViewProps {
   workItems: GitLabWorkItem[];
@@ -78,6 +79,7 @@ export const WorkItemsView: React.FC<WorkItemsViewProps> = ({
   const [notes, setNotes] = useState<GitLabNote[]>([]);
   const [newCommentBody, setNewCommentBody] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
 
   // Fetch comments when selected item changes
@@ -87,7 +89,7 @@ export const WorkItemsView: React.FC<WorkItemsViewProps> = ({
         .then((res) => {
           if (res.success) setNotes(res.notes);
         })
-        .catch((err) => console.error('Failed fetching notes:', err));
+        .catch((err) => reportError('Could not load comments', err));
     } else {
       setNotes([]);
       setNewCommentBody('');
@@ -97,6 +99,7 @@ export const WorkItemsView: React.FC<WorkItemsViewProps> = ({
   const handleSendComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedItem || !newCommentBody.trim()) return;
+    setCommentError(null);
 
     setIsSubmittingComment(true);
     try {
@@ -105,8 +108,8 @@ export const WorkItemsView: React.FC<WorkItemsViewProps> = ({
         setNotes((prev) => [...prev, res.note]);
         setNewCommentBody('');
       }
-    } catch (err) {
-      console.error('Failed to post comment:', err);
+    } catch (err: any) {
+      setCommentError(err.message || 'Comment failed');
     } finally {
       setIsSubmittingComment(false);
     }
@@ -689,6 +692,23 @@ export const WorkItemsView: React.FC<WorkItemsViewProps> = ({
                     </button>
                   </span>
                 ))}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) onUpdateLabels(selectedItem.iid, selectedItem.project_id, selectedItem.labels, e.target.value, false);
+                  }}
+                  className="bg-zinc-900 border border-zinc-800 text-zinc-400 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-orange-500"
+                  aria-label="Add label"
+                >
+                  <option value="">+ label</option>
+                  {labels
+                    .filter((l) => !selectedItem.labels.includes(l.name))
+                    .map((l) => (
+                      <option key={l.id} value={l.name}>
+                        {l.name}
+                      </option>
+                    ))}
+                </select>
               </div>
             </div>
 
@@ -745,13 +765,15 @@ export const WorkItemsView: React.FC<WorkItemsViewProps> = ({
               {/* Markdown Editor for Comment */}
               <form onSubmit={handleSendComment} className="space-y-2">
                 <MarkdownEditor
+                  projectId={selectedItem.project_id}
                   value={newCommentBody}
                   onChange={setNewCommentBody}
                   placeholder="Leave a comment or drop screenshot here..."
                   minHeight="80px"
                   allowAttachments={true}
                 />
-                <div className="flex items-center justify-end">
+                <div className="flex items-center justify-end gap-3">
+                  {commentError && <span className="text-[11px] text-rose-300 mr-auto">{commentError}</span>}
                   <button
                     type="submit"
                     disabled={isSubmittingComment || !newCommentBody.trim()}

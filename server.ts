@@ -36,7 +36,8 @@ async function startServer() {
   app.disable('x-powered-by');
   app.set('trust proxy', trustProxy);
   app.use(securityHeaders);
-  app.use(express.json());
+  // Project avatars travel as base64 JSON (GitLab caps them at 200 KB).
+  app.use(express.json({ limit: '1mb' }));
 
   app.use('/api/session', sessionRouter);
   app.use('/api', apiGuard);

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { GitLabProject, GitLabBadge } from '../types/gitlab';
 import { api } from '../services/api';
+import { reportError } from '../utils/reportError';
 
 export interface BadgePipelineModalProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
   onBadgesUpdated,
   onShowToast
 }) => {
-  const [projectId, setProjectId] = useState<number>(initialProjectId || projects[0]?.id || 901);
+  const [projectId, setProjectId] = useState<number>(initialProjectId || projects[0]?.id || 0);
   const [selectedTargets, setSelectedTargets] = useState<{
     main: boolean;
     develop: boolean;
@@ -59,8 +60,8 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
   if (!isOpen) return null;
 
   const currentProject = projects.find((p) => p.id === projectId) || projects[0];
-  const projectPath = currentProject?.path_with_namespace || 'platform/gitlab-orchestrator';
-  const baseUrl = currentProject?.web_url || `https://gitlab.com/${projectPath}`;
+  // Badges are served by the project's own GitLab instance.
+  const baseUrl = (currentProject?.web_url || '').replace(/\/+$/, '');
 
   const toggleTarget = (target: 'main' | 'develop' | 'tags') => {
     setSelectedTargets((prev) => ({
@@ -75,7 +76,6 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
     title: string;
     type: 'pipeline' | 'coverage' | 'release';
     imageUrl: string;
-    renderedPreviewUrl: string;
     linkUrl: string;
   }
 
@@ -87,8 +87,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         target: 'main',
         title: 'Pipeline Status: main',
         type: 'pipeline',
-        imageUrl: `https://gitlab.com/${projectPath}/badges/main/pipeline.svg?style=${badgeStyle}`,
-        renderedPreviewUrl: `https://img.shields.io/badge/pipeline%20(main)-passed-brightgreen.svg?style=${badgeStyle}`,
+        imageUrl: `${baseUrl}/badges/main/pipeline.svg?style=${badgeStyle}`,
         linkUrl: `${baseUrl}/-/commits/main`
       });
     }
@@ -97,8 +96,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         target: 'main',
         title: 'Coverage: main',
         type: 'coverage',
-        imageUrl: `https://gitlab.com/${projectPath}/badges/main/coverage.svg?style=${badgeStyle}`,
-        renderedPreviewUrl: `https://img.shields.io/badge/coverage%20(main)-96.8%25-brightgreen.svg?style=${badgeStyle}`,
+        imageUrl: `${baseUrl}/badges/main/coverage.svg?style=${badgeStyle}`,
         linkUrl: `${baseUrl}/-/commits/main`
       });
     }
@@ -110,8 +108,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         target: 'develop',
         title: 'Pipeline Status: develop',
         type: 'pipeline',
-        imageUrl: `https://gitlab.com/${projectPath}/badges/develop/pipeline.svg?style=${badgeStyle}`,
-        renderedPreviewUrl: `https://img.shields.io/badge/pipeline%20(develop)-running-blue.svg?style=${badgeStyle}`,
+        imageUrl: `${baseUrl}/badges/develop/pipeline.svg?style=${badgeStyle}`,
         linkUrl: `${baseUrl}/-/commits/develop`
       });
     }
@@ -120,8 +117,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         target: 'develop',
         title: 'Coverage: develop',
         type: 'coverage',
-        imageUrl: `https://gitlab.com/${projectPath}/badges/develop/coverage.svg?style=${badgeStyle}`,
-        renderedPreviewUrl: `https://img.shields.io/badge/coverage%20(develop)-94.2%25-brightgreen.svg?style=${badgeStyle}`,
+        imageUrl: `${baseUrl}/badges/develop/coverage.svg?style=${badgeStyle}`,
         linkUrl: `${baseUrl}/-/commits/develop`
       });
     }
@@ -133,8 +129,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         target: 'tags',
         title: 'Pipeline Status: tags',
         type: 'pipeline',
-        imageUrl: `https://gitlab.com/${projectPath}/badges/tags/pipeline.svg?style=${badgeStyle}`,
-        renderedPreviewUrl: `https://img.shields.io/badge/pipeline%20(tags)-passed-brightgreen.svg?style=${badgeStyle}`,
+        imageUrl: `${baseUrl}/badges/tags/pipeline.svg?style=${badgeStyle}`,
         linkUrl: `${baseUrl}/-/releases`
       });
     }
@@ -143,8 +138,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         target: 'tags',
         title: 'Release Version: tags',
         type: 'release',
-        imageUrl: `https://img.shields.io/badge/release-v2.4.0-blue.svg?style=${badgeStyle}`,
-        renderedPreviewUrl: `https://img.shields.io/badge/release%20(tags)-v2.4.0-blue.svg?style=${badgeStyle}`,
+        imageUrl: `${baseUrl}/-/badges/release.svg`,
         linkUrl: `${baseUrl}/-/releases`
       });
     }
@@ -157,7 +151,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
     if (selectedTargets.tags) activeTargets.push('tags');
 
     if (activeTargets.length === 0) {
-      alert('Please select at least one branch/tag target.');
+      reportError('Badges', new Error('select at least one branch or tag'));
       return;
     }
 
@@ -184,8 +178,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
         }, 1200);
       }
     } catch (err: any) {
-      console.error('Failed to configure pipeline badges:', err);
-      alert(err.message || 'Failed to apply pipeline badges.');
+      reportError('Could not apply pipeline badges', err);
     } finally {
       setIsApplying(false);
     }
@@ -194,7 +187,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
   const generateMarkdownSnippet = () => {
     if (previewItems.length === 0) return '';
     return previewItems
-      .map((item) => `[![${item.title}](${item.renderedPreviewUrl})](${item.linkUrl})`)
+      .map((item) => `[![${item.title}](${item.imageUrl})](${item.linkUrl})`)
       .join('\n');
   };
 
@@ -465,7 +458,7 @@ export const BadgePipelineModal: React.FC<BadgePipelineModalProps> = ({
                     <div className="flex items-center gap-2 shrink-0">
                       <div className="bg-black/60 px-2 py-1 rounded border border-zinc-800 flex items-center">
                         <img
-                          src={item.renderedPreviewUrl}
+                          src={item.imageUrl}
                           alt={item.title}
                           className="h-5"
                           onError={(e: any) => {
