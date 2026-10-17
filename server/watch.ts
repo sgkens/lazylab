@@ -13,7 +13,8 @@
  */
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { GitLabClient, GitLabRunner } from './gitlabClient.js';
+import { GitLabClient, GitLabRunner, JobFailure } from './gitlabClient.js';
+import { summarizeFailure } from './triage.js';
 import { Inbox } from './inbox.js';
 import { channelAccepts, deliver, LazyNotification, NotifyLevel } from './notify.js';
 import { vault, WatchRecord } from './vault.js';
@@ -235,9 +236,42 @@ class WatchManager extends EventEmitter {
     }
     const { events, done } = evaluateWatch(w, prev, cur);
     this.snapshots.set(w.id, { ...cur, checkedAt: Date.now() });
-    for (const e of events) this.notify({ ...e, url: w.web_url, source: 'watch' });
+    for (const e of events) {
+      const triage = e.level === 'failure' ? await this.failureDetail(w, cur) : null;
+      this.notify({
+        ...e,
+        body: triage ? `${e.body}\n${triage.summary}` : e.body,
+        url: w.web_url,
+        source: 'watch',
+        failedJob: triage?.failedJob
+      });
+    }
     if (done) this.removeWatch(w.id);
     else if (!prev || prev.status !== cur.status) this.emit('watches-changed');
+  }
+
+  /** The failing job's error line, so a failure notification says why without opening the log. */
+  private async failureDetail(
+    w: WatchRecord,
+    cur: Snapshot
+  ): Promise<{ summary: string; failedJob: LazyNotification['failedJob'] } | null> {
+    if (!this.getClient) return null;
+    const client = this.getClient();
+    try {
+      let failures: JobFailure[] = [];
+      if (w.kind === 'job') failures = [await client.getJobFailure(w.project_id, w.target_id)];
+      else if (w.kind === 'pipeline') failures = await client.getPipelineFailures(w.project_id, w.target_id);
+      else if (cur.pipelineId) failures = await client.getPipelineFailures(w.project_id, cur.pipelineId);
+      const first = failures[0];
+      if (!first) return null;
+      const more = failures.length > 1 ? ` (+${failures.length - 1} more failed)` : '';
+      return {
+        summary: summarizeFailure(first.job_name, first.excerpt) + more,
+        failedJob: { projectId: first.project_id, jobId: first.job_id, name: first.job_name }
+      };
+    } catch {
+      return null;
+    }
   }
 
   async pollAll() {
