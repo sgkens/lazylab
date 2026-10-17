@@ -146,10 +146,16 @@ class CacheDb {
     }
   }
 
-  get<T = any>(key: string): { data: T; etag?: string; updatedAt: number } | null {
+  /**
+   * Returns a cached entry, or null when it is missing or past its TTL.
+   * Expired entries are kept so `allowStale` callers can still serve them (e.g. GitLab unreachable).
+   */
+  get<T = any>(key: string, opts: { allowStale?: boolean } = {}): { data: T; etag?: string; updatedAt: number; stale: boolean } | null {
     const entry = this.memCache.get(key);
     if (!entry) return null;
-    return { data: entry.data as T, etag: entry.etag, updatedAt: entry.updatedAt };
+    const stale = entry.expiresAt <= Date.now();
+    if (stale && !opts.allowStale) return null;
+    return { data: entry.data as T, etag: entry.etag, updatedAt: entry.updatedAt, stale };
   }
 
   set<T = any>(key: string, category: string, projectId: string | null, data: T, etag?: string, ttlMs: number = 300000) {
