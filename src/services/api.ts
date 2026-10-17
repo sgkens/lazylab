@@ -96,20 +96,6 @@ export const api = {
   getInbox: (force = false) =>
     request<{ success: boolean; inbox: Inbox }>(`/inbox${force ? '?force=true' : ''}`),
 
-  verifyToken: (host: string, token: string) =>
-    request<{ success: boolean; user: any }>('/auth/verify', {
-      method: 'POST',
-      body: JSON.stringify({ host, token })
-    }),
-
-  saveAuth: (host: string, token: string) =>
-    request<{ success: boolean; host: string; isDemo: boolean; user: any }>('/auth/save', {
-      method: 'POST',
-      body: JSON.stringify({ host, token })
-    }),
-
-  clearAuth: () => request<{ success: boolean; isDemo: boolean }>('/auth/clear', { method: 'POST' }),
-
   updateAutoFetch: (intervalSec: number) =>
     request<{ success: boolean; autoFetchIntervalSec: number }>('/config/autofetch', {
       method: 'POST',

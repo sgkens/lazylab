@@ -150,51 +150,6 @@ apiRouter.get('/status', async (_req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/auth/verify', async (req: Request, res: Response) => {
-  try {
-    const { host, token } = req.body;
-    if (!token) {
-      return res.status(400).json({ success: false, error: 'Token is required' });
-    }
-    const testClient = new GitLabClient(host || 'https://gitlab.com', token);
-    const user = await testClient.getCurrentUser();
-    res.json({ success: true, user });
-  } catch (err: any) {
-    res.status(401).json({ success: false, error: err.message });
-  }
-});
-
-// Saves host+token as a vault profile (updating the profile for the same host if one exists) and activates it.
-apiRouter.post('/auth/save', async (req: Request, res: Response) => {
-  try {
-    const { host, token } = req.body;
-    const cleanHost = (host || 'https://gitlab.com').replace(/\/+$/, '');
-    const cleanToken = typeof token === 'string' ? token.trim() : '';
-    if (!cleanToken) {
-      return res.status(400).json({ success: false, error: 'Token is required' });
-    }
-
-    const user = await new GitLabClient(cleanHost, cleanToken).getCurrentUser();
-    const existing = vault.listProfiles().find((p) => p.host === cleanHost);
-    const profile = vault.upsertProfile({ id: existing?.id, name: existing?.name || new URL(cleanHost).host, host: cleanHost, token: cleanToken });
-    vault.setActiveProfile(profile.id);
-
-    res.json({ success: true, host: cleanHost, isDemo: false, user });
-  } catch (err: any) {
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
-
-// Deactivates the current profile (demo mode). Stored profiles are kept in the vault.
-apiRouter.post('/auth/clear', async (_req: Request, res: Response) => {
-  try {
-    vault.setActiveProfile(null);
-    res.json({ success: true, isDemo: true });
-  } catch (err: any) {
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
-
 apiRouter.post('/config/autofetch', (req: Request, res: Response) => {
   const { intervalSec } = req.body;
   autoFetchIntervalSec = Number(intervalSec) || 0;

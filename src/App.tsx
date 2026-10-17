@@ -1052,6 +1052,11 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         onClose={() => setIsSettingsOpen(false)}
         status={status}
         onStatusUpdated={() => loadInitialData(true)}
+        onOpenProfiles={() => {
+          setIsSettingsOpen(false);
+          setVaultSection('profiles');
+          setActiveTab('vault');
+        }}
       />
 
       <WalMonitorModal
