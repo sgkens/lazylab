@@ -682,6 +682,48 @@ const NotifySection: React.FC<{ run: Run; showToast: (m: string) => void }> = ({
 
 // ---- agent tokens -------------------------------------------------------------
 
+/** Ready-to-paste client setup for a new agent token: MCP for Claude Code and Codex, REST for scripts. */
+const AgentSetupSnippets: React.FC<{ token: string; showToast: (m: string) => void }> = ({ token, showToast }) => {
+  const [tab, setTab] = useState<'claude' | 'codex' | 'rest'>('claude');
+  const origin = window.location.origin;
+  const snippets = {
+    claude: `claude mcp add --transport http lazylab ${origin}/mcp \\\n  --header "Authorization: Bearer ${token}"`,
+    codex: `# ~/.codex/config.toml\n[mcp_servers.lazylab]\nurl = "${origin}/mcp"\nbearer_token_env_var = "LAZYLAB_TOKEN"\n\n# shell profile\nexport LAZYLAB_TOKEN=${token}`,
+    rest: `export LAZYLAB_TOKEN=${token}\ncurl -H "Authorization: Bearer $LAZYLAB_TOKEN" ${origin}/api/agent/inbox`
+  };
+  const labels = { claude: 'Claude Code (MCP)', codex: 'Codex (MCP)', rest: 'REST / scripts' };
+  return (
+    <div className="space-y-1.5">
+      <div className="flex gap-1">
+        {(Object.keys(labels) as (keyof typeof labels)[]).map((k) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`px-2 py-0.5 rounded text-[11px] ${tab === k ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}
+          >
+            {labels[k]}
+          </button>
+        ))}
+      </div>
+      <div className="relative">
+        <pre className="text-[11px] text-zinc-300 font-mono whitespace-pre-wrap break-all bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 pr-9">
+          {snippets[tab]}
+        </pre>
+        <button
+          className="absolute top-1 right-1 p-1 text-zinc-500 hover:text-zinc-200"
+          title="Copy setup"
+          onClick={async () => {
+            await copyText(snippets[tab]);
+            showToast('Copied');
+          }}
+        >
+          <Copy className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m: string) => void }> = ({ tokens, run, showToast }) => {
   const [name, setName] = useState('');
   const [created, setCreated] = useState<string | null>(null);
@@ -689,7 +731,7 @@ const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m
   return (
     <Card
       title="Agent tokens"
-      description="Bearer tokens for /api/agent/* (Claude Code, Codex, Antigravity). Shown once at creation; only a hash is stored."
+      description="Bearer tokens for the MCP server at /mcp and for /api/agent/* (Claude Code, Codex, Antigravity, scripts). Shown once at creation; only a hash is stored."
     >
       {created && (
         <div className="p-3 bg-emerald-950/30 border border-emerald-800/60 rounded-lg space-y-2">
@@ -706,9 +748,7 @@ const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m
               <Copy className="w-3.5 h-3.5" />
             </button>
           </div>
-          <pre className="text-[11px] text-zinc-400 font-mono whitespace-pre-wrap">
-            {`export LAZYLAB_TOKEN=${created}\ncurl -H "Authorization: Bearer $LAZYLAB_TOKEN" ${window.location.origin}/api/agent/work-items`}
-          </pre>
+          <AgentSetupSnippets token={created} showToast={showToast} />
           <button className={btnGhost} onClick={() => setCreated(null)}>
             Done
           </button>
