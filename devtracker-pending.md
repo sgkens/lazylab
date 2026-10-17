@@ -76,7 +76,7 @@ flowchart LR
 
 1. **Foundation, blocks everything else:** GL-1, GL-14, GL-15, GL-2, CACHE-1/2/4, BUILD-3. Cross-project views are wrong while list calls hit non-existent endpoints and swallow errors.
 2. **First differentiators, most QoL for the effort:** ~~INBOX-1/2~~, ~~WATCH-1..4~~, ~~TRIAGE-1/6~~, ~~ENV-4~~, ~~AGENT-1~~.
-3. **Away from the browser:** CLI-1/2/4, ENV-1/2, REPO-1..4.
+3. **Away from the browser:** ~~CLI-1/2~~, CLI-4, ENV-1/2, REPO-1..4.
 4. **Chores at scale:** REL, FLEET, DEPLOY, REG, RL.
 
 ## Audit baseline (2026-10-17)
@@ -372,6 +372,41 @@ Follow-ups:
 | E5 | Container logs the plain-HTTP warning with the default loopback port mapping | Inside the container the server listens on `0.0.0.0` | Open: suppress when `LAZYLAB_IN_CONTAINER` is set and the published port is loopback-only, or reword |
 | E6 | Tracker listed done work as open (GL-3..16, UI-1/2/3/5, BUILD-7, REL-1/2, SEC-4) | Earlier passes recorded fixes in their own sections only | Fixed: items ticked with a note where the result differs from the original plan |
 
+## Done 2026-10-17 (ninth pass): `lazy` command line (CLI-1, CLI-2)
+
+```mermaid
+flowchart LR
+  C[lazy command] --> G[cli/git.ts: project from remote, branch, HEAD, last commit]
+  C --> M[cli/client.ts: tools/call on /mcp with agent token]
+  M --> T[MCP tools: list_pipelines, get_pipeline, get_pipeline_failures, retry_job, create_merge_request, watch, get_inbox]
+  C --> U[cli/ui.ts: Palette + UI symbols, layout before colour]
+```
+
+- [x] CLI-1a `cli/lazy.ts` entry: argument parser, help, `login` (verifies with `tools/list`, config file mode 600, env override), exit codes 0/1/2/130
+- [x] CLI-1b Commands: `inbox`, `ci`, `ci watch`, `job log <id>`, `job log --failed`, `retry [--follow]`, `mr create` (title/body from last commit, `Closes #N` from `N-slug` branches, `--draft`, `--label`, `--watch`)
+- [x] CLI-2 `lazy push`: pushes the branch under its own name (`-u` on first push), finds the pipeline for HEAD, asks lazylab to watch it, follows it unless `--detach`; Ctrl+C keeps the lazylab watch
+- [x] New MCP tool `get_pipeline` (status of each job) for following; `retryJob` returns `pipeline_id`
+- [x] `package.json` `bin` and `cli:build` (compiled binary in `dist-cli/`, ignored by git and Docker)
+
+Verified: 88 tests (remote parsing, branch issue numbers, MR text, argument parsing, column layout); end to end against a fake GitLab whose pipelines progress over time and are created by a post-receive hook: push follows a failing pipeline and exits 1 with the excerpt, `job log --failed`, `retry --follow` reaches success, `mr create --draft --label` sends the right title, description and labels, `push --detach`, `ci watch`, push without a pipeline stops after the timeout, unknown pipeline and unknown command errors, watches finish and notify; compiled binary runs.
+Not verified: live GitLab; macOS and Windows binaries; `lazy login` token prompt on a real TTY (tested with `--token`).
+
+Follow-ups:
+- [ ] CLI-5 `lazy open` (MR or pipeline of the current branch in the browser) and `lazy mr status`
+- [ ] CLI-6 Shell completions (bash, zsh, fish)
+- [ ] CLI-7 Release the binaries from CI for Linux, macOS and Windows (with BUILD-4)
+
+### Errors noted this pass
+
+| # | Error | Cause | Status |
+|---|---|---|---|
+| E7 | `lazy push` on a branch created from `origin/main` ran a plain `git push`, which git refused (exit 128) | `branch.autoSetupMerge` makes the new branch track `origin/main`; any upstream was taken as "already pushed" | Fixed: `pushedRemote()` accepts only an upstream with the branch's own name; `mr create` uses the same check |
+| E8 | A demo "release-bot expires in 5 days" warning was sent while connected to a real (fake) GitLab | The expiry check at unlock ran before the profile was active and warned about demo sample tokens; warnings reach real push channels | Fixed: demo tokens are listed but never warned about; unit test uses a live-like stub |
+| E9 | `lazy ci watch 99999` printed "Not watched in lazylab" and then the 404 | The watch was added before checking that the pipeline exists | Fixed: `get_pipeline` first, then watch |
+| E10 | First end-to-end run created a branch from a local `main` that did not exist | Test script bug (`main` only existed on the remote) | Fixed in the script (`origin/main`) |
+| E11 | "Auto-fetch background error: Unable to connect" at the end of the run | The script stops the fake GitLab and lazylab together | Expected; not a product error |
+| E12 | Pipeline-finished notifications missing from the first run's check | Watches poll every 15 s and the script ended sooner | Script waits for one poll; notifications arrive |
+
 ## Epic SEC: hardening follow-ups
 
 - [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
@@ -481,10 +516,10 @@ Follow-ups:
 
 ## Epic CLI: `lazy` companion for the laptop and terminal
 
-- [ ] CLI-1 `lazy` Bun CLI over the lazylab API with an agent token; detects the project from `git remote` in the current directory. Commands: `inbox`, `ci [watch]`, `mr create`, `job log --failed`
-- [ ] CLI-2 `lazy push`: `git push`, then watch the pipeline and notify on completion
+- [x] CLI-1 `lazy` Bun CLI over the lazylab API with an agent token; detects the project from `git remote` in the current directory. Commands: `inbox`, `ci [watch]`, `mr create`, `job log --failed`
+- [x] CLI-2 `lazy push`: `git push`, then watch the pipeline and notify on completion
 - [ ] CLI-3 TUI mode (lazygit-style panes) for inbox and pipelines
-- [ ] CLI-4 Single binary via `bun build --compile` for Linux, macOS and Windows
+- [~] CLI-4 Single binary via `bun build --compile` for Linux, macOS and Windows (`bun run cli:build` builds for the host; other targets documented, not built or tested)
 
 ## Epic ENV: secrets for local development
 

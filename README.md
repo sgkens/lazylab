@@ -21,7 +21,7 @@ A self-hosted GitLab workspace that runs on your own machine, keeps your GitLab 
   - a CI editor checked by GitLab's linter.
 - **Encrypted vault:** GitLab profiles for several instances, CI secrets you can push to GitLab, runner tokens, other secrets and agent tokens. Everything is encrypted with a key derived from your password.
 - **Token expiry:** warnings 14, 7, 3 and 1 days before a personal, project, group or deploy token expires, and rotation of a profile's personal access token from the vault.
-- **Agents:** an MCP server at `/mcp` with 17 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens. Agent skills for Claude Code, Codex and Antigravity are included.
+- **Agents:** an MCP server at `/mcp` with 18 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens. Agent skills for Claude Code, Codex and Antigravity are included.
 
 ![Failure excerpt of a failed job](docs/src/assets/screenshots/failure-excerpt.png)
 
@@ -75,6 +75,20 @@ The agent can then:
 
 See [MCP server](docs/src/agents/mcp.md) for Codex and the full tool list.
 
+## Command line
+
+`lazy` follows the pipeline after a push, prints why a job failed, and opens merge requests from the last commit. It finds the project from the git remote. Shell: bash, repository root.
+
+```bash
+bun run cli:build && install -m 755 dist-cli/lazy ~/.local/bin/lazy
+lazy login https://<your-host>        # agent token from Vault → Agent tokens
+lazy push                              # push, then follow the pipeline; exit 1 if it fails
+lazy job log --failed                  # failure excerpt of the latest failed pipeline
+lazy mr create --draft                 # MR from the current branch
+```
+
+See [Command line](docs/src/cli.md).
+
 ## Use it from another machine
 
 lazylab listens on `127.0.0.1` by default. To use it from a laptop, put it behind HTTPS: Tailscale Serve or Caddy (`LAZYLAB_TRUST_PROXY=loopback`), or the built-in TLS (`LAZYLAB_TLS=on`). Plain HTTP on a network address exposes your password and session cookie. lazylab warns about this at startup. See [Remote access](docs/src/remote-access.md).
@@ -91,6 +105,7 @@ The documentation site is in [`docs/`](docs/). It is built with Eleventy and Nun
 | Vault encryption, sessions, tokens | [Security model](docs/src/security.md) |
 | Inbox, notifications, CI, planning, releases, settings | [Guides](docs/src/guide/) |
 | MCP, REST, skills | [Agents](docs/src/agents/) |
+| `lazy` command line | [Command line](docs/src/cli.md) |
 | Components, request path, watch loop | [Architecture](docs/src/reference/architecture.md) |
 | What is verified against live GitLab | [Feature status](docs/src/reference/status.md) |
 
@@ -135,6 +150,7 @@ bun test         # unit tests
 | `server/` | API routes, MCP server, GitLab client, vault, sessions, inbox, watches, notifications, triage, release notes, cache |
 | `src/` | React 19 + Tailwind 4 single-page app |
 | `tests/` | `bun test` suites |
+| `cli/` | `lazy` command-line client |
 | `skills/` | Agent skills for Claude Code, Codex and Antigravity |
 | `docs/` | Documentation site (Eleventy) |
 

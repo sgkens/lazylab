@@ -61,17 +61,34 @@ describe('TokenExpiryMonitor', () => {
     if (!vault.isInitialized()) await vault.initialize('tester', 'correct horse battery');
   });
 
-  test('warns about demo tokens once and remembers it in the vault', async () => {
+  const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
+  /** A live-looking client with one project token expiring in 5 days. */
+  const liveStub = () =>
+    ({
+      isDemo: () => false,
+      getResourceTokens: async () => ({
+        tokens: [{ key: 'project:stub:5:1', kind: 'project', name: 'release-bot', owner: 'team/app', host: 'https://gitlab.example', expires_at: inDays(5), scopes: ['api'] }],
+        errors: []
+      })
+    }) as unknown as GitLabClient;
+
+  test('warns once and remembers it in the vault', async () => {
     const sent: { title: string; level: string }[] = [];
-    const monitor = new TokenExpiryMonitor(() => new GitLabClient(), (n) => sent.push(n));
+    const monitor = new TokenExpiryMonitor(liveStub, (n) => sent.push(n));
     const first = await monitor.check();
-    expect(first.tokens.some((t) => t.name === 'release-bot' && t.days_left !== null && t.days_left <= 7)).toBe(true);
-    const warnedAbout = sent.length;
-    expect(warnedAbout).toBeGreaterThan(0);
-    expect(sent[0].title).toMatch(/GitLab token expires in \d+ days?/);
+    expect(first.tokens[0].days_left).toBe(5);
+    expect(sent.map((n) => n.title)).toEqual(['GitLab token expires in 5 days']);
     await monitor.check();
-    expect(sent.length).toBe(warnedAbout);
-    expect(Object.keys(vault.getNotify().expiryWarned ?? {})).toContain(first.tokens.find((t) => t.name === 'release-bot')!.key);
+    expect(sent.length).toBe(1);
+    expect(Object.keys(vault.getNotify().expiryWarned ?? {})).toContain('project:stub:5:1');
+  });
+
+  test('lists demo tokens but never warns about them', async () => {
+    vault.updateNotify((n) => void (n.expiryWarned = {}));
+    const sent: unknown[] = [];
+    const overview = await new TokenExpiryMonitor(() => new GitLabClient(), (n) => sent.push(n)).check();
+    expect(overview.tokens.some((t) => t.name === 'release-bot')).toBe(true);
+    expect(sent).toEqual([]);
   });
 
   test('sends nothing when the rule is off', async () => {
@@ -80,7 +97,7 @@ describe('TokenExpiryMonitor', () => {
       n.expiryWarned = {};
     });
     const sent: unknown[] = [];
-    await new TokenExpiryMonitor(() => new GitLabClient(), (n) => sent.push(n)).check();
+    await new TokenExpiryMonitor(liveStub, (n) => sent.push(n)).check();
     expect(sent).toEqual([]);
     vault.updateNotify((n) => void (n.rules.tokenExpiry = true));
   });
