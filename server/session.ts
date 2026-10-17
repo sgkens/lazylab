@@ -119,7 +119,7 @@ const publicHosts = new Set(
     .filter(Boolean)
 );
 
-function originMatches(req: Request): boolean {
+export function originMatches(req: Request): boolean {
   const origin = req.headers.origin || req.headers.referer;
   if (!origin) return false;
   try {

@@ -8,6 +8,8 @@ import { announceSetupIfNeeded, apiGuard, securityHeaders, sessionRouter } from 
 import { loadTlsMaterial, tlsEnabled } from './server/tls.js';
 import { vaultRouter } from './server/vaultRouter.js';
 import { notifyRouter } from './server/notifyRouter.js';
+import { createMcpRouter } from './server/mcp.js';
+import { getGitlabClient } from './server/apiRouter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +43,7 @@ async function startServer() {
   app.use('/api/vault', vaultRouter);
   app.use('/api/notify', notifyRouter);
   app.use('/api', apiRouter);
+  app.use('/mcp', createMcpRouter(getGitlabClient));
 
   const useTls = tlsEnabled();
   let server: http.Server | https.Server;

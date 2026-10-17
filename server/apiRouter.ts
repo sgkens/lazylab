@@ -15,6 +15,9 @@ let autoFetchIntervalSec = 30; // default 30s auto-fetch
 let lastSyncTime = Date.now();
 let gitlabClient = new GitLabClient();
 
+/** The client for the active profile; other modules (MCP) must not hold on to it across profile changes. */
+export const getGitlabClient = () => gitlabClient;
+
 function rebuildClientFromVault() {
   const profile = vault.getActiveProfile();
   gitlabClient = profile ? new GitLabClient(profile.host, profile.token) : new GitLabClient();
