@@ -1042,14 +1042,10 @@ apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request
     } = req.body;
 
     const projects = await gitlabClient.getProjects();
-    const project = projects.find((p) => p.id === projectId) || {
-      name: 'gitlab-orchestrator',
-      path_with_namespace: 'platform/gitlab-orchestrator',
-      web_url: 'https://gitlab.com/platform/gitlab-orchestrator'
-    };
-
-    const projectPath = project.path_with_namespace || 'platform/gitlab-orchestrator';
-    const baseUrl = project.web_url || `https://gitlab.com/${projectPath}`;
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return res.status(404).json({ success: false, error: `Project ${projectId} not found` });
+    // Badge images come from the project's own instance, so self-hosted GitLab works.
+    const baseUrl = project.web_url.replace(/\/+$/, '');
 
     // If replaceExisting, purge current pipeline/coverage/release badges for this project
     if (replaceExisting) {
@@ -1074,7 +1070,7 @@ apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request
           const badge = await gitlabClient.createBadge({
             name: 'Pipeline: main',
             link_url: `${baseUrl}/-/commits/main`,
-            image_url: `https://gitlab.com/${projectPath}/badges/main/pipeline.svg?style=${style}`,
+            image_url: `${baseUrl}/badges/main/pipeline.svg?style=${style}`,
             kind: 'project',
             project_id: projectId
           });
@@ -1084,7 +1080,7 @@ apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request
           const badge = await gitlabClient.createBadge({
             name: 'Coverage: main',
             link_url: `${baseUrl}/-/commits/main`,
-            image_url: `https://gitlab.com/${projectPath}/badges/main/coverage.svg?style=${style}`,
+            image_url: `${baseUrl}/badges/main/coverage.svg?style=${style}`,
             kind: 'project',
             project_id: projectId
           });
@@ -1095,7 +1091,7 @@ apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request
           const badge = await gitlabClient.createBadge({
             name: 'Pipeline: develop',
             link_url: `${baseUrl}/-/commits/develop`,
-            image_url: `https://gitlab.com/${projectPath}/badges/develop/pipeline.svg?style=${style}`,
+            image_url: `${baseUrl}/badges/develop/pipeline.svg?style=${style}`,
             kind: 'project',
             project_id: projectId
           });
@@ -1105,7 +1101,7 @@ apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request
           const badge = await gitlabClient.createBadge({
             name: 'Coverage: develop',
             link_url: `${baseUrl}/-/commits/develop`,
-            image_url: `https://gitlab.com/${projectPath}/badges/develop/coverage.svg?style=${style}`,
+            image_url: `${baseUrl}/badges/develop/coverage.svg?style=${style}`,
             kind: 'project',
             project_id: projectId
           });
@@ -1116,7 +1112,7 @@ apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request
           const badge = await gitlabClient.createBadge({
             name: 'Pipeline: tags (release)',
             link_url: `${baseUrl}/-/releases`,
-            image_url: `https://gitlab.com/${projectPath}/badges/tags/pipeline.svg?style=${style}`,
+            image_url: `${baseUrl}/badges/tags/pipeline.svg?style=${style}`,
             kind: 'project',
             project_id: projectId
           });
@@ -1126,7 +1122,7 @@ apiRouter.post('/projects/:projectId/badges/pipeline-setup', async (req: Request
           const badge = await gitlabClient.createBadge({
             name: 'Release: latest',
             link_url: `${baseUrl}/-/releases`,
-            image_url: `https://img.shields.io/badge/release-v2.4.0-blue.svg?style=${style}`,
+            image_url: `${baseUrl}/-/badges/release.svg`,
             kind: 'project',
             project_id: projectId
           });
