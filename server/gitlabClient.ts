@@ -2664,6 +2664,16 @@ export class GitLabClient {
     };
   }
 
+  async getWorkItem(projectId: number, issueIid: number): Promise<GitLabWorkItem> {
+    if (this.isDemoMode) {
+      const item = DEMO_WORK_ITEMS.find((i) => i.project_id === projectId && i.iid === issueIid);
+      if (!item) throw new Error(`Work item #${issueIid} not found`);
+      return item;
+    }
+    const { data } = await this.fetchApi<any>(`/projects/${projectId}/issues/${issueIid}`);
+    return mapWorkItem(data);
+  }
+
   async getMergeRequest(projectId: number, mrIid: number): Promise<GitLabMergeRequest> {
     if (this.isDemoMode) {
       const mr = DEMO_MRS.find((m) => m.project_id === projectId && m.iid === mrIid);
