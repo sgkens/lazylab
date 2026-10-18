@@ -4,7 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% if title and page.url != "/" %}{{ title }} · {% endif %}{{ site.title }} docs</title>
-  <meta name="description" content="{{ description or site.description }}">
+  <meta name="description" content="{{ abstract or description or site.description }}">
+  <meta name="theme-color" content="#09090b">
+  <link rel="icon" type="image/svg+xml" href="/assets/brand/favicon.svg">
+  <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ site.title }} docs">
+  <meta property="og:title" content="{% if title and page.url != "/" %}{{ title }} · {% endif %}{{ site.title }}">
+  <meta property="og:description" content="{{ abstract or site.description }}">
+  {% if site.url %}
+  <meta property="og:url" content="{{ site.url }}{{ page.url }}">
+  <meta property="og:image" content="{{ site.url }}/assets/brand/lazylab-social.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  {% endif %}
   <link rel="stylesheet" href="/assets/style.css">
   <script>
     // Apply the stored theme before paint; storage may be unavailable.
@@ -14,7 +28,7 @@
 <body>
   <header class="topbar">
     <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
-    <a class="brand" href="/"><span class="logo">lz</span> lazylab <span class="muted">docs</span></a>
+    <a class="brand" href="/"><img class="logo" src="/assets/brand/lazylab-mark.svg" alt="" width="28" height="28"> lazylab <span class="muted">docs</span></a>
     <nav class="top-links">
       <a href="{{ site.repo }}">Source</a>
       <button class="theme-toggle" type="button" aria-label="Toggle colour theme">◐</button>
@@ -34,11 +48,13 @@
     </aside>
 
     <main class="content">
+      {% block article %}
       <article>
         <h1>{{ title }}</h1>
         {% if abstract %}<p class="abstract">{{ abstract }}</p>{% endif %}
         {{ content | safe }}
       </article>
+      {% endblock %}
 
       {% set pg = nav | pager(page.url) %}
       <nav class="pager" aria-label="Pages">
@@ -47,6 +63,7 @@
       </nav>
       <footer class="page-footer">
         <a href="{{ site.editBase }}{{ page.inputPath | replace('./src/', '') }}">Edit this page</a>
+        <span class="muted">lazylab · <a href="{{ site.repo }}/-/blob/main/LICENSE">MIT licence</a> · <a href="{{ site.repo }}/-/issues">Report an issue</a></span>
       </footer>
     </main>
   </div>
