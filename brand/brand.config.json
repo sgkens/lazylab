@@ -1,0 +1,142 @@
+{
+  "name": "lazylab",
+  "tagline": "A self-hosted GitLab workspace for developers and their agents.",
+  "features": [
+    "inbox",
+    "watches",
+    "CI triage",
+    "vault",
+    "lazy CLI",
+    "MCP"
+  ],
+  "concept": [
+    {
+      "term": "Flask",
+      "meaning": "The lab: GitLab, and a workbench that runs on your own machine."
+    },
+    {
+      "term": "zz",
+      "meaning": "The lazy: lazylab watches pipelines, tokens and merge requests so you do not have to."
+    },
+    {
+      "term": "Ember tile",
+      "meaning": "Continues the orange accent of the app."
+    }
+  ],
+  "sources": {
+    "mark": "source/mark.svg",
+    "glyph": "source/glyph.svg",
+    "favicon": "source/favicon.svg",
+    "touch": "source/touch.svg"
+  },
+  "fonts": {
+    "display": {
+      "family": "Plus Jakarta Sans",
+      "fontsource": "plus-jakarta-sans",
+      "weight": 800
+    },
+    "mono": {
+      "family": "JetBrains Mono",
+      "fontsource": "jetbrains-mono",
+      "weight": 500
+    }
+  },
+  "colours": [
+    {
+      "name": "Ember 400",
+      "token": "ember-400",
+      "hex": "#fb923c",
+      "use": "Gradient start, accent on dark"
+    },
+    {
+      "name": "Ember 600",
+      "token": "ember-600",
+      "hex": "#ea580c",
+      "use": "Gradient end, fills behind white icons (3.6:1 with white: not for small text)"
+    },
+    {
+      "name": "Ember 700",
+      "token": "ember-700",
+      "hex": "#c2410c",
+      "use": "Accent and links on light (5.2:1 on white)"
+    },
+    {
+      "name": "Ink 950",
+      "token": "ink-950",
+      "hex": "#09090b",
+      "use": "App and docs background (dark)"
+    },
+    {
+      "name": "Ink 900",
+      "token": "ink-900",
+      "hex": "#18181b",
+      "use": "Surfaces, wordmark on light"
+    },
+    {
+      "name": "Ink 800",
+      "token": "ink-800",
+      "hex": "#27272a",
+      "use": "Borders on dark"
+    },
+    {
+      "name": "Ash 400",
+      "token": "ash-400",
+      "hex": "#a1a1aa",
+      "use": "Muted text on dark"
+    },
+    {
+      "name": "Paper",
+      "token": "paper",
+      "hex": "#fafafa",
+      "use": "Background (light), wordmark on dark"
+    },
+    {
+      "name": "Pass",
+      "token": "pass",
+      "hex": "#34d399",
+      "use": "Pipeline passed"
+    },
+    {
+      "name": "Fail",
+      "token": "fail",
+      "hex": "#fb7185",
+      "use": "Pipeline failed"
+    },
+    {
+      "name": "Wait",
+      "token": "wait",
+      "hex": "#fbbf24",
+      "use": "Running, needs attention"
+    }
+  ],
+  "theme": {
+    "dark": "ink-950",
+    "surface": "ink-900",
+    "border": "ink-800",
+    "muted": "ash-400",
+    "text": "paper",
+    "textOnLight": "ink-900",
+    "accent": "ember-400",
+    "accentOnLight": "ember-600",
+    "gradient": [
+      "ember-400",
+      "ember-600"
+    ]
+  },
+  "tokenPrefix": "ll",
+  "monoSample": "$ lazy push --detach",
+  "out": ".",
+  "copies": {
+    "../src/assets/brand": [
+      "svg/lazylab-mark.svg",
+      "svg/favicon.svg",
+      "png/apple-touch-icon.png"
+    ],
+    "../docs/src/assets/brand": [
+      "svg/lazylab-mark.svg",
+      "svg/favicon.svg",
+      "png/apple-touch-icon.png",
+      "png/lazylab-social.png"
+    ]
+  }
+}
