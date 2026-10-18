@@ -17,6 +17,7 @@ default:
     # CI_PAGES_URL is https://<user>.gitlab.io/lazylab, or a unique domain with no path.
     # Its path becomes Eleventy's prefix so links and assets resolve in both cases.
     - export DOCS_PATH_PREFIX="$(echo "${CI_PAGES_URL:-}" | sed -E 's#^https?://[^/]+##; s#/*$#/#')"
+    - export DOCS_SITE_URL="${CI_PAGES_URL:-}"
     - echo "Building docs with path prefix ${DOCS_PATH_PREFIX}"
     - cd docs
     - bun install --frozen-lockfile

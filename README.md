@@ -1,8 +1,39 @@
-# lazylab
+<p align="center">
+  <img src="brandkit/svg/lazylab-mark.svg" alt="lazylab" width="96" height="96">
+</p>
 
-A self-hosted GitLab workspace that runs on your own machine, keeps your GitLab tokens in an encrypted vault, and tells you what needs your attention across projects, in the browser, on your phone, and in your coding agent.
+<h1 align="center">lazylab</h1>
+
+<p align="center">
+  A self-hosted GitLab workspace that runs on your own machine, keeps your GitLab tokens in an encrypted vault, and tells you what needs your attention across projects, in the browser, on your phone, and in your coding agent.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-c2410c" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/bun-%E2%89%A5%201.3-18181b" alt="Bun 1.3 or later">
+  <img src="https://img.shields.io/badge/status-pre--1.0-a1a1aa" alt="Status: pre-1.0">
+  <a href="docs/src/agents/mcp.md"><img src="https://img.shields.io/badge/MCP-19%20tools-ea580c" alt="MCP: 19 tools"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/src/index.md">Documentation</a> ·
+  <a href="docs/src/cli.md">Command line</a> ·
+  <a href="docs/src/troubleshooting.md">Troubleshooting</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
 ![lazylab inbox: merge requests and issues grouped by who has to act next](docs/src/assets/screenshots/inbox.png)
+
+## Why lazylab
+
+GitLab's own UI covers most single-project work. lazylab does what a hosted UI cannot, because it runs on your machine:
+
+- **It sits next to your work.** `lazy` finds the project from your git remote, follows the pipeline after a push, and runs your app with the project's CI/CD variables.
+- **It holds the secrets.** GitLab tokens stay in an encrypted vault; agents, scripts and your laptop get revocable lazylab tokens instead.
+- **It looks across everything.** One inbox across every project you are a member of, instead of a tab per project.
+- **It waits for you.** It watches pipelines, merge requests and token expiry, and notifies your browser or phone.
 
 ## Features
 
@@ -21,11 +52,18 @@ A self-hosted GitLab workspace that runs on your own machine, keeps your GitLab 
   - a CI editor checked by GitLab's linter.
 - **Encrypted vault:** GitLab profiles for several instances, CI secrets you can push to GitLab, runner tokens, other secrets and agent tokens. Everything is encrypted with a key derived from your password.
 - **Token expiry:** warnings 14, 7, 3 and 1 days before a personal, project, group or deploy token expires, and rotation of a profile's personal access token from the vault.
-- **Agents:** an MCP server at `/mcp` with 18 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens. Agent skills for Claude Code, Codex and Antigravity are included.
+- **Command line:** `lazy push` follows the pipeline after a push, `lazy job log --failed` prints the failure, `lazy mr create` opens the MR, and `lazy run` gives local commands the project's CI/CD variables.
+- **Agents:** an MCP server at `/mcp` with 19 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens; only tokens created with **Can read secrets** see the `get_env` tool. Agent skills for Claude Code, Codex and Antigravity are included.
 
 ![Failure excerpt of a failed job](docs/src/assets/screenshots/failure-excerpt.png)
 
 ## Quick start
+
+| You need | For |
+|---|---|
+| Bun 1.3 or later, or Docker with Compose v2 | Running lazylab |
+| A GitLab personal access token with the `api` scope | Live data; without one lazylab runs on sample data |
+| Optional: the ntfy app or a Gotify server | Notifications on a phone |
 
 ### Bun
 
@@ -101,6 +139,7 @@ The documentation site is in [`docs/`](docs/). It is built with Eleventy and Nun
 | Topic | Page |
 |---|---|
 | Install, first run, demo mode | [Getting started](docs/src/getting-started.md) |
+| Common messages and fixes | [FAQ and troubleshooting](docs/src/troubleshooting.md) |
 | Environment variables and data directory | [Configuration](docs/src/configuration.md) |
 | HTTPS, proxies, certificates | [Remote access](docs/src/remote-access.md) |
 | Vault encryption, sessions, tokens | [Security model](docs/src/security.md) |
@@ -109,6 +148,7 @@ The documentation site is in [`docs/`](docs/). It is built with Eleventy and Nun
 | `lazy` command line | [Command line](docs/src/cli.md) |
 | Components, request path, watch loop | [Architecture](docs/src/reference/architecture.md) |
 | What is verified against live GitLab | [Feature status](docs/src/reference/status.md) |
+| Logo, colours, type | [Brand](docs/src/reference/brand.md) and [`brandkit/`](brandkit/) |
 
 Build and preview the site. Shell: bash, repository root.
 
@@ -124,7 +164,7 @@ cd docs && bun install && bun run dev    # http://localhost:8090
 - Agent tokens are stored as SHA-256 hashes and can be revoked. They act as the active GitLab profile. Only tokens created with **Can read secrets** can read variable values and vault secrets.
 - The GitLab response cache is not encrypted.
 
-Details: [Security model](docs/src/security.md).
+Details: [Security model](docs/src/security.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Project status
 
@@ -154,13 +194,14 @@ bun test         # unit tests
 | `cli/` | `lazy` command-line client |
 | `skills/` | Agent skills for Claude Code, Codex and Antigravity |
 | `docs/` | Documentation site (Eleventy) |
+| `brandkit/` | Logo, colours and type; generated by `brandkit/build.mjs` |
 
 Conventions:
 
 - **Commits:** Conventional Commits (`type(scope): summary`), with `build: major|minor|patch` in the body when the version changes.
 - **Branches:** feature branches merge into `develop`; `main` stays stable.
 
-See [Development](docs/src/reference/development.md) for details.
+See [Development](docs/src/reference/development.md) for details and [CONTRIBUTING.md](CONTRIBUTING.md) before opening a merge request. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

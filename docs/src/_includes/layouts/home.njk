@@ -1,0 +1,31 @@
+{% extends "layouts/base.njk" %}
+{# Landing page: hero, "choose your path" cards from the page's `paths` front matter, then the Markdown body. #}
+{% block article %}
+<article class="home">
+  <section class="hero">
+    <img class="hero-mark" src="/assets/brand/lazylab-mark.svg" alt="" width="72" height="72">
+    <h1>{{ title }}</h1>
+    <p class="abstract">{{ abstract }}</p>
+    <p class="hero-actions">
+      <a class="button primary" href="/getting-started/">Get started</a>
+      <a class="button" href="/cli/">Command line</a>
+      <a class="button" href="{{ site.repo }}">Source</a>
+    </p>
+  </section>
+
+  <h2 id="choose-your-path">Choose your path</h2>
+  <ul class="paths">
+    {% for p in paths %}
+    <li>
+      <a href="{{ p.url }}">
+        <span class="path-icon" aria-hidden="true">{{ p.icon }}</span>
+        <strong>{{ p.title }}</strong>
+        <span class="muted">{{ p.text }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+
+  {{ content | safe }}
+</article>
+{% endblock %}

@@ -7,7 +7,8 @@ export default [
       { title: 'Getting started', url: '/getting-started/' },
       { title: 'Configuration', url: '/configuration/' },
       { title: 'Remote access', url: '/remote-access/' },
-      { title: 'Security model', url: '/security/' }
+      { title: 'Security model', url: '/security/' },
+      { title: 'FAQ and troubleshooting', url: '/troubleshooting/' }
     ]
   },
   {
@@ -36,7 +37,8 @@ export default [
     items: [
       { title: 'Architecture', url: '/reference/architecture/' },
       { title: 'Feature status', url: '/reference/status/' },
-      { title: 'Development', url: '/reference/development/' }
+      { title: 'Development', url: '/reference/development/' },
+      { title: 'Brand', url: '/reference/brand/' }
     ]
   }
 ];

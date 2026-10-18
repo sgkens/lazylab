@@ -2,7 +2,13 @@
   "name": "lazylab",
   "private": true,
   "version": "0.1.0",
+  "description": "A self-hosted GitLab workspace with an inbox, push notifications, CI failure triage, a command-line client and an MCP server for coding agents.",
   "license": "MIT",
+  "author": "sgkens",
+  "homepage": "https://gitlab.com/sgkens/lazylab",
+  "repository": { "type": "git", "url": "https://gitlab.com/sgkens/lazylab.git" },
+  "bugs": "https://gitlab.com/sgkens/lazylab/-/issues",
+  "keywords": ["gitlab", "self-hosted", "ci", "mcp", "developer-tools", "cli"],
   "type": "module",
   "bin": {
     "lazy": "cli/lazy.ts"
