@@ -28,6 +28,7 @@ import {
   Inbox
 } from 'lucide-react';
 import { AppStatus } from '../types/gitlab';
+import { BrandMark } from './BrandMark';
 
 export type ActiveTab =
   | 'inbox'
@@ -132,9 +133,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             }}
             className="text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-orange-400 transition-colors flex items-center gap-2"
           >
-            <span className="flex items-center justify-center w-7 h-7 rounded-md bg-gradient-to-br from-orange-500 to-amber-600 text-white font-mono font-black text-sm shadow-sm">
-              lz
-            </span>
+            <BrandMark size={28} />
             <span className="font-extrabold tracking-tight">lazylab</span>
           </a>
           <span className="text-xs text-zinc-500 font-mono hidden xl:inline">

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, KeyRound, Lock, LogIn, ShieldCheck } from 'lucide-react';
 import { sessionApi } from '../services/api';
 import { SessionState } from '../types/vault';
+import { BrandMark } from './BrandMark';
 
 interface AuthScreenProps {
   state: SessionState;
@@ -68,9 +69,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ state, onAuthenticated }
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex items-center justify-center p-4 font-sans">
       <form onSubmit={submit} className="w-full max-w-sm bg-zinc-900/80 border border-zinc-800 rounded-xl shadow-2xl p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-9 h-9 rounded-md bg-gradient-to-br from-orange-500 to-amber-600 text-white font-mono font-black">
-            lz
-          </span>
+          <BrandMark size={36} />
           <div>
             <h1 className="text-base font-bold">{isSetup ? 'Set up lazylab' : 'Sign in to lazylab'}</h1>
             <p className="text-xs text-zinc-500">
