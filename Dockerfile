@@ -14,6 +14,10 @@ RUN bun run build
 
 # ---- runtime stage: production deps + server sources + dist ----
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
+LABEL org.opencontainers.image.title="lazylab" \
+      org.opencontainers.image.description="A self-hosted GitLab workspace for developers and their agents" \
+      org.opencontainers.image.source="https://gitlab.com/sgkens/lazylab" \
+      org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
