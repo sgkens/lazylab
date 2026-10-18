@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lazylab brand kit</title>
+  <meta name="description" content="The lazylab logo, colours, type and usage rules, with every generated file.">
+  <link rel="icon" href="svg/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="tokens.css">
+  <style>
+@font-face { font-family: 'Plus Jakarta Sans'; font-weight: 800; font-display: swap; src: url('https://cdn.jsdelivr.net/fontsource/fonts/plus-jakarta-sans@latest/latin-800-normal.woff') format('woff'); }
+@font-face { font-family: 'Plus Jakarta Sans'; font-weight: 700; font-display: swap; src: url('https://cdn.jsdelivr.net/fontsource/fonts/plus-jakarta-sans@latest/latin-700-normal.woff') format('woff'); }
+@font-face { font-family: 'Plus Jakarta Sans'; font-weight: 500; font-display: swap; src: url('https://cdn.jsdelivr.net/fontsource/fonts/plus-jakarta-sans@latest/latin-500-normal.woff') format('woff'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 500; font-display: swap; src: url('https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono@latest/latin-500-normal.woff') format('woff'); }
+    :root {
+      --bg: #ffffff; --bg-soft: #f4f4f5; --border: #e4e4e7; --text: #18181b; --muted: #52525b;
+      --accent: #ea580c; --sans: 'Plus Jakarta Sans', system-ui, sans-serif; --mono: 'JetBrains Mono', ui-monospace, monospace;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme='light']) { --bg: #09090b; --bg-soft: #18181b; --border: #27272a; --text: #fafafa; --muted: #a1a1aa; --accent: #fb923c; color-scheme: dark; }
+    }
+    :root[data-theme='dark'] { --bg: #09090b; --bg-soft: #18181b; --border: #27272a; --text: #fafafa; --muted: #a1a1aa; --accent: #fb923c; color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); }
+    a { color: var(--accent); }
+    code { font: 0.9em var(--mono); background: var(--bg-soft); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+    main { max-width: 1040px; margin: 0 auto; padding: 48px 16px 96px; }
+    header.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    header.top img { height: 40px; }
+    .theme { border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+    h1 { font: 800 2.25rem/1.2 'Plus Jakarta Sans', var(--sans); letter-spacing: -0.02em; margin: 40px 0 8px; }
+    h2 { font-size: 1.35rem; margin: 64px 0 16px; padding-top: 24px; border-top: 1px solid var(--border); }
+    h3 { font-size: 1rem; margin: 0 0 8px; }
+    .lede { color: var(--muted); font-size: 1.1rem; max-width: 680px; margin: 0; }
+    .muted { color: var(--muted); }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+    .tile { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+    .tile .art { display: grid; place-items: center; height: 160px; padding: 24px; }
+    .tile .art img { max-width: 100%; max-height: 100%; }
+    .tile .meta { padding: 12px 14px; border-top: 1px solid var(--border); font-size: 14px; background: var(--bg); }
+    .tile .meta strong { display: block; }
+    .tile .meta a { margin-right: 10px; font: 12px var(--mono); }
+    .bg-soft { background: var(--bg-soft); } .bg-light { background: #ffffff; } .bg-dark { background: #09090b; } .bg-accent { background: #ea580c; }
+    .story { display: grid; grid-template-columns: 200px 1fr; gap: 32px; align-items: center; }
+    .story img { width: 200px; height: 200px; }
+    .story dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; }
+    .story dt { font-weight: 700; } .story dd { margin: 0; color: var(--muted); }
+    .space { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .space figure { margin: 0; border: 1px solid var(--border); border-radius: 14px; padding: 24px; background: var(--bg-soft); }
+    .space figcaption { margin-top: 16px; font-size: 14px; color: var(--muted); }
+    .clear { position: relative; width: 192px; height: 192px; margin: 0 auto; outline: 1px dashed var(--accent); }
+    .clear img { position: absolute; inset: 32px; width: 128px; height: 128px; }
+    .sizes { display: flex; align-items: flex-end; gap: 20px; justify-content: center; height: 192px; }
+    .sizes div { text-align: center; font: 12px var(--mono); color: var(--muted); }
+    .sizes img { display: block; margin: 0 auto 6px; }
+    .swatches { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+    .swatch { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); text-align: left; font: inherit; color: inherit; padding: 0 0 12px; cursor: pointer; }
+    .swatch i { display: block; height: 72px; border-bottom: 1px solid var(--border); }
+    .swatch span { display: block; padding: 8px 12px 0; font-weight: 700; font-size: 14px; }
+    .swatch code { display: inline-block; margin: 2px 12px 0; border: 0; background: none; padding: 0; color: var(--muted); }
+    .swatch small { display: block; padding: 4px 12px 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .type { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .type div { border: 1px solid var(--border); border-radius: 14px; padding: 24px; background: var(--bg-soft); }
+    .type .sample { font: 800 2.5rem/1.2 'Plus Jakarta Sans', var(--sans); letter-spacing: -0.02em; }
+    .type .mono { font: 500 1.5rem var(--mono); color: var(--accent); }
+    .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .rules div { border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; }
+    .rules ul { margin: 0; padding-left: 20px; } .rules li { margin: 6px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #18181b; color: #fafafa; padding: 8px 14px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+    @media (max-width: 640px) { .story { grid-template-columns: 1fr; } .story img { width: 128px; height: 128px; } .table-wrap { overflow-x: auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <picture>
+      <source srcset="svg/lazylab-logo-dark.svg" media="(prefers-color-scheme: dark)">
+      <img id="lockup" src="svg/lazylab-logo-light.svg" alt="lazylab">
+    </picture>
+    <button class="theme" type="button">Toggle theme</button>
+  </header>
+
+  <h1>Brand kit</h1>
+  <p class="lede">A self-hosted GitLab workspace for developers and their agents. Every file below is generated from one reference SVG and <code>brand.config.json</code>.</p>
+
+  <h2 id="idea">The idea</h2>
+  <div class="story">
+    <img src="svg/lazylab-mark.svg" alt="The lazylab mark">
+    <dl>
+      <dt>Flask</dt><dd>The lab: GitLab, and a workbench that runs on your own machine.</dd>
+      <dt>zz</dt><dd>The lazy: lazylab watches pipelines, tokens and merge requests so you do not have to.</dd>
+      <dt>Ember tile</dt><dd>Continues the orange accent of the app.</dd>
+    </dl>
+  </div>
+
+  <h2 id="files">Logo files</h2>
+  <p class="muted">Use SVG wherever it is accepted. PNG and WebP are exports of the same artwork.</p>
+  <div class="grid">
+    <div class="tile">
+      <div class="art bg-soft"><img src="svg/lazylab-mark.svg" alt="" width="112" height="112"></div>
+      <div class="meta"><strong>Mark</strong><span class="muted">App icon, avatars</span><br>
+        <a href="svg/lazylab-mark.svg" download>svg</a><a href="png/lazylab-mark-512.png" download>png 512</a><a href="webp/lazylab-mark-512.webp" download>webp 512</a></div>
+    </div>
+    <div class="tile">
+      <div class="art bg-light"><img src="svg/lazylab-logo-light.svg" alt=""></div>
+      <div class="meta"><strong>Logo, light backgrounds</strong><span class="muted">Dark wordmark</span><br>
+        <a href="svg/lazylab-logo-light.svg" download>svg</a><a href="webp/lazylab-logo-light.webp" download>webp</a></div>
+    </div>
+    <div class="tile">
+      <div class="art bg-dark"><img src="svg/lazylab-logo-dark.svg" alt=""></div>
+      <div class="meta"><strong>Logo, dark backgrounds</strong><span class="muted">Light wordmark</span><br>
+        <a href="svg/lazylab-logo-dark.svg" download>svg</a><a href="webp/lazylab-logo-dark.webp" download>webp</a></div>
+    </div>
+    <div class="tile">
+      <div class="art bg-light"><img src="svg/lazylab-mark-ink.svg" alt="" width="96" height="96"></div>
+      <div class="meta"><strong>One colour, ink</strong><span class="muted">Print, light interfaces</span><br>
+        <a href="svg/lazylab-mark-ink.svg" download>svg</a></div>
+    </div>
+    <div class="tile">
+      <div class="art bg-accent"><img src="svg/lazylab-mark-white.svg" alt="" width="96" height="96"></div>
+      <div class="meta"><strong>One colour, white</strong><span class="muted">On colour or photos</span><br>
+        <a href="svg/lazylab-mark-white.svg" download>svg</a></div>
+    </div>
+    <div class="tile">
+      <div class="art bg-soft"><img src="svg/favicon.svg" alt="" width="64" height="64"></div>
+      <div class="meta"><strong>Favicon</strong><span class="muted">For 32 px and below</span><br>
+        <a href="svg/favicon.svg" download>svg</a><a href="png/favicon-32.png" download>png 32</a><a href="png/apple-touch-icon.png" download>touch png</a></div>
+    </div>
+    <div class="tile">
+      <div class="art bg-dark"><img src="webp/lazylab-social.webp" alt=""></div>
+      <div class="meta"><strong>Social preview</strong><span class="muted">1280 × 640 link cards</span><br>
+        <a href="svg/lazylab-social.svg" download>svg</a><a href="png/lazylab-social.png" download>png</a><a href="webp/lazylab-social.webp" download>webp</a></div>
+    </div>
+  </div>
+  <p class="muted">Everything on one sheet: <a href="brand-sheet.svg">brand-sheet.svg</a> (<a href="webp/brand-sheet.webp">webp</a>).</p>
+
+  <h2 id="space">Clear space and size</h2>
+  <div class="space">
+    <figure>
+      <div class="clear"><img src="svg/lazylab-mark.svg" alt=""></div>
+      <figcaption>Keep a quarter of the mark's width clear on every side. For the logo, measure from the mark.</figcaption>
+    </figure>
+    <figure>
+      <div class="sizes"><div><img src="svg/favicon.svg" alt="" width="16" height="16">16</div><div><img src="svg/favicon.svg" alt="" width="24" height="24">24</div><div><img src="svg/lazylab-mark.svg" alt="" width="32" height="32">32</div><div><img src="svg/lazylab-mark.svg" alt="" width="64" height="64">64</div><div><img src="svg/lazylab-mark.svg" alt="" width="96" height="96">96</div></div>
+      <figcaption>The mark works from 16 px; below 32 px use the favicon. The logo needs at least 24 px of height.</figcaption>
+    </figure>
+  </div>
+
+  <h2 id="colour">Colour</h2>
+  <p class="muted">Click a swatch to copy its hex value. The same values are in <code>tokens.css</code> as <code>--ll-&lt;token&gt;</code> and in <code>tokens.json</code>.</p>
+  <div class="swatches">
+    <button class="swatch" type="button" data-hex="#fb923c"><i style="background:#fb923c"></i><span>Ember 400</span><code>#fb923c</code><small>Gradient start, accent on dark</small></button>
+    <button class="swatch" type="button" data-hex="#ea580c"><i style="background:#ea580c"></i><span>Ember 600</span><code>#ea580c</code><small>Gradient end, fills behind white icons (3.6:1 with white: not for small text)</small></button>
+    <button class="swatch" type="button" data-hex="#c2410c"><i style="background:#c2410c"></i><span>Ember 700</span><code>#c2410c</code><small>Accent and links on light (5.2:1 on white)</small></button>
+    <button class="swatch" type="button" data-hex="#09090b"><i style="background:#09090b"></i><span>Ink 950</span><code>#09090b</code><small>App and docs background (dark)</small></button>
+    <button class="swatch" type="button" data-hex="#18181b"><i style="background:#18181b"></i><span>Ink 900</span><code>#18181b</code><small>Surfaces, wordmark on light</small></button>
+    <button class="swatch" type="button" data-hex="#27272a"><i style="background:#27272a"></i><span>Ink 800</span><code>#27272a</code><small>Borders on dark</small></button>
+    <button class="swatch" type="button" data-hex="#a1a1aa"><i style="background:#a1a1aa"></i><span>Ash 400</span><code>#a1a1aa</code><small>Muted text on dark</small></button>
+    <button class="swatch" type="button" data-hex="#fafafa"><i style="background:#fafafa"></i><span>Paper</span><code>#fafafa</code><small>Background (light), wordmark on dark</small></button>
+    <button class="swatch" type="button" data-hex="#34d399"><i style="background:#34d399"></i><span>Pass</span><code>#34d399</code><small>Pipeline passed</small></button>
+    <button class="swatch" type="button" data-hex="#fb7185"><i style="background:#fb7185"></i><span>Fail</span><code>#fb7185</code><small>Pipeline failed</small></button>
+    <button class="swatch" type="button" data-hex="#fbbf24"><i style="background:#fbbf24"></i><span>Wait</span><code>#fbbf24</code><small>Running, needs attention</small></button>
+  </div>
+
+  <h2 id="type">Type</h2>
+  <div class="type">
+    <div>
+      <div class="sample">Aa lazylab</div>
+      <p class="muted">Plus Jakarta Sans for headings and the wordmark; Plus Jakarta Sans for text.</p>
+    </div>
+    <div>
+      <div class="mono">$ lazy push --detach</div>
+      <p class="muted">JetBrains Mono for code, commands and ids.</p>
+    </div>
+  </div>
+
+  <h2 id="usage">Usage</h2>
+  <div class="rules">
+    <div><h3>Do</h3><ul><li>Use the files as supplied, scaled proportionally.</li><li>Use the light logo on light backgrounds and the dark logo on dark ones.</li><li>Use a one-colour mark on busy images or on backgrounds close to the brand colour.</li><li>Keep a quarter of the mark’s width clear on every side.</li></ul></div>
+    <div><h3>Do not</h3><ul><li>Recolour, stretch, rotate or outline the mark.</li><li>Add shadows, glows or other effects.</li><li>Set the wordmark in another font.</li><li>Place the full-colour mark on a background of the same colour.</li></ul></div>
+  </div>
+
+  <h2 id="copies">Where the files are copied</h2>
+  <p class="muted">Each build refreshes these copies, so projects never edit generated files by hand.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Directory</th><th>Files</th></tr></thead>
+    <tbody>
+      <tr><td><code>../src/assets/brand</code></td><td><code>svg/lazylab-mark.svg</code>, <code>svg/favicon.svg</code>, <code>png/apple-touch-icon.png</code></td></tr>
+      <tr><td><code>../docs/src/assets/brand</code></td><td><code>svg/lazylab-mark.svg</code>, <code>svg/favicon.svg</code>, <code>png/apple-touch-icon.png</code>, <code>png/lazylab-social.png</code></td></tr>
+    </tbody>
+  </table></div>
+</main>
+<div class="toast" role="status" aria-live="polite"></div>
+<script>
+  const toast = document.querySelector('.toast');
+  for (const b of document.querySelectorAll('.swatch')) {
+    b.addEventListener('click', async () => {
+      const hex = b.dataset.hex;
+      try { await navigator.clipboard.writeText(hex); toast.textContent = 'Copied ' + hex; } catch (e) { toast.textContent = hex; }
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 1400);
+    });
+  }
+  // The logo follows the page theme, not only the system one.
+  const root = document.documentElement;
+  const lockup = document.getElementById('lockup');
+  const source = document.querySelector('picture source');
+  const apply = () => {
+    if (!root.dataset.theme) return;
+    source.media = 'not all';
+    lockup.src = root.dataset.theme === 'dark' ? 'svg/lazylab-logo-dark.svg' : 'svg/lazylab-logo-light.svg';
+  };
+  try { const t = localStorage.getItem('brandkit-theme'); if (t) root.dataset.theme = t; } catch (e) {}
+  apply();
+  document.querySelector('.theme').addEventListener('click', () => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('brandkit-theme', root.dataset.theme); } catch (e) {}
+    apply();
+  });
+</script>
+</body>
+</html>
