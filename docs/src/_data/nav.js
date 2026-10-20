@@ -28,6 +28,8 @@ export default [
     title: 'Agents',
     items: [
       { title: 'MCP server', url: '/agents/mcp/' },
+      { title: 'Task briefings and handoffs', url: '/agents/handoffs/' },
+      { title: 'Shared findings (BugKB)', url: '/agents/knowledge/' },
       { title: 'REST API', url: '/agents/rest/' },
       { title: 'Agent skills', url: '/agents/skills/' }
     ]

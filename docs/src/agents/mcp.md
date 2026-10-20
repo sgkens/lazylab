@@ -39,6 +39,13 @@ Every tool that takes `project` accepts a numeric id or a full path such as `gro
 | Tool | Read-only | Does |
 |---|---|---|
 | `get_inbox` | yes | What needs the user across projects, with reasons |
+| `search_bugkb` | yes | Prior fixes across projects, with trust, tested environment and evidence; optional BugKB connection |
+| `get_bugkb_entry` | yes | Full finding before applying or confirming its fix |
+| `record_bugkb_finding` | no | Explicitly record a verified fix or measured improvement; BugKB refuses duplicates and controls trust |
+| `confirm_bugkb_finding` | no | Record evidence that an existing fix worked here; increments hits, so inspect before retrying |
+| `get_task_briefing` | yes | One issue or MR with discussion, acceptance checks, linked MRs, bounded diffs, CI failures and recent local handoffs |
+| `save_handoff` | no | Append an encrypted local checkpoint with decisions, attempts, verification and next steps; does not write to GitLab |
+| `list_handoffs` | yes | Recent checkpoints for the task and active GitLab profile, newest first |
 | `list_projects` | yes | Member projects, most recently active first; `search` filters |
 | `list_work_items` | yes | Issues in a project (`state`: opened, closed, all) |
 | `get_work_item` | yes | One issue with description and comments |
@@ -63,9 +70,14 @@ Read-only tools carry `readOnlyHint`, so clients can allow them without asking e
 On connect, the server sends short instructions:
 
 - start with `get_inbox`;
+- for a specific task, use `get_task_briefing`; before pausing or finishing, use `save_handoff` so another session can continue;
 - after pushing, use `watch` instead of polling;
 - read `get_pipeline_failures` before any full log;
 - follow the title and body formats for issues and MRs.
+
+See [Task briefings and handoffs](/agents/handoffs/) for the checkpoint format, CLI commands, retention and freshness checks. Briefing and handoff tools are available to ordinary agent tokens; `get_env` still requires secret access.
+
+When `LAZYLAB_BUGKB_URL` is configured, briefings search the independent KB automatically. Read the finding and check its environment before applying a fix. Record or confirm findings explicitly after verification; task handoffs are not automatically published as findings. See [Shared findings with BugKB](/agents/knowledge/).
 
 ## A typical session
 
