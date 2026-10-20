@@ -4,10 +4,15 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "eleventy --serve --port 8090",
-    "build": "eleventy"
+    "dev": "bun --bun node_modules/@11ty/eleventy/cmd.cjs --serve --port 8090",
+    "build": "bun --bun node_modules/@11ty/eleventy/cmd.cjs"
   },
   "devDependencies": {
-    "@11ty/eleventy": "3.1.2"
+    "@11ty/eleventy": "3.1.2",
+    "@staticcanvas/hawk": "0.43.7",
+    "@staticcanvas/logcad": "0.6.0",
+    "@staticcanvas/typeflow": "0.34.1",
+    "linkedom": "0.18.12",
+    "pagefind": "1.5.2"
   }
 }

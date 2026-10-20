@@ -1,31 +1,15 @@
 {% extends "layouts/base.njk" %}
-{# Landing page: hero, "choose your path" cards from the page's `paths` front matter, then the Markdown body. #}
 {% block article %}
-<article class="home">
+<article class="home" data-pagefind-body>
   <section class="hero">
-    <img class="hero-mark" src="/assets/brand/lazylab-mark.svg" alt="" width="72" height="72">
-    <h1>{{ title }}</h1>
-    <p class="abstract">{{ abstract }}</p>
-    <p class="hero-actions">
-      <a class="button primary" href="/getting-started/">Get started</a>
-      <a class="button" href="/cli/">Command line</a>
-      <a class="button" href="{{ site.repo }}">Source</a>
-    </p>
+    <div class="hero-identity"><img class="hero-mark" src="/assets/brand/lazylab-mark.svg" alt="" width="52" height="52"><span class="hero-kicker">Your GitLab. Your workspace.</span></div>
+    <h1 data-pagefind-meta="title">{{ title }}</h1><p class="hero-title-note">A little less context switching.</p>
+    <p class="abstract" data-typeflow>{{ abstract }}</p>
+    <div class="hero-actions"><a class="button primary" href="/getting-started/">Get started <span aria-hidden="true">↗</span></a><a class="button" href="/agents/mcp/">Connect an agent <span aria-hidden="true">→</span></a></div>
+    <div class="hero-facts"><span>Self-hosted</span><span>Single user</span><span>Bun or Docker</span><span>MIT licensed</span></div>
   </section>
-
-  <h2 id="choose-your-path">Choose your path</h2>
-  <ul class="paths">
-    {% for p in paths %}
-    <li>
-      <a href="{{ p.url }}">
-        <span class="path-icon" aria-hidden="true">{{ p.icon }}</span>
-        <strong>{{ p.title }}</strong>
-        <span class="muted">{{ p.text }}</span>
-      </a>
-    </li>
-    {% endfor %}
-  </ul>
-
+  <h2 id="choose-your-path">Find your next step</h2>
+  <ul class="paths">{% for p in paths %}<li><a href="{{ p.url }}"><span class="path-top"><span class="path-icon" aria-hidden="true">{{ p.icon }}</span><span class="path-arrow" aria-hidden="true">↗</span></span><strong>{{ p.title }}</strong><span class="muted">{{ p.text }}</span></a></li>{% endfor %}</ul>
   {{ content | safe }}
 </article>
 {% endblock %}

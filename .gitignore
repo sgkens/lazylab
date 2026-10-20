@@ -8,4 +8,5 @@ coverage/
 .env*
 !.env.example
 docs/_site/
+docs/.generated/
 dist-cli/

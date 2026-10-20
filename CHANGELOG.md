@@ -8,6 +8,7 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Added
 
+- **Docs polish:** aligned header and content columns, responsive scroll-aware contents, build-time heading links, prominent source edit links, reading progress, copy controls, thin scrollbars and reduced-motion-aware transitions. Locally bundled Hawk/Pagefind search uses the TypeFlow animation driver and Logcad diagnostics.
 - **Testing readiness:** GitLab CI checks types, tests, the app build and CLI compilation before docs publishing; branch pushes with an open MR use the MR pipeline. Added a live acceptance-testing guide with known limits and failure-reporting instructions.
 - **BugKB integration:** optional `LAZYLAB_BUGKB_URL` adds bounded searches for prior fixes to task briefings, with trust, environment and evidence. Four MCP tools and `lazy kb search/show/add/confirm` support explicit verified findings. The independent BugKB retains its validation, duplicate refusal and trust rules; offline searches leave the rest of the briefing usable.
 - **Agent briefings and handoffs:** `get_task_briefing` gathers issue/MR context, acceptance checklists, related MRs, bounded patches and CI failures in one read. `save_handoff` and `list_handoffs` provide encrypted task history with agent identity, verification reports and next steps. `lazy brief` and `lazy handoff` expose the same workflow in the terminal.

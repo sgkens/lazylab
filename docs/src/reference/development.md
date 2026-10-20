@@ -69,16 +69,34 @@ bun run build    # static output in docs/_site
 
 | Path | Purpose |
 |---|---|
-| `docs/eleventy.config.js` | Plugins, Mermaid fences, the pager filter |
+| `docs/eleventy.config.js` | HTML transforms, Pagefind indexing, Mermaid fences and navigation filters |
+| `docs/scripts/navigation.mjs` | Heading IDs, section links, table of contents, reading time and code toolbars generated at build time |
+| `docs/scripts/build-assets.mjs` | Bun bundles the browser modules and CSS into ignored `.generated/` output |
 | `docs/src/_data/nav.js` | Sidebar order; new pages must be added here |
 | `docs/src/_data/site.js` | Title, repository and edit links, `DOCS_SITE_URL` for link previews |
 | `docs/src/_includes/layouts/base.njk` | Page layout |
 | `docs/src/_includes/layouts/home.njk` | Landing page: hero and "choose your path" cards from the page's `paths` front matter |
 | `docs/src/assets/brand/` | Logo, favicon and link preview, copied from `brand/` by the brandkit build |
-| `docs/src/assets/style.css` | Styles, light and dark |
+| `docs/src/assets/style.css` | Shared layout, spacing and colour tokens; light/dark styles, responsive rails and reduced-motion rules |
+| `docs/src/assets/docs.js`, `search.js` | Navigation, scroll tracking, copy controls and lazy-loaded Hawk search |
 | `docs/src/**/*.md` | Pages; front matter sets `title` and `abstract` |
 
 Markdown is not processed by Nunjucks, so `{{ }}` in code samples stays literal. Set `DOCS_PATH_PREFIX=/lazylab/` when publishing under a sub-path, for example on GitLab Pages, and `DOCS_SITE_URL` to the published base URL to emit `og:image` and `og:url`; the `pages` CI job sets both from `CI_PAGES_URL`.
+
+### Interface and search
+
+The header and page share a 1,360 px maximum width and the same sidebar/article/contents grid. The contents panel highlights the current section and scrolls its own rail to keep the active link visible. Below 1,200 px it becomes a native disclosure; the main navigation becomes a keyboard-accessible drawer below 820 px. Heading anchors and contents links are generated into HTML and work without JavaScript.
+
+The docs commands explicitly run Eleventy under Bun to use its asset bundler. Each build, including watch rebuilds, generates a Pagefind index over article content only. A missing index or bundling failure fails the build. Hawk and its TypeFlow animation driver are loaded on the first search request; those assets are served locally. Logcad reports load failures to the console without enabling persistent debug capture. Mermaid keeps its existing pinned CDN renderer, with readable source as its fallback.
+
+| Interface setting | Source/default | Behaviour |
+|---|---|---|
+| Search | Hawk 0.43.7 + Pagefind 1.5.2 | Header button, Ctrl/Cmd+K or `/`; Escape closes and restores focus |
+| Motion | TypeFlow 0.34.1 and CSS | Intro/preview word fades, section arrivals and supported browser view transitions; disabled for reduced motion |
+| Theme | `lazylab-docs-theme` in localStorage | Explicit light/dark preference; system colour scheme used initially |
+| Layout and colour tokens | `:root` in `style.css` | Shared by the page, navigation, search modal and thin scrollbars |
+| Edit link | `site.editBase` plus encoded source path | Links to the Markdown source for the current page |
+| Search index path | Relative to the bundled search module | Works at the site root and with `DOCS_PATH_PREFIX` |
 
 ## Brand assets
 

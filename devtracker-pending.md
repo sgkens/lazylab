@@ -448,6 +448,17 @@ Follow-ups:
 | E17 | Second end-to-end run: "Already set up" | The first run's server kept the port: the trap killed the subshell, not `bun` | Script starts `bun` directly so `$!` is the server |
 | E18 | `pkill -f 'bun server.ts'` killed the calling shell (exit 144) | The pattern matched the shell's own command line | Use `pgrep -af 'server\.ts'` and kill by PID |
 
+## Done 2026-10-20: documentation layout and navigation polish
+
+- [x] DOCS-2 Shared 1,360 px header/page grid, aligned navigation/article/contents columns, revised spacing and typography, light/dark surfaces, thin scrollbars, prominent source edit links and a responsive drawer. Build-time heading IDs/anchors, duplicate-heading suffixes, contents links, reading time and code toolbars remain in static HTML.
+- [x] DOCS-3 Locally bundled Hawk 0.43.7 and Pagefind 1.5.2 search, TypeFlow 0.34.1 intro/preview motion and Logcad 0.6.0 diagnostics. Search loads on demand, indexes article content rather than chrome/diagram source, works under a path prefix and restores focus after Escape. Build/index failures fail the documentation build. The docs CLI runs Eleventy under Bun; generated bundles are ignored and excluded from watch inputs.
+- [x] DOCS-4 Scroll-aware contents with its own active-link scrolling, a native disclosure below 1,200 px, drawer below 820 px, reading progress, copy controls, heading offsets, CSS section arrivals and supported browser view transitions. Reduced motion disables animation. Diagram rendering retains the existing pinned Mermaid CDN and now re-renders on theme changes.
+
+Verified: 133 tests, TypeScript and app build; 24-page docs builds at root and `/lazylab/`; no broken internal heading links; clean frozen-install docs builds in `oven/bun:1.3.11`, including a custom output directory with the index in the correct location. Chromium checks covered 320–1,920 px, no horizontal overflow, heading offsets, scrollspy, contents self-scrolling, copy/clipboard, repeated search shortcuts, theme persistence, mobile focus/Escape, disclosure state recovery and TypeFlow. Chromium, Firefox and WebKit passed prefixed search/results, edit URLs and mobile navigation with no page errors. Real Mermaid rendering/theme updates passed. Core text, muted text and accent contrast were checked in light/dark themes.
+
+Integration notes: the local TypeFlow checkout is 0.34.4 but the published package is 0.34.1, so the docs pin the published version. Do not copy unbundled source JS to the same paths as generated bundles: Eleventy refuses duplicate passthrough outputs. In Eleventy 3.1.2's `eleventy.after`, use normalized `directories.output`, not deprecated `dir.output`, to honour CLI output overrides when writing the Pagefind index. The shared KB was offline, so the output-directory gotcha is recorded here instead.
+Not verified: hosted GitLab Pages deployment or physical mobile devices. Diagram rendering still requires the existing Mermaid CDN; diagram source remains readable when it is unavailable.
+
 ## Done 2026-10-20: acceptance-testing readiness
 
 Decision: open the current pre-1.0 workflow for acceptance testing before expanding the feature set. Agent briefing, handoffs and shared findings now support a complete trial; live GitLab results should determine the next work.
