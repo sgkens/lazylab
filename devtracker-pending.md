@@ -448,6 +448,30 @@ Follow-ups:
 | E17 | Second end-to-end run: "Already set up" | The first run's server kept the port: the trap killed the subshell, not `bun` | Script starts `bun` directly so `$!` is the server |
 | E18 | `pkill -f 'bun server.ts'` killed the calling shell (exit 144) | The pattern matched the shell's own command line | Use `pgrep -af 'server\.ts'` and kill by PID |
 
+## Done 2026-10-20: optional BugKB integration
+
+- [x] AGENT-13 Independent BugKB HTTP adapter, enabled with `LAZYLAB_BUGKB_URL`. Uses the existing search, records and confirmation APIs, checks for hooks before writing, preserves duplicate refusal and server-controlled trust, bounds responses and deadlines, refuses redirects and never automatically retries writes. Recognizable credentials are redacted from searches and refused in findings.
+- [x] AGENT-14 MCP tools `search_bugkb`, `get_bugkb_entry`, `record_bugkb_finding` and `confirm_bugkb_finding`, plus `lazy kb search/show/add/confirm`. Writes are explicit, require live GitLab project attribution and checked evidence, and cannot inject trust fields or bypass duplicate detection. Demo profiles remain read-only toward the shared KB.
+- [x] AGENT-15 Briefings automatically search task title/labels and up to two CI error lines when configured. Results include tested environments, trust, fix excerpts, measurements and evidence, with `disabled` / `available` / `partial` / `unavailable` status. No automatic publication of handoffs or confirmation of search matches. Added the connection/workflow guide, configuration example and MCP/CLI docs.
+
+Verified: lint; 133 tests (15 new BugKB tests); app and docs builds. Tests cover redaction, protected fields, required evidence, performance measurements, filters, limits, timeouts, uncertain writes, missing hooks, duplicate refusal, confirmation bodies, partial/offline briefings and authenticated MCP/CLI round trips. A separate end-to-end run used the real BugKB hooks and migrations on PocketBase 0.40.4 with disposable Linux storage: CLI create persisted evidence and initial unverified trust; duplicate add was refused with candidate ID; a second-project confirmation promoted trust through the server; briefings found the entry and kept working after the KB stopped. Existing shared KB data was not modified.
+Not verified: the owner's shared KB deployment (offline at the default local endpoint), live GitLab attribution, Windows or Docker networking. Integration remains disabled until a reachable service URL is configured.
+
+Non-obvious integration finding: BugKB's create hook clears agent-supplied notes. Verification is therefore appended to the persisted fix and extracted separately for briefing display. Confirmations continue to use the server-managed notes. This was verified against real hooks; the shared KB was unavailable to record the gotcha there.
+
+## Done 2026-10-20: agent briefings and persistent handoffs
+
+- [x] AGENT-8 `get_task_briefing`: one read for a task's description, explicit acceptance checklist, recent user discussion, linked MRs (including other projects), bounded patches, failed-job excerpts and the latest three handoffs. Required task reads fail clearly; optional source failures and omissions are reported. Pipeline reads use the head pipeline's own project when available.
+- [x] AGENT-9 `save_handoff` / `list_handoffs`: append-only agent reports with server-recorded identity, decisions, attempted fixes, structured verification, blockers, next steps and optional branch/full SHA. Encrypted inside the vault; isolated by profile/project/task kind/iid, with a separate demo namespace. Latest 20 per task and 500 overall retained. MR briefings compare recorded and current head SHAs. Older vaults migrate on unlock; failed writes roll back in-memory handoff state.
+- [x] AGENT-10 `lazy brief issue|mr <iid>`, `lazy handoff list issue|mr <iid>` and `lazy handoff save issue|mr <iid> --file handoff.json`, with JSON and readable output. MCP startup instructions explain briefing and handoff use. Added the workflow guide and updated MCP, CLI, feature status, README and changelog.
+
+Verified: lint; 118 tests including 14 new agent workflow tests; SPA and docs builds. Coverage includes authenticated MCP/CLI round trips, fake GitLab relationship/diff/recent-note/failure reads, fork pipeline project IDs, partial failures and truncation, token attribution, input validation, profile isolation, retention, encrypted persistence across fresh processes, lock behaviour, legacy payloads, host-change cleanup and failed-write rollback. A production-server demo smoke run also passed locked MCP rejection, login, app serving, CLI save/brief/list and handoff persistence after server restart, using an isolated temporary vault.
+Not verified: live GitLab; Claude Code / Codex client sessions; Windows. This slice supplies context and continuity; the work queue and review inbox remain follow-ups.
+
+Follow-ups:
+- [ ] AGENT-11 Work queue with task assignment, progress, blockers, branch and reported results.
+- [ ] AGENT-12 Review inbox with the current diff, verification evidence and unresolved questions.
+
 ## Done 2026-10-18 (twelfth pass): brandkit extracted into its own repository
 
 - [x] BRAND-7 The generator moved to its own repository, [brandkit](https://gitlab.com/sgkens/brandkit) (local: `../brandkit`). It is now general: one reference SVG plus `brand.config.json` in; named SVG, PNG and WebP files, outlined-wordmark logos, one-colour marks, favicon, touch icon, link preview, sheet, `tokens.css`/`tokens.json` and a guide page out. lazylab is its first example
