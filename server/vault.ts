@@ -12,6 +12,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'crypto';
+import { AgentHandoff, HANDOFFS_PER_TASK, HANDOFFS_TOTAL, parseHandoff, sameTask, TaskRef, validateTask } from './handoffs.js';
 
 const VAULT_VERSION = 1;
 const KDF_PARAMS = { N: 2 ** 16, r: 8, p: 1, keyLen: 32 };
@@ -146,6 +147,7 @@ interface VaultPayload {
   entries: VaultEntry[];
   agentTokens: AgentToken[];
   notify: NotifySettings;
+  agentHandoffs: AgentHandoff[];
 }
 
 const emptyPayload = (): VaultPayload => ({
@@ -153,6 +155,7 @@ const emptyPayload = (): VaultPayload => ({
   activeProfileId: null,
   entries: [],
   agentTokens: [],
+  agentHandoffs: [],
   notify: { channels: [], rules: defaultNotifyRules(), watches: [] }
 });
 
@@ -330,6 +333,7 @@ class Vault extends EventEmitter {
     const host = input.host.replace(/\/+$/, '');
     const existing = input.id ? p.profiles.find((pr) => pr.id === input.id) : undefined;
     if (existing) {
+      if (existing.host !== host) p.agentHandoffs = p.agentHandoffs.filter((h) => h.profile_id !== existing.id);
       existing.name = input.name;
       existing.host = host;
       if (input.token) existing.token = input.token;
@@ -348,6 +352,7 @@ class Vault extends EventEmitter {
   deleteProfile(id: string) {
     const p = this.requireOpen();
     p.profiles = p.profiles.filter((pr) => pr.id !== id);
+    p.agentHandoffs = p.agentHandoffs.filter((h) => h.profile_id !== id);
     if (p.notify) p.notify.watches = p.notify.watches.filter((w) => w.profileId !== id);
     const wasActive = p.activeProfileId === id;
     if (wasActive) p.activeProfileId = null;
@@ -423,6 +428,37 @@ class Vault extends EventEmitter {
     const result = fn(this.getNotify());
     this.persist();
     return result;
+  }
+
+  // ---- persistent agent handoffs -----------------------------------------
+
+  getAgentHandoffs(profileId: string | null, task: TaskRef, limit = 5): AgentHandoff[] {
+    validateTask(task);
+    if (!Number.isInteger(limit) || limit < 1 || limit > HANDOFFS_PER_TASK) throw new Error('limit must be between 1 and 20');
+    return structuredClone(this.requireOpen().agentHandoffs
+      .filter((h) => h.profile_id === profileId && sameTask(h, task)).slice(-limit).reverse());
+  }
+
+  saveAgentHandoff(profileId: string | null, task: TaskRef, input: unknown, author: AgentHandoff['author']): AgentHandoff {
+    const p = this.requireOpen();
+    if (profileId !== null && !p.profiles.some((pr) => pr.id === profileId)) throw new Error('GitLab profile no longer exists');
+    validateTask(task);
+    const content = parseHandoff(input);
+    const record: AgentHandoff = {
+      ...content, project_id: task.project_id, kind: task.kind, iid: task.iid,
+      id: randomUUID(), profile_id: profileId, created_at: new Date().toISOString(), author: { ...author }
+    };
+    const history = p.agentHandoffs.filter((h) => h.profile_id === profileId && sameTask(h, task));
+    const expired = new Set(history.slice(0, Math.max(0, history.length - HANDOFFS_PER_TASK + 1)).map((h) => h.id));
+    const previous = p.agentHandoffs;
+    p.agentHandoffs = [...previous.filter((h) => !expired.has(h.id)), record].slice(-HANDOFFS_TOTAL);
+    try {
+      this.persist();
+    } catch (err) {
+      p.agentHandoffs = previous;
+      throw err;
+    }
+    return structuredClone(record);
   }
 
   // ---- agent API tokens ---------------------------------------------------

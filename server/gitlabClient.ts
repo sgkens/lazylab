@@ -62,6 +62,17 @@ export interface GitLabNote {
   };
 }
 
+export interface GitLabDiff {
+  old_path: string;
+  new_path: string;
+  diff: string;
+  new_file?: boolean;
+  renamed_file?: boolean;
+  deleted_file?: boolean;
+  collapsed?: boolean;
+  too_large?: boolean;
+}
+
 export interface GitLabMilestone {
   id: number;
   iid: number;
@@ -123,6 +134,7 @@ export interface GitLabMergeRequest {
   labels: string[];
   pipeline?: {
     id: number;
+    project_id?: number;
     status: 'success' | 'running' | 'failed' | 'pending' | 'canceled' | 'skipped' | 'manual';
     web_url: string;
     ref: string;
@@ -1730,6 +1742,7 @@ export function mapMergeRequest(m: any): GitLabMergeRequest {
     // List responses carry no pipeline; single-MR responses carry head_pipeline (preferred) and pipeline.
     pipeline: (m.head_pipeline || m.pipeline) ? {
       id: (m.head_pipeline || m.pipeline).id,
+      project_id: (m.head_pipeline || m.pipeline).project_id,
       status: (m.head_pipeline || m.pipeline).status,
       web_url: (m.head_pipeline || m.pipeline).web_url,
       ref: (m.head_pipeline || m.pipeline).ref,
@@ -2675,6 +2688,37 @@ export class GitLabClient {
     }
     const { data } = await this.fetchApi<any>(`/projects/${projectId}/merge_requests/${mrIid}`);
     return mapMergeRequest(data);
+  }
+
+  /** Bounded recent discussion for agent briefings; ordinary note views keep their existing order. */
+  async getBriefingNotes(projectId: number, kind: 'work_item' | 'merge_request', iid: number) {
+    const notes = this.isDemoMode
+      ? [...(DEMO_NOTES[`${kind === 'work_item' ? 'work_item' : 'mr'}:${projectId}:${iid}`] || [])]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      : await this.apiGet<GitLabNote[]>(`/projects/${projectId}/${kind === 'work_item' ? 'issues' : 'merge_requests'}/${iid}/notes?sort=desc&order_by=created_at&per_page=100`);
+    const comments = notes.filter((n) => !n.system);
+    return { notes: comments.slice(0, 20).reverse(), has_more: comments.length > 20 || notes.length >= 100 };
+  }
+
+  /** GitLab's relationship endpoint, rather than guessing from titles or branch names in live mode. */
+  async getIssueMergeRequests(projectId: number, issueIid: number): Promise<GitLabMergeRequest[]> {
+    if (this.isDemoMode) {
+      const reference = new RegExp(`(?:^|[\\s(])#${issueIid}(?!\\d)`);
+      return DEMO_MRS.filter((m) => m.project_id === projectId &&
+        (reference.test(m.description || '') || m.source_branch.startsWith(`${issueIid}-`)));
+    }
+    const data = await this.apiGet<any[]>(`/projects/${projectId}/issues/${issueIid}/related_merge_requests?per_page=100`);
+    return data.map(mapMergeRequest);
+  }
+
+  async getMergeRequestDiffs(projectId: number, mrIid: number): Promise<GitLabDiff[]> {
+    if (this.isDemoMode) {
+      // Demo data has file statistics but no patch bodies; never invent code to fill the gap.
+      return (await this.getMergeRequest(projectId, mrIid)).diff_stats?.map((s) => ({
+        old_path: s.file, new_path: s.file, diff: '', collapsed: true
+      })) ?? [];
+    }
+    return this.apiGet<GitLabDiff[]>(`/projects/${projectId}/merge_requests/${mrIid}/diffs?per_page=11`);
   }
 
   async getPipelineJobs(projectId: number, pipelineId: number, force = false): Promise<{ stages: string[]; jobs: GitLabJob[] }> {
