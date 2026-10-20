@@ -93,12 +93,15 @@ Before opening a merge request, read [CONTRIBUTING.md](https://gitlab.com/sgkens
 
 ### Publishing
 
-`.gitlab-ci.yml` has two jobs that share one build:
+`.gitlab-ci.yml` checks the app before its documentation stage:
 
 | Job | Runs when | Does |
 |---|---|---|
-| `docs:build` | A merge request changes `docs/` | Builds the site; a broken page fails the MR |
+| `app:check` | Branch, tag and merge request pipelines | Frozen install, TypeScript, tests, app build, CLI compilation and binary version check; retains `dist/` for one week |
+| `docs:build` | A merge request changes `docs/` or `.gitlab-ci.yml` | Builds the site; a broken page fails the MR |
 | `pages` | `docs/` or `.gitlab-ci.yml` changes on the default branch | Builds the site and publishes `public/` with GitLab Pages |
+
+When a branch has an open MR, pushes use the MR pipeline instead of creating a duplicate branch pipeline. App checks use temporary test storage and no live GitLab or BugKB credentials. Docker image builds and cross-platform binary releases remain follow-ups. See [Testing the pre-1.0 build](/testing/) for the live acceptance workflow.
 
 The path prefix comes from `CI_PAGES_URL`: `https://sgkens.gitlab.io/lazylab` gives `/lazylab/`, and a unique Pages domain gives `/`. To check the job's script locally, run it with the variable set:
 

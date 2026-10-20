@@ -5,6 +5,7 @@ export default [
     items: [
       { title: 'Overview', url: '/' },
       { title: 'Getting started', url: '/getting-started/' },
+      { title: 'Testing the pre-1.0 build', url: '/testing/' },
       { title: 'Configuration', url: '/configuration/' },
       { title: 'Remote access', url: '/remote-access/' },
       { title: 'Security model', url: '/security/' },

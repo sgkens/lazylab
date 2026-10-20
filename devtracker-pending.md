@@ -448,6 +448,16 @@ Follow-ups:
 | E17 | Second end-to-end run: "Already set up" | The first run's server kept the port: the trap killed the subshell, not `bun` | Script starts `bun` directly so `$!` is the server |
 | E18 | `pkill -f 'bun server.ts'` killed the calling shell (exit 144) | The pattern matched the shell's own command line | Use `pgrep -af 'server\.ts'` and kill by PID |
 
+## Done 2026-10-20: acceptance-testing readiness
+
+Decision: open the current pre-1.0 workflow for acceptance testing before expanding the feature set. Agent briefing, handoffs and shared findings now support a complete trial; live GitLab results should determine the next work.
+
+- [x] BUILD-8 App verification job in GitLab CI: frozen dependency install, TypeScript, all tests, SPA build, CLI compilation and binary version check. Runs in branch, tag and MR pipelines; an open MR replaces its duplicate branch-push pipeline. App verification precedes documentation publishing. Successful app bundles are retained for one week.
+- [x] DOCS-1 Acceptance-testing guide with the issue-to-briefing-to-CI-to-handoff workflow, profile isolation, BugKB reuse and failure cases, known scale/permission limits, and a reproducible failure-report format. Linked from the README and docs navigation.
+
+Verified: parsed the CI YAML and ran the exact `app:check` script in an isolated copy of the repository inside `oven/bun:1.3.11`. Frozen install, lint, 133 tests, SPA build, CLI compilation and compiled binary version all passed. The docs build passed with the new guide. No live credentials or owner data were used.
+Not verified: execution on the hosted GitLab runner and its branch/MR event rules, live GitLab acceptance, Docker image builds in CI, cross-platform releases. BUILD-4 remains in progress for Docker coverage. The existing large frontend chunk warning remains tracked under BUILD-2.
+
 ## Done 2026-10-20: optional BugKB integration
 
 - [x] AGENT-13 Independent BugKB HTTP adapter, enabled with `LAZYLAB_BUGKB_URL`. Uses the existing search, records and confirmation APIs, checks for hooks before writing, preserves duplicate refusal and server-controlled trust, bounds responses and deadlines, refuses redirects and never automatically retries writes. Recognizable credentials are redacted from searches and refused in findings.
@@ -570,7 +580,7 @@ Follow-ups:
 - [x] BUILD-1 `git init`, `main` + `develop` branches, first commit of the imported baseline
 - [ ] BUILD-2 Vite `manualChunks`: split `react`/`react-dom`, `lucide-react`, and the heavy views (pipeline editor, dashboard)
 - [~] BUILD-3 `bun test` setup: unit tests for `yamlParser`, `cacheDb`, response normalisers; route tests against the demo client
-- [~] BUILD-4 CI pipeline: lint, test, build, docker build (`.gitlab-ci.yml` exists with docs jobs only)
+- [~] BUILD-4 CI pipeline: app lint, test, build and CLI compile added (BUILD-8), alongside docs jobs; Docker image build remains open
 - [ ] BUILD-5 Container `HEALTHCHECK` on `/api/status` (needs a lightweight health route that does not call GitLab)
 - [ ] BUILD-6 Split `gitlabClient.ts` (3.4k lines): demo dataset into `server/demo/`, one module per GitLab resource
 - [x] BUILD-7 Single source for the agent skill text: serve `/api/agent/skill.md` from `skills/.claude/lazylab-agent/SKILL.md` and have `AgentSkillModal` fetch it

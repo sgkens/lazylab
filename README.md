@@ -172,6 +172,8 @@ Details: [Security model](docs/src/security.md). To report a vulnerability, see 
 
 lazylab is pre-1.0 and built for a single user.
 
+The core workflow is ready for acceptance testing. Follow [Testing the pre-1.0 build](docs/src/testing.md) to exercise it against live GitLab and an optional BugKB, and record the remaining gaps before expanding the feature set.
+
 - The UI was audited in October 2026: every control now reaches a real GitLab call or says what it cannot do.
 - Several features are verified only against demo data so far, including the inbox, run pipeline and release notes. [Feature status](docs/src/reference/status.md) lists what has run against a live GitLab.
 - Open work is tracked in [devtracker-pending.md](devtracker-pending.md).
