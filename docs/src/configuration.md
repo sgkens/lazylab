@@ -29,6 +29,10 @@ cp .env.example .env
 | `LAZYLAB_JOURNAL_MAX_BYTES` | `5242880` (5 MiB) | Size at which the cache journal file is rotated to `<name>.1`; one previous file is kept. `0` disables rotation |
 | `LAZYLAB_JOURNAL_KEEP_ROWS` | `10000` | Newest change-journal rows kept in the cache database. `0` keeps all |
 | `LAZYLAB_JOURNAL_KEEP_DAYS` | `7` | Change-journal rows older than this are pruned. `0` keeps rows of any age |
+| `LAZYLAB_CACHE_STALE_HOURS` | `24` | How long expired cache rows stay available as a fallback before they are deleted |
+| `LAZYLAB_CACHE_MAX_ROWS` | `5000` | Cache row cap; the least recently written rows are deleted first. `0` disables the cap |
+| `LAZYLAB_CACHE_MAX_MB` | `128` | Cap on the stored cache size in MiB. `0` disables the cap |
+| `LAZYLAB_CACHE_MEMORY_ENTRIES` | `256` | Parsed cache entries kept in memory; the rest are read from SQLite on demand |
 | `LAZYLAB_BUGKB_URL` | unset (disabled) | Independent BugKB service base URL; adds prior findings to briefings and enables explicit KB tools. See [Shared findings](/agents/knowledge/) |
 | `LAZYLAB_TLS` | `off` | `on` serves HTTPS directly. See [Remote access](/remote-access/) |
 | `LAZYLAB_TLS_CERT`, `LAZYLAB_TLS_KEY` | unset | PEM certificate and key. Without them a self-signed certificate is generated |
@@ -47,6 +51,15 @@ cp .env.example .env
 | `tls/` | Self-signed certificate and key, when generated | No (key file mode 0600) |
 
 Back up `vault.json` and remember the password. The cache can be deleted at any time; lazylab refetches from GitLab.
+
+### Cache retention
+
+A sweep runs at start and every 10 minutes. It deletes:
+
+- rows that expired more than `LAZYLAB_CACHE_STALE_HOURS` ago;
+- the least recently written rows beyond `LAZYLAB_CACHE_MAX_ROWS` or `LAZYLAB_CACHE_MAX_MB`.
+
+When the member project list is refreshed, expired rows of projects no longer in it are deleted without the grace period. Switching or removing the active GitLab profile purges the whole cache. The change journal has its own limits (`LAZYLAB_JOURNAL_*`).
 
 ## In-app settings
 

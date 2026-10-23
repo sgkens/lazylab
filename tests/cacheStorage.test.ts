@@ -132,3 +132,80 @@ describe('cacheDb journal bounds', () => {
     expect(envInt('LAZYLAB_TEST_INT', 3)).toBe(3);
   });
 });
+
+describe('cacheDb retention', () => {
+  const HOUR = 3_600_000;
+  const open = async (opts: ConstructorParameters<typeof CacheDb>[0] = {}) => {
+    const c = new CacheDb({ dataDir: freshDir(), sweepIntervalMs: 0, ...opts });
+    await c.init();
+    return c;
+  };
+
+  test('keeps expired rows for the stale grace period, then deletes them', async () => {
+    const c = await open({ staleKeepHours: 24 });
+    c.set('old', 'test', null, 1, undefined, 1);
+    c.set('fresh', 'test', null, 2, undefined, 60_000);
+    await Bun.sleep(5);
+    expect(c.sweep().expired).toBe(0);
+    expect(c.get('old', { allowStale: true })?.stale).toBe(true);
+    expect(c.sweep(Date.now() + 25 * HOUR).expired).toBe(2);
+    expect(c.get('old', { allowStale: true })).toBeNull();
+    c.close();
+  });
+
+  test('a membership refresh evicts expired rows of projects that left the list', async () => {
+    const c = await open();
+    c.set('pipelines:1', 'pipelines', '1', [{ id: 1 }], undefined, 1);
+    c.set('pipelines:2', 'pipelines', '2', [{ id: 2 }], undefined, 1);
+    c.set('pipelines:3', 'pipelines', '3', [{ id: 3 }], undefined, 60_000);
+    await Bun.sleep(5);
+    c.set('projects:list', 'projects', null, [{ id: 1 }], undefined, 60_000);
+    // Project 1 is a member; project 3 is fresh and waits for its TTL.
+    expect(c.get('pipelines:1', { allowStale: true })).not.toBeNull();
+    expect(c.get('pipelines:2', { allowStale: true })).toBeNull();
+    expect(c.get('pipelines:3')).not.toBeNull();
+    expect(c.getStats().recentLogs.some((l) => l.operation === 'EVICT')).toBe(true);
+    c.close();
+  });
+
+  test('caps the row count, dropping the least recently written rows', async () => {
+    const c = await open({ maxRows: 3 });
+    for (let i = 0; i < 5; i++) {
+      c.set(`k${i}`, 'test', null, i);
+      await Bun.sleep(2);
+    }
+    expect(c.sweep().overCap).toBe(2);
+    expect(c.get('k0')).toBeNull();
+    expect(c.get('k1')).toBeNull();
+    expect(c.get<number>('k4')?.data).toBe(4);
+    expect(c.getStats().totalEntries).toBe(3);
+    c.close();
+  });
+
+  test('caps the stored size', async () => {
+    const c = await open({ maxRows: 0, maxMegabytes: 1 });
+    const blob = 'x'.repeat(400 * 1024);
+    for (let i = 0; i < 4; i++) {
+      c.set(`b${i}`, 'test', null, blob);
+      await Bun.sleep(2);
+    }
+    expect(c.sweep().overCap).toBe(2);
+    expect(c.get('b0')).toBeNull();
+    expect(c.get('b3')).not.toBeNull();
+    c.close();
+  });
+
+  test('a full purge removes every row and survives a reopen', async () => {
+    const dir = freshDir();
+    const c = new CacheDb({ dataDir: dir, sweepIntervalMs: 0 });
+    await c.init();
+    c.set('secret-issue', 'work_items', '9', [{ title: 'private' }]);
+    c.clear();
+    c.close();
+    const d = new CacheDb({ dataDir: dir, sweepIntervalMs: 0 });
+    await d.init();
+    expect(d.get('secret-issue', { allowStale: true })).toBeNull();
+    expect(d.getStats().totalEntries).toBe(0);
+    d.close();
+  });
+});

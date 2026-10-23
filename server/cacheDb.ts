@@ -32,6 +32,19 @@ export interface CacheDbOptions {
   journalKeepRows?: number;
   /** Age in days after which `wal_logs` rows are pruned. 0 keeps rows of any age. */
   journalKeepDays?: number;
+  /** How long expired rows stay readable through `allowStale` before they are deleted. */
+  staleKeepHours?: number;
+  /** Row cap for `cache_store`; the least recently written rows go first. 0 disables the cap. */
+  maxRows?: number;
+  /** Cap on the stored JSON size in MiB; the least recently written rows go first. 0 disables the cap. */
+  maxMegabytes?: number;
+  /** Interval of the background retention sweep. 0 disables the timer (tests call sweep()). */
+  sweepIntervalMs?: number;
+}
+
+export interface SweepResult {
+  expired: number;
+  overCap: number;
 }
 
 interface CacheRow {
@@ -48,6 +61,11 @@ const DEFAULT_MEMORY_ENTRIES = 256;
 const DEFAULT_JOURNAL_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_JOURNAL_KEEP_ROWS = 10_000;
 const DEFAULT_JOURNAL_KEEP_DAYS = 7;
+const DEFAULT_STALE_KEEP_HOURS = 24;
+const DEFAULT_MAX_ROWS = 5_000;
+const DEFAULT_MAX_MEGABYTES = 128;
+const DEFAULT_SWEEP_INTERVAL_MS = 10 * 60_000;
+const HOUR_MS = 3_600_000;
 /** Journal inserts between two prunes of `wal_logs`. */
 const PRUNE_EVERY = 500;
 const DAY_MS = 86_400_000;
@@ -84,6 +102,11 @@ export class CacheDb {
   private readonly journalKeepDays: number;
   private journalBytes = 0;
   private logsSincePrune = 0;
+  private readonly staleKeepMs: number;
+  private readonly maxRows: number;
+  private readonly maxBytes: number;
+  private readonly sweepIntervalMs: number;
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private stmts: {
     get: Statement<CacheRow, [string]>;
     getData: Statement<{ data: string }, [string]>;
@@ -100,10 +123,14 @@ export class CacheDb {
     this.dataDir = path.resolve(opts.dataDir ?? (process.env.LAZYLAB_DATA_DIR || path.join(process.cwd(), '.data')));
     this.dbPath = path.join(this.dataDir, 'labwi_cache.sqlite');
     this.walPath = path.join(this.dataDir, 'labwi_cache.wal');
-    this.memoryEntries = Math.max(1, opts.memoryEntries ?? DEFAULT_MEMORY_ENTRIES);
+    this.memoryEntries = Math.max(1, opts.memoryEntries ?? envInt('LAZYLAB_CACHE_MEMORY_ENTRIES', DEFAULT_MEMORY_ENTRIES));
     this.journalMaxBytes = opts.journalMaxBytes ?? envInt('LAZYLAB_JOURNAL_MAX_BYTES', DEFAULT_JOURNAL_MAX_BYTES);
     this.journalKeepRows = opts.journalKeepRows ?? envInt('LAZYLAB_JOURNAL_KEEP_ROWS', DEFAULT_JOURNAL_KEEP_ROWS);
     this.journalKeepDays = opts.journalKeepDays ?? envInt('LAZYLAB_JOURNAL_KEEP_DAYS', DEFAULT_JOURNAL_KEEP_DAYS);
+    this.staleKeepMs = (opts.staleKeepHours ?? envInt('LAZYLAB_CACHE_STALE_HOURS', DEFAULT_STALE_KEEP_HOURS)) * HOUR_MS;
+    this.maxRows = opts.maxRows ?? envInt('LAZYLAB_CACHE_MAX_ROWS', DEFAULT_MAX_ROWS);
+    this.maxBytes = (opts.maxMegabytes ?? envInt('LAZYLAB_CACHE_MAX_MB', DEFAULT_MAX_MEGABYTES)) * 1024 * 1024;
+    this.sweepIntervalMs = opts.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
   }
 
   async init() {
@@ -144,6 +171,11 @@ export class CacheDb {
 
     this.isInitialized = true;
     this.logWal('SYSTEM_INIT', 'cache', 'system', 'Cache database opened (SQLite WAL)');
+    this.sweep();
+    if (this.sweepIntervalMs > 0) {
+      this.sweepTimer = setInterval(() => this.sweep(), this.sweepIntervalMs);
+      this.sweepTimer.unref?.();
+    }
   }
 
   /**
@@ -156,6 +188,8 @@ export class CacheDb {
       db.run('PRAGMA journal_mode = WAL');
       db.run('PRAGMA synchronous = NORMAL');
       db.run('PRAGMA busy_timeout = 5000');
+      // Purged GitLab data is overwritten on disk instead of lingering in free pages.
+      db.run('PRAGMA secure_delete = ON');
       db.run(`CREATE TABLE IF NOT EXISTS cache_store (
         key TEXT PRIMARY KEY,
         category TEXT,
@@ -199,6 +233,8 @@ export class CacheDb {
 
   /** Closes the database (tests, shutdown). A later init() reopens it. */
   close() {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
     this.stmts = null;
     this.db?.close();
     this.db = null;
@@ -343,6 +379,89 @@ export class CacheDb {
     }
 
     if (changed) this.logWal('SET', key, category, `Cached ${Array.isArray(data) ? data.length + ' items' : 'object'}`);
+
+    // The membership list is the authority on which projects the user can still see.
+    if (category === 'projects' && projectId === null && Array.isArray(data)) {
+      const ids = data.map((p: any) => p?.id).filter((id) => typeof id === 'number' || typeof id === 'string');
+      if (ids.length === data.length) this.retainProjects(ids.map(String), now);
+    }
+  }
+
+  /** Drops memory entries whose rows are gone from SQLite after a bulk delete. */
+  private forgetMissing() {
+    const db = this.db;
+    if (!db) return;
+    const exists = db.query<{ one: number }, [string]>('SELECT 1 AS one FROM cache_store WHERE key = ?');
+    for (const key of [...this.memCache.keys()]) {
+      if (!exists.get(key)) this.memCache.delete(key);
+    }
+  }
+
+  /**
+   * Deletes expired rows of projects missing from the membership list. They skip the stale grace
+   * period; fresh rows age out within their TTL and go at the next membership refresh. The list
+   * covers the first page of member projects (by activity), so a project beyond it loses only its
+   * stale copies.
+   */
+  retainProjects(memberIds: string[], now = Date.now()): number {
+    const db = this.db;
+    if (!db) return 0;
+    let removed = 0;
+    try {
+      removed = db
+        .query('DELETE FROM cache_store WHERE project_id IS NOT NULL AND expires_at <= ? AND project_id NOT IN (SELECT value FROM json_each(?))')
+        .run(now, JSON.stringify(memberIds)).changes;
+    } catch (err) {
+      console.warn('Cache retention error:', err);
+    }
+    if (removed > 0) {
+      this.forgetMissing();
+      this.logWal('EVICT', 'non-member', 'system', `Evicted ${removed} cached rows of projects you are no longer a member of`);
+    }
+    return removed;
+  }
+
+  /**
+   * Retention pass: deletes rows expired for longer than the stale grace period, then the least
+   * recently written rows beyond the row and size caps. Runs at start and on a timer.
+   */
+  sweep(now = Date.now()): SweepResult {
+    const result: SweepResult = { expired: 0, overCap: 0 };
+    const db = this.db;
+    if (!db) return result;
+    try {
+      result.expired = db.query('DELETE FROM cache_store WHERE expires_at < ?').run(now - this.staleKeepMs).changes;
+
+      if (this.maxRows > 0) {
+        result.overCap += db
+          .query('DELETE FROM cache_store WHERE key IN (SELECT key FROM cache_store ORDER BY updated_at DESC LIMIT -1 OFFSET ?)')
+          .run(this.maxRows).changes;
+      }
+
+      if (this.maxBytes > 0) {
+        const total = db.query<{ bytes: number | null }, []>('SELECT SUM(length(data)) AS bytes FROM cache_store').get()?.bytes ?? 0;
+        if (total > this.maxBytes) {
+          let excess = total - this.maxBytes;
+          const victims: string[] = [];
+          for (const row of db.query<{ key: string; size: number }, []>('SELECT key, length(data) AS size FROM cache_store ORDER BY updated_at ASC').iterate()) {
+            if (excess <= 0) break;
+            victims.push(row.key);
+            excess -= row.size;
+          }
+          const del = db.query('DELETE FROM cache_store WHERE key = ?');
+          db.transaction((keys: string[]) => {
+            for (const k of keys) result.overCap += del.run(k).changes;
+          })(victims);
+        }
+      }
+    } catch (err) {
+      console.warn('Cache sweep error:', err);
+    }
+    if (result.expired + result.overCap > 0) {
+      this.forgetMissing();
+      this.logWal('EVICT', 'sweep', 'system', `Evicted ${result.expired} expired and ${result.overCap} over-cap cached rows`);
+    }
+    return result;
   }
 
   clear(category?: string) {
@@ -360,6 +479,8 @@ export class CacheDb {
       this.memCache.clear();
       try {
         this.stmts?.deleteAll.run();
+        // A full purge runs on profile changes and removal: drop the old pages from the WAL file too.
+        this.db?.run('PRAGMA wal_checkpoint(TRUNCATE)');
       } catch (err) {
         console.warn('Cache delete error:', err);
       }
