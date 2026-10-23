@@ -26,6 +26,12 @@ export interface CacheDbOptions {
   dataDir?: string;
   /** Parsed entries kept in memory; older ones are re-read from SQLite on demand. */
   memoryEntries?: number;
+  /** Text journal size that triggers a rotation to `<journal>.1`. 0 disables rotation. */
+  journalMaxBytes?: number;
+  /** Newest `wal_logs` rows kept. 0 keeps every row. */
+  journalKeepRows?: number;
+  /** Age in days after which `wal_logs` rows are pruned. 0 keeps rows of any age. */
+  journalKeepDays?: number;
 }
 
 interface CacheRow {
@@ -39,6 +45,24 @@ interface CacheRow {
 }
 
 const DEFAULT_MEMORY_ENTRIES = 256;
+const DEFAULT_JOURNAL_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_JOURNAL_KEEP_ROWS = 10_000;
+const DEFAULT_JOURNAL_KEEP_DAYS = 7;
+/** Journal inserts between two prunes of `wal_logs`. */
+const PRUNE_EVERY = 500;
+const DAY_MS = 86_400_000;
+
+/** Reads a non-negative integer setting; unset or invalid values fall back to the default. */
+export function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.warn(`Ignoring ${name}=${raw}: expected a non-negative number, using ${fallback}`);
+    return fallback;
+  }
+  return Math.floor(n);
+}
 
 /**
  * GitLab response cache on bun:sqlite in WAL mode. Every write is a single-row statement;
@@ -55,9 +79,16 @@ export class CacheDb {
   private isInitialized = false;
   private lastCheckpoint = Date.now();
   private walEntriesCount = 0;
+  private readonly journalMaxBytes: number;
+  private readonly journalKeepRows: number;
+  private readonly journalKeepDays: number;
+  private journalBytes = 0;
+  private logsSincePrune = 0;
   private stmts: {
     get: Statement<CacheRow, [string]>;
+    getData: Statement<{ data: string }, [string]>;
     upsert: Statement;
+    touch: Statement;
     insertLog: Statement;
     deleteCategory: Statement;
     deleteAll: Statement;
@@ -70,6 +101,9 @@ export class CacheDb {
     this.dbPath = path.join(this.dataDir, 'labwi_cache.sqlite');
     this.walPath = path.join(this.dataDir, 'labwi_cache.wal');
     this.memoryEntries = Math.max(1, opts.memoryEntries ?? DEFAULT_MEMORY_ENTRIES);
+    this.journalMaxBytes = opts.journalMaxBytes ?? envInt('LAZYLAB_JOURNAL_MAX_BYTES', DEFAULT_JOURNAL_MAX_BYTES);
+    this.journalKeepRows = opts.journalKeepRows ?? envInt('LAZYLAB_JOURNAL_KEEP_ROWS', DEFAULT_JOURNAL_KEEP_ROWS);
+    this.journalKeepDays = opts.journalKeepDays ?? envInt('LAZYLAB_JOURNAL_KEEP_DAYS', DEFAULT_JOURNAL_KEEP_DAYS);
   }
 
   async init() {
@@ -101,8 +135,12 @@ export class CacheDb {
       }
     }
 
-    const n = this.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM wal_logs').get();
-    this.walEntriesCount = n?.n ?? 0;
+    try {
+      this.journalBytes = fs.existsSync(this.walPath) ? fs.statSync(this.walPath).size : 0;
+    } catch {
+      this.journalBytes = 0;
+    }
+    this.pruneJournal();
 
     this.isInitialized = true;
     this.logWal('SYSTEM_INIT', 'cache', 'system', 'Cache database opened (SQLite WAL)');
@@ -140,6 +178,8 @@ export class CacheDb {
       if (check && check.quick_check !== 'ok') throw new Error(`quick_check: ${check.quick_check}`);
       this.stmts = {
         get: db.query('SELECT key, category, project_id, data, etag, updated_at, expires_at FROM cache_store WHERE key = ?'),
+        getData: db.query('SELECT data FROM cache_store WHERE key = ?'),
+        touch: db.query('UPDATE cache_store SET category = ?, project_id = ?, etag = ?, updated_at = ?, expires_at = ? WHERE key = ?'),
         upsert: db.query(
           'INSERT OR REPLACE INTO cache_store (key, category, project_id, data, etag, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
         ),
@@ -175,7 +215,13 @@ export class CacheDb {
         cat: category,
         det: details
       }) + '\n';
+      if (this.journalMaxBytes > 0 && this.journalBytes > 0 && this.journalBytes + line.length > this.journalMaxBytes) {
+        // Keep one previous file: the journal on disk stays below about twice the limit.
+        fs.renameSync(this.walPath, `${this.walPath}.1`);
+        this.journalBytes = 0;
+      }
       fs.appendFileSync(this.walPath, line);
+      this.journalBytes += Buffer.byteLength(line);
     } catch (err) {
       console.warn('Failed appending to WAL log:', err);
     }
@@ -192,7 +238,30 @@ export class CacheDb {
       } catch (err) {
         console.warn('WAL insert error:', err);
       }
+      if (++this.logsSincePrune >= PRUNE_EVERY) this.pruneJournal(now);
     }
+  }
+
+  /** Drops `wal_logs` rows older than the day limit and beyond the row limit. Returns the rows removed. */
+  pruneJournal(now = Date.now()): number {
+    this.logsSincePrune = 0;
+    const db = this.db;
+    if (!db) return 0;
+    let removed = 0;
+    try {
+      if (this.journalKeepDays > 0) {
+        removed += db.query('DELETE FROM wal_logs WHERE timestamp < ?').run(now - this.journalKeepDays * DAY_MS).changes;
+      }
+      if (this.journalKeepRows > 0) {
+        removed += db
+          .query('DELETE FROM wal_logs WHERE id <= (SELECT id FROM wal_logs ORDER BY id DESC LIMIT 1 OFFSET ?)')
+          .run(this.journalKeepRows).changes;
+      }
+      this.walEntriesCount = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM wal_logs').get()?.n ?? 0;
+    } catch (err) {
+      console.warn('Journal prune error:', err);
+    }
+    return removed;
   }
 
   private remember(entry: CacheEntry) {
@@ -258,16 +327,22 @@ export class CacheDb {
 
     this.remember(entry);
 
+    let changed = true;
     if (this.stmts) {
       try {
-        this.stmts.upsert.run(key, category, projectId, JSON.stringify(data), etag ?? null, now, expiresAt);
+        const json = JSON.stringify(data);
+        // Auto-fetch rewrites the same lists every cycle: an unchanged body only extends the TTL
+        // and is not journaled, which keeps the journal to real changes.
+        changed = this.stmts.getData.get(key)?.data !== json;
+        if (changed) this.stmts.upsert.run(key, category, projectId, json, etag ?? null, now, expiresAt);
+        else this.stmts.touch.run(category, projectId, etag ?? null, now, expiresAt, key);
         this.lastCheckpoint = now;
       } catch (err) {
         console.warn('Cache insert error:', err);
       }
     }
 
-    this.logWal('SET', key, category, `Cached ${Array.isArray(data) ? data.length + ' items' : 'object'}`);
+    if (changed) this.logWal('SET', key, category, `Cached ${Array.isArray(data) ? data.length + ' items' : 'object'}`);
   }
 
   clear(category?: string) {

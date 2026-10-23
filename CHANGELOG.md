@@ -32,6 +32,7 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 ### Changed
 
 - **Cache engine:** the GitLab response cache uses `bun:sqlite` in WAL mode instead of sql.js. Writes are single rows instead of a full database export, and only recently used entries stay in memory. Existing cache files open without conversion. The `sql.js` dependency is gone.
+- **Bounded cache journal:** the journal file rotates at 5 MiB with one previous file kept, and journal rows in the database are pruned to the newest 10,000 and the last 7 days (`LAZYLAB_JOURNAL_MAX_BYTES`, `LAZYLAB_JOURNAL_KEEP_ROWS`, `LAZYLAB_JOURNAL_KEEP_DAYS`). Re-caching an unchanged GitLab response only extends its TTL and is not journaled.
 
 ### Fixed
 

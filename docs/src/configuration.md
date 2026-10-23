@@ -26,6 +26,9 @@ cp .env.example .env
 | `LAZYLAB_BIND` | `127.0.0.1` | Docker only: host address `compose.yaml` publishes the port on |
 | `LAZYLAB_PORT` | `3000` | Docker only: host port |
 | `LAZYLAB_DATA_DIR` | `./.data` (metal), `/data` (Docker) | Vault, cache and TLS files |
+| `LAZYLAB_JOURNAL_MAX_BYTES` | `5242880` (5 MiB) | Size at which the cache journal file is rotated to `<name>.1`; one previous file is kept. `0` disables rotation |
+| `LAZYLAB_JOURNAL_KEEP_ROWS` | `10000` | Newest change-journal rows kept in the cache database. `0` keeps all |
+| `LAZYLAB_JOURNAL_KEEP_DAYS` | `7` | Change-journal rows older than this are pruned. `0` keeps rows of any age |
 | `LAZYLAB_BUGKB_URL` | unset (disabled) | Independent BugKB service base URL; adds prior findings to briefings and enables explicit KB tools. See [Shared findings](/agents/knowledge/) |
 | `LAZYLAB_TLS` | `off` | `on` serves HTTPS directly. See [Remote access](/remote-access/) |
 | `LAZYLAB_TLS_CERT`, `LAZYLAB_TLS_KEY` | unset | PEM certificate and key. Without them a self-signed certificate is generated |
@@ -40,7 +43,7 @@ cp .env.example .env
 | Path | Contents | Encrypted |
 |---|---|---|
 | `vault.json` | Everything in the vault | Yes, AES-256-GCM |
-| `labwi_cache.sqlite`, `labwi_cache.wal` | Cached GitLab responses and a change journal | No |
+| `labwi_cache.sqlite` (plus SQLite's `-wal` and `-shm` files), `labwi_cache.wal`, `labwi_cache.wal.1` | Cached GitLab responses and a change journal with one rotated file | No |
 | `tls/` | Self-signed certificate and key, when generated | No (key file mode 0600) |
 
 Back up `vault.json` and remember the password. The cache can be deleted at any time; lazylab refetches from GitLab.
