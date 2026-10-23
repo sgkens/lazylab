@@ -10,6 +10,7 @@ import { NotificationCenter } from './components/NotificationCenter';
 import { WatchContext } from './components/WatchButton';
 import { NotifyState, WatchKind, LazyNotification } from './types/notify';
 import { InboxView } from './components/InboxView';
+import { NotesView } from './components/NotesView';
 import { Inbox } from './types/inbox';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { ProjectSelector } from './components/ProjectSelector';
@@ -869,6 +870,8 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         {activeTab === 'inbox' && (
           <InboxView inbox={inbox} projects={projects} loading={inboxLoading} onRefresh={() => loadInbox(true)} />
         )}
+
+        {activeTab === 'notes' && <NotesView projects={projects} showToast={showToast} />}
 
         {activeTab === 'dashboard' && (
           <DashboardView

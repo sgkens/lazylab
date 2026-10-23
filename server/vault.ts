@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'crypto';
 import { AgentHandoff, HANDOFFS_PER_TASK, HANDOFFS_TOTAL, parseHandoff, sameTask, TaskRef, validateTask } from './handoffs.js';
+import { matchesFilter, Note, NOTE_LIMITS, NoteComment, NoteFilter, NoteMigration, NoteNamespace, parseCommentBody, parseNoteInput } from './notes.js';
 
 const VAULT_VERSION = 1;
 const KDF_PARAMS = { N: 2 ** 16, r: 8, p: 1, keyLen: 32 };
@@ -148,6 +149,7 @@ interface VaultPayload {
   agentTokens: AgentToken[];
   notify: NotifySettings;
   agentHandoffs: AgentHandoff[];
+  notes: Note[];
 }
 
 const emptyPayload = (): VaultPayload => ({
@@ -156,6 +158,7 @@ const emptyPayload = (): VaultPayload => ({
   entries: [],
   agentTokens: [],
   agentHandoffs: [],
+  notes: [],
   notify: { channels: [], rules: defaultNotifyRules(), watches: [] }
 });
 
@@ -459,6 +462,128 @@ class Vault extends EventEmitter {
       throw err;
     }
     return structuredClone(record);
+  }
+
+  // ---- personal notes and tasks (profile-independent; see server/notes.ts) ----
+
+  /** Vaults created before notes existed have no `notes` array; it is added on first use and persisted on first write. */
+  private notesOf(p: VaultPayload): Note[] {
+    if (!Array.isArray(p.notes)) p.notes = [];
+    return p.notes;
+  }
+
+  private findNote(ns: NoteNamespace, id: string): Note {
+    const note = this.notesOf(this.requireOpen()).find((n) => n.namespace === ns && n.id === id);
+    if (!note) throw new Error('Note not found');
+    return note;
+  }
+
+  /** Applies `fn` to the notes and persists; a failed write restores the previous in-memory notes. */
+  private mutateNotes<T>(ns: NoteNamespace, fn: (notes: Note[]) => T): T {
+    const p = this.requireOpen();
+    const previous = structuredClone(this.notesOf(p));
+    try {
+      const result = fn(p.notes);
+      const own = p.notes.filter((n) => n.namespace === ns);
+      if (own.length > NOTE_LIMITS.notes) throw new Error(`at most ${NOTE_LIMITS.notes} notes are kept; delete or export some first`);
+      if (JSON.stringify(own).length > NOTE_LIMITS.totalChars) throw new Error('notes storage is full; delete or export some first');
+      this.persist();
+      return structuredClone(result);
+    } catch (err) {
+      p.notes = previous;
+      throw err;
+    }
+  }
+
+  listNotes(ns: NoteNamespace, filter: NoteFilter = {}): Note[] {
+    return structuredClone(this.notesOf(this.requireOpen())
+      .filter((n) => n.namespace === ns && matchesFilter(n, filter))
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at)));
+  }
+
+  getNote(ns: NoteNamespace, id: string): Note {
+    return structuredClone(this.findNote(ns, id));
+  }
+
+  createNote(ns: NoteNamespace, input: unknown): Note {
+    const content = parseNoteInput(input, false);
+    const now = new Date().toISOString();
+    const note: Note = {
+      id: randomUUID(), namespace: ns, kind: content.kind ?? 'note', title: content.title!, body: content.body ?? '',
+      status: content.status ?? 'open', tags: content.tags ?? [], project: content.project ?? null, migrated: null,
+      comments: [], created_at: now, updated_at: now
+    };
+    return this.mutateNotes(ns, (notes) => (notes.push(note), note));
+  }
+
+  updateNote(ns: NoteNamespace, id: string, input: unknown): Note {
+    const patch = parseNoteInput(input, true);
+    this.findNote(ns, id);
+    return this.mutateNotes(ns, () => {
+      const note = this.findNote(ns, id);
+      if (note.status === 'migrated' && patch.status) throw new Error('a migrated note keeps its status; GitLab is the source of truth');
+      Object.assign(note, patch, { updated_at: new Date().toISOString() });
+      return note;
+    });
+  }
+
+  deleteNote(ns: NoteNamespace, id: string) {
+    this.findNote(ns, id);
+    this.mutateNotes(ns, () => {
+      const p = this.requireOpen();
+      p.notes = p.notes.filter((n) => !(n.namespace === ns && n.id === id));
+    });
+  }
+
+  addNoteComment(ns: NoteNamespace, id: string, input: unknown): Note {
+    const text = parseCommentBody(input);
+    this.findNote(ns, id);
+    return this.mutateNotes(ns, () => {
+      const note = this.findNote(ns, id);
+      if (note.comments.length >= NOTE_LIMITS.comments) throw new Error(`a note keeps at most ${NOTE_LIMITS.comments} comments`);
+      const now = new Date().toISOString();
+      const comment: NoteComment = { id: randomUUID(), body: text, created_at: now, updated_at: now };
+      note.comments.push(comment);
+      note.updated_at = now;
+      return note;
+    });
+  }
+
+  updateNoteComment(ns: NoteNamespace, id: string, commentId: string, input: unknown): Note {
+    const text = parseCommentBody(input);
+    this.findNote(ns, id);
+    return this.mutateNotes(ns, () => {
+      const note = this.findNote(ns, id);
+      const comment = note.comments.find((c) => c.id === commentId);
+      if (!comment) throw new Error('Comment not found');
+      comment.body = text;
+      comment.updated_at = note.updated_at = new Date().toISOString();
+      return note;
+    });
+  }
+
+  deleteNoteComment(ns: NoteNamespace, id: string, commentId: string): Note {
+    this.findNote(ns, id);
+    return this.mutateNotes(ns, () => {
+      const note = this.findNote(ns, id);
+      if (!note.comments.some((c) => c.id === commentId)) throw new Error('Comment not found');
+      note.comments = note.comments.filter((c) => c.id !== commentId);
+      note.updated_at = new Date().toISOString();
+      return note;
+    });
+  }
+
+  /** Called after the GitLab issue exists; the server sets the link, never the client. */
+  markNoteMigrated(ns: NoteNamespace, id: string, link: Omit<NoteMigration, 'migrated_at'>): Note {
+    this.findNote(ns, id);
+    return this.mutateNotes(ns, () => {
+      const note = this.findNote(ns, id);
+      const now = new Date().toISOString();
+      note.status = 'migrated';
+      note.migrated = { project_id: link.project_id, iid: link.iid, web_url: link.web_url, migrated_at: now };
+      note.updated_at = now;
+      return note;
+    });
   }
 
   // ---- agent API tokens ---------------------------------------------------

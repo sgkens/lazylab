@@ -25,13 +25,15 @@ import {
   Bot,
   ShieldCheck,
   LogOut,
-  Inbox
+  Inbox,
+  NotebookPen
 } from 'lucide-react';
 import { AppStatus } from '../types/gitlab';
 import { BrandMark } from './BrandMark';
 
 export type ActiveTab =
   | 'inbox'
+  | 'notes'
   | 'dashboard'
   | 'work_items'
   | 'merge_requests'
@@ -97,7 +99,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   notificationSlot
 }) => {
   const [navCategory, setNavCategory] = useState<NavCategory>(() => {
-    if (['inbox', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) return 'plan';
+    if (['inbox', 'notes', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) return 'plan';
     if (['pipelines', 'pipeline_editor', 'runners', 'ci_variables'].includes(activeTab)) return 'cicd';
     if (['packages', 'releases_tags'].includes(activeTab)) return 'registry';
     if (activeTab === 'repo_settings') return 'settings';
@@ -105,7 +107,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   });
 
   React.useEffect(() => {
-    if (['inbox', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
+    if (['inbox', 'notes', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
       setNavCategory('plan');
     } else if (['pipelines', 'pipeline_editor', 'runners', 'ci_variables'].includes(activeTab)) {
       setNavCategory('cicd');
@@ -266,7 +268,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => {
               setNavCategory('plan');
-              if (!['inbox', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
+              if (!['inbox', 'notes', 'dashboard', 'work_items', 'merge_requests', 'milestones', 'labels'].includes(activeTab)) {
                 onTabChange('inbox');
               }
             }}
@@ -351,6 +353,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                     {inboxActionCount}
                   </span>
                 )}
+              </button>
+
+              <button
+                onClick={() => onTabChange('notes')}
+                className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                  activeTab === 'notes'
+                    ? 'bg-zinc-800 text-white shadow-sm font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
+                }`}
+              >
+                <NotebookPen className="w-3.5 h-3.5 text-orange-400" />
+                <span>Notes</span>
               </button>
 
               <button

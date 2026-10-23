@@ -29,6 +29,7 @@ import {
   MetricsSummary
 } from '../types/gitlab';
 import { Inbox } from '../types/inbox';
+import { Note, NoteFilter, NoteInput, NoteMigrateOptions, NoteNamespace } from '../types/notes';
 import { NotifyChannelInfo, NotifyChannelInput, NotifyRules, NotifyState, WatchKind, WatchView } from '../types/notify';
 import { DeviceSession, SessionState, TokenOverview, VaultEntryKind, VaultSummary } from '../types/vault';
 
@@ -612,4 +613,43 @@ export const notifyApi = {
   testChannel: (id: string) => request<{ success: boolean }>(`/notify/channels/${id}/test`, post()),
   markRead: () => request<{ success: boolean }>('/notify/notifications/read', post()),
   clearNotifications: () => request<{ success: boolean }>('/notify/notifications', { method: 'DELETE' })
+};
+
+type NoteResponse = { success: boolean; note: Note };
+
+export const notesApi = {
+  list: (filter: NoteFilter = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filter)) if (value) params.set(key, value);
+    const qs = params.toString();
+    return request<{ success: boolean; namespace: NoteNamespace; tags: string[]; notes: Note[] }>(`/notes${qs ? `?${qs}` : ''}`);
+  },
+  create: (input: NoteInput) => request<NoteResponse>('/notes', post(input)),
+  update: (id: string, patch: NoteInput) =>
+    request<NoteResponse>(`/notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  remove: (id: string) => request<{ success: boolean }>(`/notes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  addComment: (id: string, body: string) => request<NoteResponse>(`/notes/${encodeURIComponent(id)}/comments`, post({ body })),
+  updateComment: (id: string, commentId: string, body: string) =>
+    request<NoteResponse>(`/notes/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ body })
+    }),
+  deleteComment: (id: string, commentId: string) =>
+    request<NoteResponse>(`/notes/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`, { method: 'DELETE' }),
+  migrate: (id: string, options: NoteMigrateOptions) =>
+    request<{ success: boolean; work_item: { project_id: number; iid: number; web_url: string }; note: Note | null; deleted: boolean }>(
+      `/notes/${encodeURIComponent(id)}/migrate`,
+      post(options)
+    ),
+  /** Binary response, so it bypasses request(): returns the ZIP and the server's file name. */
+  exportZip: async (): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch('/api/notes/export');
+    if (res.status === 401) window.dispatchEvent(new CustomEvent('lazylab:unauthorized'));
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP error ${res.status}`);
+    }
+    const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+    return { blob: await res.blob(), filename: match?.[1] ?? 'lazylab-notes.zip' };
+  }
 };
