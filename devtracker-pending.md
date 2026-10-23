@@ -239,7 +239,7 @@ Follow-ups:
 - [ ] WATCH-7 Snooze / mute a watch or rule for N hours; quiet hours for push channels
 - [ ] WATCH-8 Notification history survives restart (today in memory, cleared on lock)
 - [ ] WATCH-9 MR watch: notify on new approvals and new comments (needs notes polling)
-- [ ] WATCH-10 Poll interval setting; back off on GitLab rate-limit headers
+- [x] WATCH-10 Poll interval setting; back off on GitLab rate-limit headers
 
 ## Done 2026-10-17 (fifth pass): CI failure triage and run pipeline
 
@@ -298,7 +298,7 @@ sequenceDiagram
 Follow-ups:
 
 - [ ] AGENT-6 MCP resources: job logs and `.gitlab-ci.yml` as readable resources (feeds TRIAGE-7)
-- [ ] AGENT-7 Per-token tool allowlist (part of AGENT-2 scopes)
+- [x] AGENT-7 Per-token tool allowlist (part of AGENT-2 scopes)
 
 ## Done 2026-10-17 (seventh pass): UI audit and documentation site
 
@@ -446,7 +446,7 @@ Follow-ups:
 
 - [ ] ENV-9 `lazy env diff`: compare the local `.env` with what `env pull` would write (keys added, removed, changed; no values)
 - [ ] ENV-10 Expand `$NAME` references between variables the way GitLab does for non-raw variables
-- [ ] ENV-11 Per-token project allowlist for `get_env` (with AGENT-2)
+- [x] ENV-11 Per-token project allowlist for `get_env` (with AGENT-2)
 
 ### Errors noted this pass
 
@@ -528,7 +528,7 @@ Follow-ups:
 
 - [ ] BRAND-5 Upload `brand/png/lazylab-mark-512.png` (115 KB) as the GitLab project avatar (Settings → General); manual
 - [ ] BRAND-6 Web app manifest (`name`, icons 192/512, `theme_color`) together with WATCH-6 (PWA)
-- [ ] SEC-9 note: the mark is inlined by Vite as a `data:` URL, so a future CSP needs `img-src 'self' data:`
+- [x] SEC-9 note: the mark is inlined by Vite as a `data:` URL, so a future CSP needs `img-src 'self' data:`
 
 ### Errors noted this pass
 
@@ -541,16 +541,16 @@ Follow-ups:
 
 ## Epic SEC: hardening follow-ups
 
-- [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
+- [x] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
 - [ ] SEC-2 Step-up re-authentication (password prompt) before reveal, agent token creation and profile changes
-- [ ] SEC-3 Revoke a single device session (today only lock-all)
+- [x] SEC-3 Revoke a single device session (device list, last seen, revoke one or lock all)
 - [~] SEC-4 Variables view: stop returning masked values to the browser (done, AUDIT-16); "save to vault" action that creates a CI secret (open)
-- [ ] SEC-5 Vault backup/export (still encrypted) and a printable recovery key; today a forgotten password means data loss
-- [ ] SEC-6 Agent token scopes (read-only / write), expiry, last-used timestamp
+- [x] SEC-5 Encrypted vault backup/export, guarded restore and printable recovery key for password reset
+- [x] SEC-6 Agent token scopes (read-only / write), expiry, last-used timestamp
 - [ ] SEC-7 Audit trail for vault reads and pushes in the journal
-- [ ] SEC-8 Cache at rest: encrypt `labwi_cache.sqlite` with the DEK, or purge it on lock
-- [ ] SEC-9 Content-Security-Policy header (prod only; Vite dev injects inline scripts)
-- [ ] SEC-10 Prune the login-failure map (grows by IP without bound)
+- [ ] SEC-8 Cache at rest: encrypt `lazylab_cache.sqlite` with the DEK, or purge it on lock
+- [x] SEC-9 Content-Security-Policy header (prod only; Vite dev injects inline scripts)
+- [x] SEC-10 Prune the login-failure map (grows by IP without bound)
 - [ ] SEC-11 Optional TOTP second factor
 - [ ] SEC-12 Host header allowlist (DNS rebinding). Lower priority now that the API requires a session
 - [ ] SEC-13 Verify behind Tailscale Serve: Host / X-Forwarded-Proto handling and the `Secure` cookie flag
@@ -574,21 +574,21 @@ Follow-ups:
 - [x] GL-14 Milestone stats: compute from issues, or show "n/a"; no fake numbers
 - [x] GL-15 Return errors from list calls (typed error payload) instead of `[]`; show them in the UI
 - [x] GL-16 Agent API: `GET /:iid` fetches the single item directly; require `projectId` or a configured default project
-- [ ] GL-19 Request scheduler: token bucket per plan, priority lanes, `RateLimit-*` aware slowdown, 429 / `Retry-After` pause, 15 s timeout, status in sync bar (P1, effort M, SCALE stage 2)
-- [ ] GL-20 Auto-fetch single-flight, server-side minimum interval (30 s), persisted interval setting (P1, effort S, SCALE stage 2/3)
-- [ ] GL-21 Agent REST requires `projectId` (or a per-token default); remove the `projects[0]` and 901 fallback (P1, effort S, SCALE stage 3)
-- [ ] GL-22 `forRecentProjects` and other fan-outs return `errors[]`; UI shows "n of m projects loaded" and the 15-project scope (P2, effort S, SCALE stage 3; depends on GL-15)
+- [x] GL-19 Request scheduler: token bucket per plan, priority lanes, `RateLimit-*` aware slowdown, 429 / `Retry-After` pause, 15 s timeout, status in sync bar (P1, effort M, SCALE stage 2)
+- [x] GL-20 Auto-fetch single-flight, server-side minimum interval (30 s), persisted interval setting (P1, effort S, SCALE stage 2/3)
+- [x] GL-21 Agent REST requires `projectId` (or a per-token default); remove the `projects[0]` and 901 fallback (P1, effort S, SCALE stage 3)
+- [x] GL-22 `forRecentProjects` and other fan-outs return `errors[]`; UI shows "n of m projects loaded" and the 15-project scope (P2, effort S, SCALE stage 3; depends on GL-15)
 
 ## Epic CACHE: local storage layer
 
-- [ ] CACHE-1 Replace sql.js with `bun:sqlite` (both targets now run Bun): real WAL mode, no full-DB export per write
+- [x] CACHE-1 Replace sql.js with `bun:sqlite` (both targets now run Bun): real WAL mode, no full-DB export per write
 - [x] CACHE-2 Enforce TTL in `get()`; stale-while-revalidate for the UI
-- [ ] CACHE-3 Bound the journal: rotate or truncate the `.wal` file and prune `wal_logs` (keep N rows / N days)
+- [x] CACHE-3 Bound the journal: rotate or truncate the `.wal` file and prune `wal_logs` (keep N rows / N days)
 - [x] CACHE-4 Auto-fetch refreshes the project-scoped keys the UI actually uses
 - [ ] CACHE-5 Serve the last cached data when GitLab is unreachable, flagged as stale (offline mode)
-- [ ] CACHE-6 Rename `labwi_*` leftovers (cache files, `labwi_theme` localStorage key)
+- [x] CACHE-6 Rename `labwi_*` leftovers (cache files, `labwi_theme` localStorage key)
 - [ ] CACHE-7 Incremental sync: `last_activity_after` change detection, `updated_after` watermarks, refresh only changed projects, hourly milestones and labels (P1, effort M, SCALE stage 2; depends on GL-2, GL-19, CACHE-1)
-- [ ] CACHE-8 Cache retention: evict non-member and expired rows, cap memory, purge on profile removal (P2, effort S, SCALE stage 3; depends on CACHE-1)
+- [x] CACHE-8 Cache retention: evict non-member and expired rows, cap memory, purge on profile removal (P2, effort S, SCALE stage 3; depends on CACHE-1)
 - [ ] CACHE-9 Conditional requests with `If-None-Match` (verify 304 support first) (P3, effort S, SCALE stage 2; depends on GL-19)
 
 ## Epic UI: honest UI
@@ -609,13 +609,13 @@ Follow-ups:
 ## Epic BUILD: build, quality, release
 
 - [x] BUILD-1 `git init`, `main` + `develop` branches, first commit of the imported baseline
-- [ ] BUILD-2 Vite `manualChunks`: split `react`/`react-dom`, `lucide-react`, and the heavy views (pipeline editor, dashboard)
+- [x] BUILD-2 Vite 8 Rolldown `codeSplitting`: split React and icons, load pipeline editor and dashboard on demand
 - [~] BUILD-3 `bun test` setup: unit tests for `yamlParser`, `cacheDb`, response normalisers; route tests against the demo client
 - [~] BUILD-4 CI pipeline: app lint, test, build and CLI compile added (BUILD-8), alongside docs jobs; Docker image build remains open
-- [ ] BUILD-5 Container `HEALTHCHECK` on `/api/status` (needs a lightweight health route that does not call GitLab)
+- [x] BUILD-5 Container `HEALTHCHECK` on lightweight `/healthz`; works over HTTP and built-in HTTPS without GitLab requests
 - [ ] BUILD-6 Split `gitlabClient.ts` (3.4k lines): demo dataset into `server/demo/`, one module per GitLab resource
 - [x] BUILD-7 Single source for the agent skill text: serve `/api/agent/skill.md` from `skills/.claude/lazylab-agent/SKILL.md` and have `AgentSkillModal` fetch it
-- [ ] BUILD-9 Tests: `session.ts` apiGuard and throttle, agent REST routes, autofetch config validation, request scheduler (P1, effort M, SCALE stage 3; depends on GL-19, GL-21)
+- [x] BUILD-9 Tests: `session.ts` apiGuard and throttle, agent REST routes, autofetch config validation, request scheduler (P1, effort M, SCALE stage 3; depends on GL-19, GL-21)
 
 ## Epic INBOX: my work across projects and hosts
 
@@ -638,7 +638,7 @@ Follow-ups:
 - [ ] WATCH-11 Scheduled-pipeline health: inactive schedules, failed last run, missed `next_run_at`; weekly scan into digest (P1, effort S, SCALE stage 1; depends on FLEET-5)
 - [ ] WATCH-12 Daily fleet digest: red default branches (new since yesterday first), with failure excerpt (P1, effort M, SCALE stage 1; depends on FLEET-5, TRIAGE-1)
 - [ ] WATCH-13 Per-channel push rate limit and digest mode (P2, effort S, SCALE stage 3; depends on WATCH-7)
-- [ ] WATCH-14 Watch removal only on a confirmed API 404 (two checks); adaptive poll interval by pipeline age (P2, effort S, SCALE stage 2/3; depends on WATCH-10)
+- [x] WATCH-14 Watch removal only on a confirmed API 404 (two checks); adaptive poll interval by pipeline age (P2, effort S, SCALE stage 2/3; depends on WATCH-10)
 
 ## Epic TRIAGE: CI failure triage
 
@@ -679,11 +679,11 @@ Follow-ups:
 ## Epic AGENT: agents as first-class clients
 
 - [x] AGENT-1 MCP server (streamable HTTP at `/mcp`, bearer auth) exposing inbox, work items, MRs, pipelines, failure excerpt and run-pipeline as tools
-- [~] AGENT-2 Token scopes: read-only / write, per-project allowlist (supersedes SEC-6). Started: `secrets` flag gates `get_env` (ENV-1c)
+- [x] AGENT-2 Token scopes: read-only / write, per-project allowlist, expiry, default project and last used (supersedes SEC-6); separate `secrets` flag gates `get_env`
 - [ ] AGENT-3 Approval queue: destructive or outward agent actions (merge, delete, push variable) wait for confirmation in the UI or a push notification
 - [ ] AGENT-4 Activity log per agent token
 - [~] AGENT-5 Generate the skill and MCP config snippet for Claude Code / Codex from the Vault → Agent tokens screen
-- [ ] AGENT-16 Per-token daily cap on `run_pipeline` and `retry_job` (P2, effort S, SCALE stage 3; depends on AGENT-2)
+- [x] AGENT-16 Per-token daily cap on `run_pipeline` and `retry_job` (P2, effort S, SCALE stage 3; depends on AGENT-2)
 
 ## Epic REL: releases from Conventional Commits
 
@@ -796,6 +796,25 @@ Proposed roadmap (not yet adopted; replaces the Roadmap in the product audit onc
 4. **Safe fleet writes:** SAFE-1 and SEC-2 first, then FLEET-6, FLEET-7/FLEET-2, FLEET-1, FLEET-4, REPO-6, DEPLOY-3, REG-2, WATCH-13
 5. **Host-side automation:** BACKUP-1, REPO-1/2, REPO-7, FLEET-10, FLEET-9
 6. **Remaining epics:** NOTES, AGENT-3, QUOTA-1, FLEET-11/12, PAL, CLI-3
+
+## Parallel-work recovery, 2026-10-24
+
+Recovered Claude's four worktrees after its session limit, finished the feature queues, and combined them on `feature/recovered-review`. The original `feature/notes` checkout and `develop` remain unchanged; nothing was pushed. Task statuses in this checkout describe the combined review branch.
+
+| Lane | Preserved feature branch | Completed tasks | Latest feature/fix commit |
+|---|---|---|---|
+| API budget | `feature/api-budget` | GL-19, GL-20, GL-22, WATCH-10, WATCH-14 | `61014d8` |
+| Agent safety | `feature/agent-safety` | GL-21, AGENT-2/SEC-6, AGENT-7, ENV-11, AGENT-16 | `6086bb3` |
+| Security | `feature/security-hardening` | SEC-1, SEC-3, SEC-5, SEC-9, SEC-10 | `4465b23` |
+| Cache and build | `feature/cache-build` | CACHE-1, CACHE-3, CACHE-6, CACHE-8, BUILD-2, BUILD-5 | `8b23383` |
+
+BUILD-9 is also complete through the combined session, agent REST, auto-fetch validation and scheduler regression suites. Integration adds a backup/recovery test proving token scope, project restrictions, MCP tools and spent CI quota survive encrypted restore and process reload. Watch-manager tests now establish their own baseline because session tests can trigger background inbox auto-watches in the shared process.
+
+Review fixes: reject inherited request-budget names; preserve server retry deadlines longer than 15 minutes; reject queued requests after their deadline; prevent briefing fetches and derived context from crossing a token's project allowlist; count cached JSON in UTF-8 bytes.
+
+Verified: `bun run lint`; 321 tests across 27 files; SPA build without the 500 kB chunk warning; documentation build. Combined-branch Chromium checks cover lazy views, partial-list coverage/error details, recovery-key printing, encrypted restore and CSP blocking injected inline scripts. The combined Docker image builds and reaches healthy status over HTTP and built-in HTTPS; host CLI compilation passes. See `RECOVERY.md` for the review checkout and validation details.
+
+Not verified: live GitLab writes, hosted CI, Windows/native Linux/macOS execution, real notification delivery, Tailscale Serve. GL-2 pagination and optional SEC-12 Host allowlist remain open. Aggregate views explicitly disclose the first 50 member projects and recent-15 fan-out limit. The shared BugKB was offline with no launcher available; no external KB entry was written.
 
 ## BACKLOG
 

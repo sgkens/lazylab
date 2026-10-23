@@ -41,6 +41,11 @@ Every button, menu and form in the UI was traced to a server route and a GitLab 
 | Feature | Status | Notes |
 |---|---|---|
 | Sign-in, vault, sessions, TLS | Verified locally | Tests plus end-to-end runs |
+| Agent token permissions and CI budgets | Verified locally | REST/MCP deny-path tests cover scopes, project and tool restrictions, expiry, shared persisted daily CI cap; live GitLab not yet checked |
+| Encrypted backup and recovery | Verified locally | Wrong keys, tamper, concurrent restore, rollback, session revocation and token/quota preservation; browser recovery and print checks |
+| Request scheduling and refresh | Verified locally | Single-flight sync, saved settings, lane budgets, 429 deadlines and queue expiry covered by tests |
+| Aggregate list coverage | Verified locally | Partial failures and recent-15 scope shown in the UI; first 50 member projects only until pagination lands |
+| Cache and container health | Verified locally | Bun SQLite WAL, bounded cache and journal, legacy migration and HTTP/HTTPS liveness probes |
 | Inbox | Demo only | User-scoped endpoints; not yet run against a live instance |
 | Watches, rules, push channels | Verified with a capture server | ntfy and webhook bodies checked; no real phone or Slack yet |
 | Failure excerpt | Unit tested on runner-shaped traces | Real runner section markers not yet checked |
