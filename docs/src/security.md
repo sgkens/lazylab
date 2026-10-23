@@ -55,6 +55,7 @@ Each token carries these settings, chosen at creation and changeable later with 
 | Setting | Values | Effect |
 |---|---|---|
 | Scope | **Read only** (default for new tokens) or **Read and write** | Read only may read GitLab and change lazylab's own state: watches, handoffs and notes. Read and write may also create and change issues and merge requests, comment, run pipelines, retry jobs and record BugKB findings. Denied REST calls get `403`; MCP hides the tools and refuses calls with a tool error |
+| Allowed MCP tools | Every tool (default), or a list of tool names | Only listed tools appear in `tools/list` and may be called. Scope, project and secret permissions still apply. An empty list allows no tools. This setting applies to MCP; REST uses the other permissions |
 | Allowed projects | Numeric project ids, or empty for every project | Calls on any other project get `403` (REST) or a tool error (MCP), whether the project is given as an id or a path. Inbox, project and watch lists leave other projects out |
 | Default project | One allowed project, or none | Used by REST calls that omit `projectId`. MCP tools always name the project |
 | Expiry | 7, 30 (default in the UI), 90 or 365 days, or none | After it, the token gets `401 Agent token expired at …` |

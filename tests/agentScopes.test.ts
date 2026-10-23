@@ -56,7 +56,7 @@ const tool = async (token: string, name: string, args: unknown) => {
 
 describe('settings validation', () => {
   test('a new token defaults to read scope, every project, no expiry, no secrets', () => {
-    expect(parseAgentTokenSettings({}, false)).toEqual({ scope: 'read', secrets: false, projects: null, defaultProjectId: null, expiresAt: null });
+    expect(parseAgentTokenSettings({}, false)).toEqual({ scope: 'read', tools: null, secrets: false, projects: null, defaultProjectId: null, expiresAt: null });
     expect(parseAgentTokenSettings(undefined, false).scope).toBe('read');
   });
 
@@ -84,6 +84,15 @@ describe('settings validation', () => {
     expect(() => parseAgentTokenSettings([], false)).toThrow('object');
   });
 
+  test('validates MCP tool names, preserves deny-all, and leaves absent edits unchanged', () => {
+    expect(parseAgentTokenSettings({ tools: ['get_inbox', 'get_inbox'] }, true).tools).toEqual(['get_inbox']);
+    expect(parseAgentTokenSettings({ tools: [] }, true).tools).toEqual([]);
+    expect(parseAgentTokenSettings({ tools: null }, true).tools).toBeNull();
+    for (const tools of ['get_inbox', [7], ['bad-name'], Array(101).fill('get_inbox')]) {
+      expect(() => parseAgentTokenSettings({ tools }, true)).toThrow('tools');
+    }
+  });
+
   test('deduplicates the allowlist; an empty list means every project', () => {
     expect(parseAgentTokenSettings({ projects: [901, 901, 902] }, true).projects).toEqual([901, 902]);
     expect(parseAgentTokenSettings({ projects: [] }, true).projects).toBeNull();
@@ -91,7 +100,7 @@ describe('settings validation', () => {
 
   test('legacy records keep write scope; unreadable expiry fails closed', () => {
     expect(normalizeAgentToken({ id: 'x', name: 'old' })).toEqual({
-      id: 'x', name: 'old', scope: 'write', secrets: false, projects: null, defaultProjectId: null, expiresAt: null
+      id: 'x', name: 'old', scope: 'write', tools: null, secrets: false, projects: null, defaultProjectId: null, expiresAt: null
     });
     expect(isExpired('not a date')).toBe(true);
     expect(isExpired(null)).toBe(false);
@@ -264,6 +273,23 @@ describe('MCP enforcement', () => {
     expect((brief.merge_requests[0] as any).pipeline).toBeNull();
     expect((brief.merge_requests[0] as any).failures).toBeNull();
     expect(brief.errors).toEqual([]);
+  });
+
+  test('MCP tool allowlists intersect scope and secret permissions and changes apply immediately', async () => {
+    const { token, record } = vault.createAgentToken('tools', { scope: 'read', tools: ['get_inbox', 'run_pipeline', 'get_env'] });
+    const listed = await rpc(token, 'tools/list');
+    expect(listed.body.result.tools.map((t: any) => t.name)).toEqual(['get_inbox']);
+    const denied = await tool(token, 'list_projects', {});
+    expect(denied.isError).toBe(true);
+    expect(denied.text).toContain('not allowed to call list_projects');
+    expect((await tool(token, 'run_pipeline', { project: 901, ref: 'main' })).isError).toBe(true);
+    expect((await tool(token, 'get_env', { project: 901 })).isError).toBe(true);
+    vault.updateAgentToken(record.id, { tools: [] });
+    expect((await rpc(token, 'tools/list')).body.result.tools).toEqual([]);
+    expect((await tool(token, 'get_inbox', {})).isError).toBe(true);
+    vault.updateAgentToken(record.id, { tools: null });
+    expect((await tool(token, 'list_projects', {})).isError).toBe(false);
+    expect((await rest(token, 'GET', '/work-items?projectId=901')).status).toBe(200);
   });
 
   test('expired tokens are refused at the transport', async () => {

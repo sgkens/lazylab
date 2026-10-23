@@ -21,6 +21,8 @@ export const MAX_EXPIRY_DAYS = 3650;
 /** Stored token fields that define its access. All optional so older vault records still parse. */
 export interface AgentTokenFields {
   scope?: AgentScope;
+  /** MCP tool names; null means unrestricted, [] disables every MCP tool. */
+  tools?: string[] | null;
   secrets?: boolean;
   projects?: number[] | null;
   defaultProjectId?: number | null;
@@ -32,6 +34,7 @@ export interface AgentPolicy {
   id: string;
   name: string;
   scope: AgentScope;
+  tools: string[] | null;
   secrets: boolean;
   projects: number[] | null;
   defaultProjectId: number | null;
@@ -44,6 +47,7 @@ export function normalizeAgentToken(t: { id: string; name: string } & AgentToken
     name: t.name,
     // Legacy records (no scope field) had full access; keeping it avoids silently breaking agents in use.
     scope: t.scope === 'read' ? 'read' : 'write',
+    tools: Array.isArray(t.tools) ? [...t.tools] : null,
     secrets: Boolean(t.secrets),
     projects: Array.isArray(t.projects) && t.projects.length ? [...t.projects] : null,
     defaultProjectId: typeof t.defaultProjectId === 'number' ? t.defaultProjectId : null,
@@ -86,6 +90,16 @@ export function parseAgentTokenSettings(input: unknown, partial: boolean, now = 
     if (!AGENT_SCOPES.includes(body.scope as AgentScope)) throw new Error('scope must be read or write');
     out.scope = body.scope as AgentScope;
   } else if (!partial) out.scope = 'read';
+
+  if (body.tools !== undefined) {
+    if (body.tools === null) out.tools = null;
+    else {
+      if (!Array.isArray(body.tools) || body.tools.length > 100 || !body.tools.every((t) => typeof t === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(t))) {
+        throw new Error('tools must be a list of at most 100 MCP tool names, or null for every tool');
+      }
+      out.tools = [...new Set(body.tools as string[])];
+    }
+  } else if (!partial) out.tools = null;
 
   if (body.secrets !== undefined) {
     if (typeof body.secrets !== 'boolean') throw new Error('secrets must be true or false');

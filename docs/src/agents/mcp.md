@@ -120,3 +120,5 @@ curl -s -X POST "$LAZYLAB_URL/mcp" \
 ## Certificates
 
 Node-based clients reject self-signed certificates. See [Remote access → Agents on another machine](/remote-access/#agents-on-another-machine).
+
+Restrict an agent to specific MCP tools with **Vault → Agent tokens → Edit → Restrict MCP tools**. Enter names such as `get_inbox, list_projects, get_task_briefing`. Unlisted tools are hidden and direct calls are refused. An empty restricted list allows no tools; turn the restriction off to restore all tools permitted by the scope and secret settings. This restriction does not change REST access.

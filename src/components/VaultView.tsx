@@ -907,6 +907,8 @@ function parseProjectIds(text: string): number[] | null {
 
 interface TokenFormState {
   scope: AgentScope;
+  restrictTools: boolean;
+  toolsText: string;
   secrets: boolean;
   projectsText: string;
   defaultProjectId: string;
@@ -916,6 +918,8 @@ interface TokenFormState {
 
 const formFromToken = (t?: AgentTokenInfo): TokenFormState => ({
   scope: t?.scope ?? 'read',
+  restrictTools: t?.tools !== undefined && t.tools !== null,
+  toolsText: t?.tools?.join(', ') ?? '',
   secrets: t?.secrets ?? false,
   projectsText: t?.projects?.join(', ') ?? '',
   defaultProjectId: t?.defaultProjectId ? String(t.defaultProjectId) : '',
@@ -928,6 +932,7 @@ function settingsFromForm(f: TokenFormState): AgentTokenSettings {
   if (projects === null) throw new Error('Allowed projects must be numeric project ids separated by commas');
   const settings: AgentTokenSettings = {
     scope: f.scope,
+    tools: f.restrictTools ? [...new Set(f.toolsText.split(/[\s,]+/).filter(Boolean))] : null,
     secrets: f.secrets,
     projects: projects.length ? projects : null,
     defaultProjectId: f.defaultProjectId ? Number(f.defaultProjectId) : null
@@ -1034,6 +1039,19 @@ const AgentTokenFields: React.FC<{ form: TokenFormState; setForm: (f: TokenFormS
         </label>
       </div>
 
+      <div className="space-y-1">
+        <label className="flex items-start gap-2">
+          <input type="checkbox" className="mt-0.5" checked={form.restrictTools} onChange={(e) => setForm({ ...form, restrictTools: e.target.checked })} />
+          <span>Restrict MCP tools (scope and secret permissions still apply)</span>
+        </label>
+        {form.restrictTools && (
+          <label className="block space-y-1" htmlFor={`${idPrefix}-tools`}>
+            <span>Allowed tool names, comma separated; empty allows no tools. REST calls use the scope and project settings.</span>
+            <input id={`${idPrefix}-tools`} className={inputClass} placeholder="get_inbox, list_projects, get_task_briefing" value={form.toolsText} onChange={(e) => setForm({ ...form, toolsText: e.target.value })} />
+          </label>
+        )}
+      </div>
+
       <label className="flex items-start gap-2">
         <input type="checkbox" className="mt-0.5" checked={form.secrets} onChange={(e) => setForm({ ...form, secrets: e.target.checked })} />
         <span>
@@ -1062,6 +1080,7 @@ const AgentTokenRow: React.FC<{ t: AgentTokenInfo; projects: GitLabProject[]; ru
             >
               {t.scope === 'write' ? 'read and write' : 'read only'}
             </span>
+            {t.tools !== null && <span className={`${badge} border-zinc-700 bg-zinc-900 text-zinc-400`} title={t.tools.join(', ') || 'No MCP tools allowed'}>{t.tools.length} MCP tools</span>}
             {t.secrets && <span className={`${badge} border-amber-800/60 bg-amber-950/30 text-amber-300`}>reads secrets</span>}
             <ExpiryBadge days={daysUntil(t.expiresAt)} />
             {t.legacy && (

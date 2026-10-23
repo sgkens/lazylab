@@ -618,6 +618,7 @@ class Vault extends EventEmitter {
       prefix: token.slice(0, 9),
       hash: hashAgentToken(token),
       scope: settings.scope ?? 'read',
+      tools: settings.tools ? [...settings.tools] : null,
       secrets: Boolean(settings.secrets),
       projects: settings.projects ?? null,
       defaultProjectId: settings.defaultProjectId ?? null,
@@ -640,6 +641,7 @@ class Vault extends EventEmitter {
     const next: AgentToken = {
       ...t,
       scope: settings.scope ?? current.scope,
+      tools: settings.tools !== undefined ? (settings.tools === null ? null : [...settings.tools]) : current.tools,
       secrets: settings.secrets ?? current.secrets,
       projects: settings.projects !== undefined ? settings.projects : current.projects,
       defaultProjectId: settings.defaultProjectId !== undefined ? settings.defaultProjectId : current.defaultProjectId,

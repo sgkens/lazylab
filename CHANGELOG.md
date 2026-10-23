@@ -8,6 +8,8 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Added
 
+- **MCP tool allowlists** (AGENT-7): limit each token to named tools in Vault. Unlisted tools are hidden and denied, and listed tools still need the token’s scope, project and secret permissions.
+
 - **Agent token permissions** (AGENT-2, SEC-6): each agent token has a scope (read only, the default for new tokens, or read and write), optional allowed projects, an optional default project for REST calls, an expiry (30 days by default in the UI) and a last-used time. Enforced on `/api/agent/*` and `/mcp`; **Vault → Agent tokens** shows and edits them. Tokens created earlier keep read and write access to every project with no expiry and are marked **legacy: review**.
 - **Notes and tasks:** a Notes view for personal notes and tasks outside GitLab, with tags, Markdown bodies, a done checkbox, filters and a comment log, encrypted in the vault with a separate demo list. **Migrate to GitLab** creates an issue from the note and its comments, then marks the note migrated or deletes it. **Export .zip** downloads every note as Markdown with YAML front matter (no new dependency). `lazy note add/list/show/done/reopen` and the MCP tools `list_notes`, `get_note`, `add_note` and `set_note_status` use the same storage.
 - **Docs polish:** aligned header and content columns, responsive scroll-aware contents, build-time heading links, prominent source edit links, reading progress, copy controls, thin scrollbars and reduced-motion-aware transitions. Locally bundled Hawk/Pagefind search uses the TypeFlow animation driver and Logcad diagnostics.

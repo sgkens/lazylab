@@ -84,7 +84,7 @@ export interface ToolContext {
    * The agent token making the call. Absent in tests: no secret access, write scope, every project.
    * HTTP requests always carry the token's full policy (vault.authenticateAgentToken).
    */
-  token?: { id?: string; name: string; secrets: boolean; scope?: AgentScope; projects?: number[] | null };
+  token?: { id?: string; name: string; secrets: boolean; scope?: AgentScope; tools?: string[] | null; projects?: number[] | null };
   /** Profile captured with the client at request dispatch; null is the demo namespace. */
   profileId?: string | null;
 }
@@ -785,6 +785,7 @@ type ToolToken = ToolContext['token'];
 
 /** Why this token may not call the tool, or null when it may. Project checks happen per call. */
 export function toolDenial(tool: ToolDef, token: ToolToken): string | null {
+  if (token?.tools && !token.tools.includes(tool.name)) return `This agent token is not allowed to call ${tool.name}. Allowed MCP tools are set in Vault → Agent tokens.`;
   if (tool.secrets && !token?.secrets) {
     return `${tool.name} needs an agent token with secret access. Create one in Vault → Agent tokens with "Can read secrets" ticked.`;
   }
