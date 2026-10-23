@@ -824,6 +824,8 @@ Native Windows with a temporary Bun 1.3.11 runtime passed 321 tests, lint, SPA/C
 
 Live GitLab throttling exposed agent routes returning HTTP 500 or false 404 for a scheduler pause. They now preserve HTTP 429 with `Retry-After`/`retryAt`, covered across reads, writes and pipeline creation (`08bf5dd`). Windows permission assertions were corrected in `83f3a01`. The BugKB was offline; these verified findings are retained in `ACCEPTANCE.md`. Tailscale Serve, macOS and actual phone/chat notification delivery remain open.
 
+Hosted-CI follow-up: the quota test depended on shared demo pipeline ordering and could choose a pipeline with no jobs. It now creates that interference explicitly, selects a stable seeded job and restores its status. `oven/bun:1.3.11` passes lint, all 322 tests, SPA build, CLI compile and version after the fix. See `ACCEPTANCE.md` for evidence; the hosted rerun is checked after publication.
+
 ## BACKLOG
 
 New free-form ideas go here; they are moved into an epic with task IDs when picked up.
