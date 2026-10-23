@@ -309,7 +309,7 @@ export class RequestScheduler {
     // Repeated 429s mean the window GitLab reported was not the whole story (other tools on the account).
     const backoff = this.consecutive429 > 1 ? Math.min(MAX_PAUSE_MS, 1000 * 2 ** (this.consecutive429 - 1)) : 0;
     const jitter = Math.floor(this.random() * 1000);
-    const until = now + Math.min(MAX_PAUSE_MS, Math.max(base, backoff) + jitter);
+    const until = now + Math.max(base, backoff) + jitter;
     this.pausedUntil = Math.max(this.pausedUntil, until);
     this.observed = { ...this.observed, remaining: 0, observedAt: now };
     this.pump();
@@ -380,6 +380,20 @@ export class RequestScheduler {
     this.minute.refill(now);
     this.hour.refill(now);
 
+    // Expire before granting slots: a late release must not start an overdue request.
+    for (const w of [...this.queue]) {
+      if (now >= w.deadline) {
+        this.queue.splice(this.queue.indexOf(w), 1);
+        this.stats.rejected++;
+        w.reject(
+          this.pausedUntil > now
+            ? this.pausedError()
+            : new RateLimitedError(`GitLab request budget exhausted: no slot within ${Math.round(LANE_MAX_WAIT_MS[w.lane] / 1000)} s`, null)
+        );
+      }
+    }
+
+
     let nextAt = Infinity;
     for (const lane of LANES) {
       const waiters = this.queue.filter((w) => w.lane === lane);
@@ -406,18 +420,6 @@ export class RequestScheduler {
           this.inFlight--;
           this.pump();
         });
-      }
-    }
-    // Whoever could not start by now and is past the deadline fails, so callers are not held indefinitely.
-    for (const w of [...this.queue]) {
-      if (now >= w.deadline) {
-        this.queue.splice(this.queue.indexOf(w), 1);
-        this.stats.rejected++;
-        w.reject(
-          this.pausedUntil > now
-            ? this.pausedError()
-            : new RateLimitedError(`GitLab request budget exhausted: no slot within ${Math.round(LANE_MAX_WAIT_MS[w.lane] / 1000)} s`, null)
-        );
       }
     }
 

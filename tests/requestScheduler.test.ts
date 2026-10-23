@@ -46,16 +46,35 @@ describe('header parsing', () => {
 });
 
 describe('RequestScheduler', () => {
+  test('honours server pauses longer than the fallback backoff cap', async () => {
+    const { s, clock } = fake();
+    const until = s.observe(429, new Headers({ 'Retry-After': '3600' }));
+    expect(until).toBe(clock.t + 3_600_000);
+    await expect(s.acquire('interactive')).rejects.toBeInstanceOf(RateLimitedError);
+    expect(s.getStatus().stats.sent).toBe(0);
+    s.resetRemoteState();
+  });
+
+  test('rejects an overdue waiter when a concurrency slot is released late', async () => {
+    const { s, clock } = fake(undefined, 1);
+    const release = await s.acquire('interactive');
+    const queued = s.acquire('interactive').then(() => 'granted', (error) => error);
+    clock.t += 31_000;
+    release();
+    expect(await queued).toBeInstanceOf(RateLimitedError);
+    expect(s.getStatus().stats.sent).toBe(1);
+  });
+
   test('the per-minute bucket holds requests until tokens refill', async () => {
-    const { s, clock } = fake({ plan: 'custom', perHour: 0, perMinute: 2 });
+    const { s, clock } = fake({ plan: 'custom', perHour: 0, perMinute: 3 });
     const granted: number[] = [];
-    for (let i = 0; i < 3; i++) s.acquire('interactive').then((release) => (granted.push(i), release()));
-    await flush();
-    expect(granted).toEqual([0, 1]);
-    clock.t += 30_000; // half a minute refills one token at 2/min
-    s.pump();
+    for (let i = 0; i < 4; i++) s.acquire('interactive').then((release) => (granted.push(i), release()));
     await flush();
     expect(granted).toEqual([0, 1, 2]);
+    clock.t += 20_000; // one token at 3/min, before the 30-second lane deadline
+    s.pump();
+    await flush();
+    expect(granted).toEqual([0, 1, 2, 3]);
   });
 
   test('interactive requests go before queued background requests', async () => {
