@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
 import { AuthScreen } from './components/AuthScreen';
 import { VaultView, VaultSection } from './components/VaultView';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -14,7 +14,6 @@ import { NotesView } from './components/NotesView';
 import { Inbox } from './types/inbox';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { ProjectSelector } from './components/ProjectSelector';
-import { DashboardView } from './components/DashboardView';
 import { WorkItemsView } from './components/WorkItemsView';
 import { MergeRequestsView } from './components/MergeRequestsView';
 import { PipelinesView } from './components/PipelinesView';
@@ -29,7 +28,6 @@ import { JobTraceModal } from './components/JobTraceModal';
 import { RunPipelineModal } from './components/RunPipelineModal';
 import { PackagesView } from './components/PackagesView';
 import { ReleasesTagsView } from './components/ReleasesTagsView';
-import { PipelineEditorView } from './components/PipelineEditorView';
 import { VariablesView } from './components/VariablesView';
 import { ProjectSettingsView } from './components/ProjectSettingsView';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
@@ -50,6 +48,9 @@ import {
   GitLabWorkItem,
   WorkItemType
 } from './types/gitlab';
+
+const DashboardView = lazy(() => import('./components/DashboardView').then((module) => ({ default: module.DashboardView })));
+const PipelineEditorView = lazy(() => import('./components/PipelineEditorView').then((module) => ({ default: module.PipelineEditorView })));
 
 /** Session gate: shows setup/login until the server reports an authenticated session. */
 export default function App() {
@@ -866,6 +867,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
       {/* Main Content Workspace View */}
       <WatchContext.Provider value={watchContext}>
       <main className="flex-1 flex overflow-hidden">
+        <Suspense fallback={<div role="status" className="flex-1 flex items-center justify-center text-sm text-zinc-500">Loading view…</div>}>
         {activeTab === 'inbox' && (
           <InboxView inbox={inbox} projects={projects} loading={inboxLoading} onRefresh={() => loadInbox(true)} />
         )}
@@ -1027,6 +1029,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
             onCreateLabel={handleCreateLabel}
           />
         )}
+        </Suspense>
       </main>
       </WatchContext.Provider>
 

@@ -133,3 +133,7 @@ export DOCS_PATH_PREFIX="$(echo "$CI_PAGES_URL" | sed -E 's#^https?://[^/]+##; s
 ## License
 
 lazylab is released under the [MIT License](https://gitlab.com/sgkens/lazylab/-/blob/main/LICENSE).
+
+## App bundles
+
+The production build separates React and icons into vendor chunks. The dashboard and pipeline editor are imported when opened; the workspace shows a loading indicator while their chunks download. `vite.config.ts` uses the Vite 8 Rolldown `codeSplitting` configuration. Run `bun run build` from the repository root to inspect chunk sizes.
