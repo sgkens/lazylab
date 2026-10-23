@@ -324,9 +324,16 @@ describe('daily CI quotas', () => {
     const { token, record } = vault.createAgentToken('combined-cap', { scope: 'write', dailyCiLimit: 2 });
     const first = await rest(token, 'POST', '/pipelines', { projectId: 901, ref: 'main', watch: false });
     expect(first.status).toBe(200);
-    const existingPipelines = await demo.getPipelines(901);
-    const existingJobs = await demo.getPipelineJobs(901, existingPipelines.find(p => p.id !== first.body.pipeline.id)!.id);
-    expect((await tool(token, 'retry_job', { project: 901, job_id: existingJobs.jobs[0].id, watch: false })).isError).toBe(false);
+    // Another suite may have created a pipeline without jobs. Do not select retry fixtures by list order.
+    await demo.createPipeline(901, 'unrelated-jobless-pipeline');
+    const existingJobs = await demo.getPipelineJobs(901, 30101);
+    const job = existingJobs.jobs[0];
+    const originalStatus = job.status;
+    try {
+      expect((await tool(token, 'retry_job', { project: 901, job_id: job.id, watch: false })).isError).toBe(false);
+    } finally {
+      job.status = originalStatus;
+    }
     const denied = await rest(token, 'POST', '/pipelines', { projectId: 901, ref: 'main', watch: false });
     expect(denied.status).toBe(429);
     expect(denied.body.resetAt).toMatch(/T00:00:00.000Z$/);

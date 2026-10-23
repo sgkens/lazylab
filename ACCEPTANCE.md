@@ -18,6 +18,7 @@ The recovery merge is `e8909e8`. Follow-up fixes are `83f3a01` (Windows mode ass
 | Linux/WSL, Bun 1.3.11 | Lint, 322 tests, SPA build, host CLI compile and CLI version passed |
 | Native Windows, Bun 1.3.11 | Lint, 321-test full suite, SPA/CLI builds, CLI executable and production server/health/SPA/CSP passed |
 | Windows follow-up | Updated 17-test agent REST suite, including rate-limit regression, passed |
+| Pinned CI container | Lint, 322 tests, SPA build, CLI compile and version passed in `oven/bun:1.3.11` |
 
 The preceding recovery checks also verified production Chromium behaviour, partial-list error reporting and the Docker image's HTTP/HTTPS health. These details remain in `RECOVERY.md`.
 
@@ -26,6 +27,8 @@ The preceding recovery checks also verified production Chromium behaviour, parti
 Windows does not expose POSIX permission bits through `stat` the way Linux does. Vault backup tests now assert mode 0600 only on POSIX, while encrypted content, restore, restart and rollback checks run on Windows too. Windows ACL isolation was not independently audited.
 
 A real GitLab HTTP 429 caused agent REST routes to return 500; single-item readers could turn it into a false 404. The scheduler's typed rate-limit error now produces HTTP 429 with retry timing, including pipeline creation. Regression checks cover issue/MR reads, issue writes and pipeline runs. Live issue and MR updates passed after the pause.
+
+The first hosted pipeline exposed a third issue: the quota test selected its retry job from whichever shared demo pipeline happened to come next. Another test could leave a jobless pipeline there, so filesystem-dependent suite ordering caused a failure. The regression now creates that interfering state explicitly, uses a seeded job, and restores the job status. The full suite and build commands passed in the pinned CI container after the fix. Hosted rerun status is reported with the publication result.
 
 The shared BugKB was unreachable and no launcher was installed, so findings are retained here instead of being written to the service.
 
