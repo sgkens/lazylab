@@ -57,7 +57,8 @@ describe('encrypted backups', () => {
       const { vault: target, file: targetFile } = fresh();
       await target.restoreBackup(input, { password }, { mode: 'fresh' });
       expect(target.getEntry(entry.id).value).toBe('never-plaintext-marker');
-      expect(statSync(targetFile).mode & 0o777).toBe(0o600);
+      // Windows reports DOS file attributes, not POSIX permission bits.
+      if (process.platform !== 'win32') expect(statSync(targetFile).mode & 0o777).toBe(0o600);
       target.lock(); expect(await new Vault(targetFile).verifyAndUnlock('tester', password)).toBe(true);
     }
   });
@@ -122,7 +123,8 @@ describe('encrypted backups', () => {
   });
   test('previous encrypted file is retained with private permissions', async () => {
     const { file } = await seed(); const previous = `${file}.bak`;
-    expect(statSync(previous).mode & 0o777).toBe(0o600); expect(readFileSync(previous, 'utf8')).not.toContain('never-plaintext-marker');
+    if (process.platform !== 'win32') expect(statSync(previous).mode & 0o777).toBe(0o600);
+    expect(readFileSync(previous, 'utf8')).not.toContain('never-plaintext-marker');
   });
 });
 
