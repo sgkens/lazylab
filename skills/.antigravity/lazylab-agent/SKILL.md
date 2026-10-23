@@ -19,8 +19,9 @@ If the `lazylab` MCP server is connected (tools such as `get_inbox`, `get_pipeli
 - Every request sends `Authorization: Bearer $LAZYLAB_TOKEN`.
 - Status codes:
   - `401` means the token is invalid or revoked.
+  - `400` with `projectId is required` means the call did not name a project; add `projectId` and retry once.
   - `423` means the vault is locked (server restarted and nobody has signed in yet). Ask the user to sign in to lazylab in a browser; do not retry in a loop.
-- Always pass `projectId` explicitly. When omitted, the server falls back to the first project in the list, which is rarely the one intended. List work items for a known project, or ask the user for the ID.
+- Every work item, merge request, pipeline and job call needs `projectId` (the numeric GitLab project id). Without it the server answers `400`; it never guesses a project. Take the id from the inbox (`project_id`) or ask the user.
 - If the response's work items look like sample data (project `gitlab-orchestrator`, user `alex.dev`), lazylab is in demo mode: writes go to in-memory data and are lost on restart. Tell the user before writing.
 
 ## Writing rules
@@ -41,18 +42,18 @@ Base URL: `$LAZYLAB_URL/api/agent`. All bodies are `application/json`.
 |---|---|---|
 | GET | `/watches` | Active watches for the current GitLab profile |
 | POST | `/watches` | Watch a `pipeline`, `job` or `merge_request`. Body: `kind`, `projectId`, `targetId` (pipeline id, job id or MR iid). The user is notified when it finishes; use this after pushing instead of polling |
-| POST | `/pipelines` | Run a pipeline. Required: `ref`. Optional: `projectId`, `variables[]` (`key`, `value`, `variable_type`: `env_var`\|`file`), `watch` (default `true`, so the user is notified when it finishes) |
+| POST | `/pipelines` | Run a pipeline. Required: `projectId`, `ref`. Optional: `variables[]` (`key`, `value`, `variable_type`: `env_var`\|`file`), `watch` (default `true`, so the user is notified when it finishes) |
 | GET | `/pipelines/:pipelineId/failures?projectId=` | Why a pipeline failed: for each failed job (allowed failures excluded), `excerpt` with `errorLine`, `exitCode`, `failureReason`, `retryable` and the failing log `lines[]`. Read this before opening a full job log |
 | GET | `/jobs/:jobId/failure?projectId=` | The same excerpt for one job |
 | GET | `/inbox` | What needs the user across projects: `items[]` with `bucket` (`action`\|`waiting`\|`assigned`), `reason`, `kind`, `web_url`; plus `counts` and `errors[]`. Start here when asked what to work on |
 | GET | `/work-items?projectId=&state=opened\|closed\|all` | List work items (first 50) |
 | GET | `/work-items/:iid?projectId=` | One work item plus notes |
-| POST | `/work-items` | Create. Required: `title`. Optional: `projectId`, `description`, `labels[]`, `assignee_ids[]`, `issue_type`, `weight`, `milestone_id` |
-| PUT/PATCH | `/work-items/:iid` | Update. Optional: `projectId`, `title`, `description`, `labels[]`, `add_labels[]`, `remove_labels[]`, `assignee_ids[]`, `milestone_id`, `state_event` (`close`\|`reopen`) |
+| POST | `/work-items` | Create. Required: `projectId`, `title`. Optional: `description`, `labels[]`, `assignee_ids[]`, `issue_type`, `weight`, `milestone_id` |
+| PUT/PATCH | `/work-items/:iid` | Update. Required: `projectId`. Optional: `title`, `description`, `labels[]`, `add_labels[]`, `remove_labels[]`, `assignee_ids[]`, `milestone_id`, `state_event` (`close`\|`reopen`) |
 | GET | `/merge-requests?projectId=&state=opened\|closed\|merged\|all` | List merge requests (first 50) |
 | GET | `/merge-requests/:iid?projectId=` | One merge request plus notes |
-| POST | `/merge-requests` | Create. Required: `title`, `source_branch`. Optional: `projectId`, `target_branch` (default `main`), `description`, `labels[]`, `assignee_ids[]` |
-| PUT/PATCH | `/merge-requests/:iid` | Update. Optional: `projectId`, `title`, `description`, `labels[]`, `state_event` |
+| POST | `/merge-requests` | Create. Required: `projectId`, `title`, `source_branch`. Optional: `target_branch` (default `main`), `description`, `labels[]`, `assignee_ids[]` |
+| PUT/PATCH | `/merge-requests/:iid` | Update. Required: `projectId`. Optional: `title`, `description`, `labels[]`, `state_event` |
 
 Responses are `{ "success": true, ... }` or `{ "success": false, "error": "..." }` with a 4xx/5xx status.
 

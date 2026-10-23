@@ -11,9 +11,10 @@ Every request sends `Authorization: Bearer $LAZYLAB_TOKEN`, a token from **Vault
 |---|---|
 | `401` | Missing, invalid or revoked token |
 | `423` | The vault is locked; sign in to lazylab in a browser |
+| `400` | A required field is missing or invalid, for example `projectId` |
 | `404` | The item does not exist on the active GitLab profile |
 
-Pass `projectId` on every call. When it is omitted, the server uses the first project in the list, which is rarely the one you want.
+Every work item, merge request, pipeline and job route needs `projectId`, the numeric GitLab project id, in the query string for reads and in the body (or query string) for writes. Without it the server answers `400 projectId is required`; it does not guess a project. The inbox and watches routes are not tied to one project.
 
 ## Endpoints
 

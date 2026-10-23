@@ -29,6 +29,10 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 - **Documentation site** (Eleventy), published with GitLab Pages; MIT licence.
 - Initial import: sign-in with a one-time setup code, encrypted vault, TLS options and the GitLab UI for work items, merge requests, pipelines, releases and project settings.
 
+### Changed
+
+- **Breaking (agent REST):** work item, merge request, pipeline and job routes under `/api/agent` require `projectId` and answer `400` without it. They used to fall back to the most recently active project, or to demo project 901 in live mode, which could send writes to the wrong project (GL-21).
+
 ### Fixed
 
 - CI/CD variables are read from every page; only the first 20 were read before.
