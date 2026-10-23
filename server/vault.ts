@@ -11,8 +11,9 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'crypto';
 import { AgentHandoff, HANDOFFS_PER_TASK, HANDOFFS_TOTAL, parseHandoff, sameTask, TaskRef, validateTask } from './handoffs.js';
+import { BACKUP_FORMAT, BACKUP_FORMAT_VERSION, BackupFormatError, formatRecoveryKey, parseBackupFile, parseRecoveryKey } from './vaultKeys.js';
 import { matchesFilter, Note, NOTE_LIMITS, NoteComment, NoteFilter, NoteMigration, NoteNamespace, parseCommentBody, parseNoteInput } from './notes.js';
 
 const VAULT_VERSION = 1;
@@ -20,6 +21,8 @@ const KDF_PARAMS = { N: 2 ** 16, r: 8, p: 1, keyLen: 32 };
 const SCRYPT_MAXMEM = 256 * 1024 * 1024;
 const AAD_DEK = Buffer.from('lazylab:dek:v1');
 const AAD_PAYLOAD = Buffer.from('lazylab:payload:v1');
+const AAD_DEK_RECOVERY = Buffer.from('lazylab:dek-recovery:v1');
+const HKDF_INFO_RECOVERY = Buffer.from('lazylab:recovery-kek:v1');
 
 interface Sealed {
   iv: string;
@@ -34,6 +37,51 @@ interface VaultFile {
   kdf: { name: 'scrypt'; salt: string; N: number; r: number; p: number; keyLen: number };
   dek: Sealed;
   payload: Sealed;
+  /** Stable vault identity; vaults created before backups gain one on their next write. */
+  id?: string;
+  /** Increases on every write; restore compares it to refuse silently replacing newer data. */
+  revision?: number;
+  updatedAt?: string;
+  /** Second copy of the DEK, wrapped with a key derived from the recovery key (HKDF-SHA256). */
+  recovery?: { kdf: 'hkdf-sha256'; salt: string; dek: Sealed; createdAt: string };
+}
+
+export interface VaultBackup {
+  format: typeof BACKUP_FORMAT;
+  formatVersion: typeof BACKUP_FORMAT_VERSION;
+  exportedAt: string;
+  vault: VaultFile;
+}
+
+/** Credentials that open a backup: its password, or its recovery key plus a new password. */
+export interface BackupCredential {
+  password?: string;
+  recoveryKey?: string;
+  newPassword?: string;
+}
+
+/** Wrong password or recovery key. */
+export class BadCredentialsError extends Error {
+  constructor(message = 'The password or recovery key does not open this vault') {
+    super(message);
+  }
+}
+
+/** The backup is older than, or not the same vault as, the running vault. */
+export class RestoreConflictError extends Error {
+  constructor(
+    message: string,
+    readonly details: { reason: 'older' | 'different-vault'; current: VaultMeta; backup: VaultMeta }
+  ) {
+    super(message);
+  }
+}
+
+export interface VaultMeta {
+  id: string | null;
+  revision: number;
+  updatedAt: string | null;
+  username: string;
 }
 
 export interface GitLabProfile {
@@ -170,6 +218,8 @@ function deriveKey(password: string, salt: Buffer, p = KDF_PARAMS): Promise<Buff
   });
 }
 
+const recoveryKek = (key: Buffer, salt: Buffer) => Buffer.from(hkdfSync('sha256', key, salt, HKDF_INFO_RECOVERY, 32));
+
 function seal(key: Buffer, plaintext: Buffer, aad: Buffer): Sealed {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -195,16 +245,15 @@ export class VaultLockedError extends Error {
   }
 }
 
-class Vault extends EventEmitter {
-  private filePath = path.resolve(
-    process.env.LAZYLAB_DATA_DIR || path.join(process.cwd(), '.data'),
-    'vault.json'
-  );
+const defaultVaultPath = () => path.resolve(process.env.LAZYLAB_DATA_DIR || path.join(process.cwd(), '.data'), 'vault.json');
+
+/** Exported for tests, which open isolated vault files; the server uses the `vault` singleton. */
+export class Vault extends EventEmitter {
   private file: VaultFile | null = null;
   private dek: Buffer | null = null;
   private payload: VaultPayload | null = null;
 
-  constructor() {
+  constructor(private readonly filePath: string = defaultVaultPath()) {
     super();
     this.loadFile();
   }
@@ -220,10 +269,26 @@ class Vault extends EventEmitter {
 
   private writeFile() {
     if (!this.file) return;
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const tmp = `${this.filePath}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.file, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, this.filePath);
+    this.file.id ??= randomUUID();
+    this.file.revision = (this.file.revision ?? 0) + 1;
+    this.file.updatedAt = new Date().toISOString();
+    this.writeVaultFile(this.filePath, this.file);
+  }
+
+  /** Atomic write (temp file + rename). The previous file is kept as `.bak` first, on a best-effort basis. */
+  private writeVaultFile(target: string, file: VaultFile) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const tmp = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(file, null, 2), { mode: 0o600 });
+    if (target === this.filePath && fs.existsSync(target)) {
+      try {
+        fs.copyFileSync(target, `${target}.bak`);
+        fs.chmodSync(`${target}.bak`, 0o600);
+      } catch (err: any) {
+        console.warn(`Could not keep ${target}.bak: ${err?.message || err}`);
+      }
+    }
+    fs.renameSync(tmp, target);
   }
 
   private persist() {
@@ -281,14 +346,16 @@ class Vault extends EventEmitter {
     } catch {
       return false;
     }
-    const userOk =
-      username.length === this.file.username.length &&
-      timingSafeEqual(Buffer.from(username), Buffer.from(this.file.username));
-    if (!userOk) return false;
+    // Compare byte lengths: timingSafeEqual throws on buffers of different length.
+    const given = Buffer.from(username);
+    const stored = Buffer.from(this.file.username);
+    if (given.length !== stored.length || !timingSafeEqual(given, stored)) return false;
 
     if (!this.dek) {
+      // Decrypt before keeping the key: a tampered payload must leave the vault fully locked.
+      const payload = { ...emptyPayload(), ...JSON.parse(open(dek, this.file.payload, AAD_PAYLOAD).toString('utf-8')) };
       this.dek = dek;
-      this.payload = { ...emptyPayload(), ...JSON.parse(open(dek, this.file.payload, AAD_PAYLOAD).toString('utf-8')) };
+      this.payload = payload;
       this.emit('unlocked');
     }
     return true;
@@ -299,9 +366,16 @@ class Vault extends EventEmitter {
     if (!(await this.verifyAndUnlock(this.file.username, current))) return false;
     const salt = randomBytes(16);
     const kek = await deriveKey(next, salt);
+    const previous = { kdf: this.file.kdf, dek: this.file.dek };
     this.file.kdf = { name: 'scrypt', salt: salt.toString('base64'), ...KDF_PARAMS };
     this.file.dek = seal(kek, this.dek, AAD_DEK);
-    this.writeFile();
+    try {
+      this.writeFile();
+    } catch (err) {
+      // The file on disk still holds the old wrapping; keep memory consistent with it.
+      Object.assign(this.file, previous);
+      throw err;
+    }
     return true;
   }
 
@@ -310,6 +384,220 @@ class Vault extends EventEmitter {
     this.dek = null;
     this.payload = null;
     this.emit('locked');
+  }
+
+  // ---- recovery key and backups (design: docs/src/guide/vault.md#backup-and-recovery) ----
+
+  private static metaOf(file: VaultFile): VaultMeta {
+    return { id: file.id ?? null, revision: file.revision ?? 0, updatedAt: file.updatedAt ?? null, username: file.username };
+  }
+
+  private static async openWithPassword(file: VaultFile, password: string): Promise<Buffer> {
+    const { salt, N, r, p, keyLen } = file.kdf;
+    const kek = await deriveKey(password, Buffer.from(salt, 'base64'), { N, r, p, keyLen });
+    try {
+      return open(kek, file.dek, AAD_DEK);
+    } catch {
+      throw new BadCredentialsError('The password does not open this vault');
+    }
+  }
+
+  /** Throws RecoveryKeyFormatError for a mistyped key and BadCredentialsError for a wrong one. */
+  private static openWithRecoveryKey(file: VaultFile, keyText: string): Buffer {
+    const key = parseRecoveryKey(keyText);
+    if (!file.recovery) throw new BadCredentialsError('This vault has no recovery key');
+    try {
+      return open(recoveryKek(key, Buffer.from(file.recovery.salt, 'base64')), file.recovery.dek, AAD_DEK_RECOVERY);
+    } catch {
+      throw new BadCredentialsError('The recovery key does not open this vault');
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  private static decryptPayload(file: VaultFile, dek: Buffer): VaultPayload {
+    try {
+      return { ...emptyPayload(), ...JSON.parse(open(dek, file.payload, AAD_PAYLOAD).toString('utf-8')) };
+    } catch {
+      throw new BackupFormatError('The vault contents are damaged or were modified (integrity check failed)');
+    }
+  }
+
+  private static async wrapWithPassword(dek: Buffer, password: string): Promise<Pick<VaultFile, 'kdf' | 'dek'>> {
+    const salt = randomBytes(16);
+    const kek = await deriveKey(password, salt);
+    return { kdf: { name: 'scrypt', salt: salt.toString('base64'), ...KDF_PARAMS }, dek: seal(kek, dek, AAD_DEK) };
+  }
+
+  private async checkPassword(password: string): Promise<boolean> {
+    if (!this.file || !this.dek) throw new VaultLockedError();
+    const file = this.file;
+    const dek = this.dek;
+    let candidate: Buffer;
+    try { candidate = await Vault.openWithPassword(file, password); }
+    catch (err) { if (err instanceof BadCredentialsError) return false; throw err; }
+    candidate.fill(0);
+    if (this.file !== file || this.dek !== dek) throw new VaultLockedError();
+    return true;
+  }
+
+  /** Applies `change` to the vault file and writes it; a failed write restores the previous fields. */
+  private writeFileChange(change: Partial<VaultFile>, remove: (keyof VaultFile)[] = []) {
+    const file = this.file!;
+    const previous = structuredClone(file);
+    Object.assign(file, change);
+    for (const key of remove) delete file[key];
+    try {
+      this.writeFile();
+    } catch (err) {
+      for (const key of Object.keys(file) as (keyof VaultFile)[]) delete file[key];
+      Object.assign(file, previous);
+      throw err;
+    }
+  }
+
+  recoveryStatus(): { configured: boolean; createdAt: string | null } {
+    return { configured: Boolean(this.file?.recovery), createdAt: this.file?.recovery?.createdAt ?? null };
+  }
+
+  /** Creates or replaces the recovery key. Returns its text (shown once), or null for a wrong password. */
+  async createRecoveryKey(currentPassword: string): Promise<string | null> {
+    if (!(await this.checkPassword(currentPassword))) return null;
+    const key = randomBytes(32);
+    const salt = randomBytes(16);
+    try {
+      const dek = seal(recoveryKek(key, salt), this.dek!, AAD_DEK_RECOVERY);
+      this.writeFileChange({ recovery: { kdf: 'hkdf-sha256', salt: salt.toString('base64'), dek, createdAt: new Date().toISOString() } });
+      return formatRecoveryKey(key);
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  /** Deletes the recovery key's copy of the data key. Returns false for a wrong password. */
+  async removeRecoveryKey(currentPassword: string): Promise<boolean> {
+    if (!(await this.checkPassword(currentPassword))) return false;
+    if (this.file!.recovery) this.writeFileChange({}, ['recovery']);
+    return true;
+  }
+
+  /**
+   * Replaces the password using the recovery key and unlocks the vault. Returns the username.
+   * The recovery key stays valid.
+   */
+  async resetPasswordWithRecoveryKey(recoveryKey: string, newPassword: string): Promise<string> {
+    if (!this.file) throw new Error('Vault is not set up');
+    if (typeof newPassword !== 'string' || newPassword.length < 12) throw new Error('Password must be at least 12 characters');
+    const file = this.file;
+    const revision = file.revision;
+    const dek = Vault.openWithRecoveryKey(file, recoveryKey);
+    // Prove the payload opens before changing anything.
+    const payload = Vault.decryptPayload(file, dek);
+    const wrapped = await Vault.wrapWithPassword(dek, newPassword);
+    if (this.file !== file || file.revision !== revision) throw new Error('The vault changed during the reset; try again');
+    this.writeFileChange(wrapped);
+    this.lock();
+    this.dek = dek;
+    this.payload = payload;
+    this.emit('unlocked');
+    return file.username;
+  }
+
+  /** The vault file as stored on disk, wrapped as a backup. Returns null for a wrong password. */
+  async exportBackup(currentPassword: string): Promise<VaultBackup | null> {
+    if (!(await this.checkPassword(currentPassword))) return null;
+    // Vaults from before backups get their identity written first, so every backup of them carries the same id.
+    if (!this.file!.id) this.writeFile();
+    const onDisk = JSON.parse(fs.readFileSync(this.filePath, 'utf-8')) as VaultFile;
+    // Check the copy before handing it out: same identity and opens with the key in memory.
+    if (onDisk.id !== this.file!.id) throw new Error('The vault file on disk does not match the open vault');
+    Vault.decryptPayload(onDisk, this.dek!);
+    return { format: BACKUP_FORMAT, formatVersion: BACKUP_FORMAT_VERSION, exportedAt: new Date().toISOString(), vault: onDisk };
+  }
+
+  /**
+   * Restores a backup (or a bare vault.json) after proving that the credential opens it.
+   * - mode 'fresh': only when no vault exists (first-run setup).
+   * - mode 'replace': over the open vault. Refuses an older backup or a different vault unless `replaceNewer`;
+   *   the replaced file is kept as vault.json.pre-restore-<time>. The vault is locked (every session ends) and
+   *   reopened with the backup's data key.
+   * With a recovery key, `newPassword` becomes the restored vault's password.
+   */
+  async restoreBackup(
+    input: unknown,
+    cred: BackupCredential,
+    opts: { mode: 'fresh' | 'replace'; replaceNewer?: boolean }
+  ): Promise<{ username: string; meta: VaultMeta }> {
+    const backup = structuredClone(parseBackupFile<VaultFile>(input, VAULT_VERSION));
+    const startingFile = this.file;
+    const startingRevision = this.file?.revision;
+    const assertMode = () => {
+      if (opts.mode === 'fresh' && this.file) throw new Error('Vault already initialized');
+      if (opts.mode === 'replace' && (!this.file || !this.dek)) throw new VaultLockedError();
+    };
+    assertMode();
+
+    let dek: Buffer;
+    let wrapped: Pick<VaultFile, 'kdf' | 'dek'> | null = null;
+    if (typeof cred.recoveryKey === 'string' && cred.recoveryKey.trim()) {
+      if (typeof cred.newPassword !== 'string' || cred.newPassword.length < 12) throw new Error('A new password is required with a recovery key');
+      dek = Vault.openWithRecoveryKey(backup, cred.recoveryKey);
+      Vault.decryptPayload(backup, dek);
+      wrapped = await Vault.wrapWithPassword(dek, cred.newPassword);
+    } else if (typeof cred.password === 'string' && cred.password) {
+      dek = await Vault.openWithPassword(backup, cred.password);
+    } else {
+      throw new BadCredentialsError('The backup password or recovery key is required');
+    }
+    const payload = Vault.decryptPayload(backup, dek);
+
+    // Synchronous from here on, so no other vault write can interleave.
+    assertMode();
+    if (this.file !== startingFile || this.file?.revision !== startingRevision) throw new Error('The vault changed during restore; try again');
+    const previous = this.file;
+    if (previous && !opts.replaceNewer) {
+      const current = Vault.metaOf(previous);
+      const incoming = Vault.metaOf(backup);
+      if (!current.id || current.id !== incoming.id) {
+        throw new RestoreConflictError('The backup is from a different vault (or one too old to tell). Confirm to replace the running vault.', {
+          reason: 'different-vault', current, backup: incoming
+        });
+      }
+      if (incoming.revision < current.revision) {
+        throw new RestoreConflictError(`The backup (revision ${incoming.revision}) is older than the running vault (revision ${current.revision}). Confirm to replace it.`, {
+          reason: 'older', current, backup: incoming
+        });
+      }
+    }
+
+    if (previous) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const keep = `${this.filePath}.pre-restore-${stamp}`;
+      if (fs.existsSync(this.filePath)) fs.copyFileSync(this.filePath, keep);
+      else fs.writeFileSync(keep, JSON.stringify(previous, null, 2));
+      fs.chmodSync(keep, 0o600);
+    }
+
+    const next: VaultFile = {
+      ...structuredClone(backup),
+      ...(wrapped ?? {}),
+      id: backup.id ?? randomUUID(),
+      // writeFile adds one, so the restored vault counts as newer than both.
+      revision: Math.max(backup.revision ?? 0, previous?.revision ?? 0)
+    };
+    this.file = next;
+    try {
+      this.writeFile();
+    } catch (err) {
+      this.file = previous;
+      throw err;
+    }
+    if (this.dek) this.lock();
+    this.dek = dek;
+    this.payload = payload;
+    this.emit('unlocked');
+    if (previous) this.emit('profile-changed');
+    return { username: next.username, meta: Vault.metaOf(next) };
   }
 
   // ---- GitLab profiles ----------------------------------------------------

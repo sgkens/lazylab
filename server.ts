@@ -37,6 +37,8 @@ async function startServer() {
   app.disable('x-powered-by');
   app.set('trust proxy', trustProxy);
   app.use(securityHeaders);
+  // Restores carry an encrypted JSON file inside a JSON request.
+  app.use('/api/session/restore', express.json({ limit: '12mb' }));
   // Project avatars travel as base64 JSON (GitLab caps them at 200 KB).
   app.use(express.json({ limit: '1mb' }));
 
