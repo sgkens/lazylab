@@ -115,3 +115,11 @@ Only two consecutive `GitLabApiError` responses with HTTP status 404 remove a mi
 `GET /healthz` returns HTTP 200 with `{"status":"ok"}` when the server can answer requests. It works before setup and while the vault is locked, exposes no vault or session data, and makes no GitLab requests. It is a liveness probe; it does not verify GitLab connectivity or vault readiness.
 
 The Docker image probes this route every 30 seconds, with a 5-second timeout, a 20-second startup allowance and three failed attempts before marking the container unhealthy. The probe follows `HOST`, `PORT` and built-in TLS settings, including the generated self-signed certificate. Container health alone does not restart a container.
+
+## Aggregate list coverage
+
+The all-project milestones, work items, merge requests, pipelines, labels and packages views read at most the 15 most recently active member projects returned by GitLab. They are bounded working lists, not an account-wide inventory. The project selector reads the first 50 member projects; complete project pagination remains planned.
+
+The view reports `n of m projects loaded`, with the recent-project limit and expandable project errors. One failed project does not hide rows loaded from other projects. If every project read fails, the request fails and the existing view keeps its previous rows with an error notification. Selecting one project reads that project directly.
+
+These list HTTP responses add `coverage: {limit, attempted, loaded}` and `errors: [{projectId, projectName, message}]` to the existing data envelope. `coverage` is omitted for single-project and demo reads, and `errors` is an empty array when there are no project failures. Counts describe project list reads, not complete pagination or per-item enrichment.

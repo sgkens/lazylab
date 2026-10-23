@@ -1,3 +1,4 @@
+import { captureAggregateRead } from './aggregateReads.js';
 import { readFileSync } from 'fs';
 import path from 'path';
 import express, { Router, Request, Response } from 'express';
@@ -302,8 +303,8 @@ apiRouter.get('/milestones', async (req: Request, res: Response) => {
   try {
     const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
     const force = req.query.force === 'true';
-    const milestones = await gitlabClient.getMilestones(projectId, force);
-    res.json({ success: true, milestones });
+    const { data: milestones, coverage, errors } = await captureAggregateRead(() => gitlabClient.getMilestones(projectId, force));
+    res.json({ success: true, milestones, coverage, errors });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -334,8 +335,8 @@ apiRouter.get('/work_items', async (req: Request, res: Response) => {
     const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
     const state = (req.query.state as any) || 'all';
     const force = req.query.force === 'true';
-    const items = await gitlabClient.getWorkItems(projectId, state, force);
-    res.json({ success: true, workItems: items });
+    const { data: items, coverage, errors } = await captureAggregateRead(() => gitlabClient.getWorkItems(projectId, state, force));
+    res.json({ success: true, workItems: items, coverage, errors });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -454,8 +455,8 @@ apiRouter.get('/merge_requests', async (req: Request, res: Response) => {
     const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
     const state = (req.query.state as any) || 'all';
     const force = req.query.force === 'true';
-    const mrs = await gitlabClient.getMergeRequests(projectId, state, force);
-    res.json({ success: true, mergeRequests: mrs });
+    const { data: mrs, coverage, errors } = await captureAggregateRead(() => gitlabClient.getMergeRequests(projectId, state, force));
+    res.json({ success: true, mergeRequests: mrs, coverage, errors });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -566,8 +567,8 @@ apiRouter.get('/pipelines', async (req: Request, res: Response) => {
   try {
     const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
     const force = req.query.force === 'true';
-    const pipelines = await gitlabClient.getPipelines(projectId, force);
-    res.json({ success: true, pipelines });
+    const { data: pipelines, coverage, errors } = await captureAggregateRead(() => gitlabClient.getPipelines(projectId, force));
+    res.json({ success: true, pipelines, coverage, errors });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -736,8 +737,8 @@ apiRouter.get('/labels', async (req: Request, res: Response) => {
   try {
     const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
     const force = req.query.force === 'true';
-    const labels = await gitlabClient.getLabels(projectId, force);
-    res.json({ success: true, labels });
+    const { data: labels, coverage, errors } = await captureAggregateRead(() => gitlabClient.getLabels(projectId, force));
+    res.json({ success: true, labels, coverage, errors });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -784,8 +785,8 @@ apiRouter.get('/packages', async (req: Request, res: Response) => {
     const projectId = req.query.projectId ? Number(req.query.projectId) : undefined;
     const packageType = req.query.packageType ? String(req.query.packageType) : undefined;
     const force = req.query.force === 'true';
-    const packages = await gitlabClient.getPackages(projectId, packageType, force);
-    res.json({ success: true, packages });
+    const { data: packages, coverage, errors } = await captureAggregateRead(() => gitlabClient.getPackages(projectId, packageType, force));
+    res.json({ success: true, packages, coverage, errors });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

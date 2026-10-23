@@ -1,3 +1,4 @@
+import { reportAggregateRead } from './aggregateReads.js';
 import { cacheDb } from './cacheDb.js';
 import { metricsManager } from './metricsManager.js';
 import { parseGitLabCiYaml } from './yamlParser.js';
@@ -1937,6 +1938,16 @@ export class GitLabClient {
       (await fetchOne(project)).map((row) => ({ ...row, project_name: row.project_name ?? project.name }))
     );
     const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    reportAggregateRead({
+      limit: AGGREGATE_PROJECT_LIMIT,
+      attempted: projects.length,
+      loaded: results.length - failures.length,
+      errors: results.flatMap((r, i) => r.status === 'rejected' ? [{
+        projectId: projects[i].id,
+        projectName: projects[i].path_with_namespace || projects[i].name,
+        message: String(r.reason?.message ?? 'GitLab request failed'),
+      }] : []),
+    });
     if (failures.length > 0 && failures.length === results.length) throw failures[0].reason;
     return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
   }
