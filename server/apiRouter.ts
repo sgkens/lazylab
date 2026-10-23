@@ -14,7 +14,7 @@ import { watchManager, parseWatchPollInterval } from './watch.js';
 import { extractFailure, parseRunPipelineInput } from './triage.js';
 import { AutoFetchLoop, parseAutoFetchInterval } from './autoFetch.js';
 import { getSettings, updateSettings } from './settings.js';
-import { parseBudget, requestScheduler, runInLane } from './requestScheduler.js';
+import { parseBudget, RateLimitedError, requestScheduler, runInLane } from './requestScheduler.js';
 
 export const apiRouter = Router();
 
@@ -945,6 +945,7 @@ async function runPipeline(req: Request, res: Response, projectId: number, sourc
     res.json({ success: true, pipeline, watch });
   } catch (err: any) {
     if (err instanceof AgentCiLimitError) return res.status(429).json({ success: false, error: err.message, resetAt: err.resetAt });
+    if (err instanceof RateLimitedError) return agentError(res, err);
     // GitLab answers 400 with the reason for refs it cannot run (missing ref, no jobs, rules exclude all).
     res.status(/\(400\)/.test(err.message) ? 400 : 500).json({ success: false, error: err.message });
   }
@@ -1309,6 +1310,10 @@ function resolveAgentProjectId(res: Response, requested: unknown): number {
 }
 
 function agentError(res: Response, err: any) {
+  if (err instanceof RateLimitedError) {
+    if (err.retryAt !== null) res.setHeader('Retry-After', String(Math.max(1, Math.ceil((err.retryAt - Date.now()) / 1000))));
+    return res.status(429).json({ success: false, error: err.message, retryAt: err.retryAt });
+  }
   res.status(err instanceof AgentRequestError ? err.status : 500).json({ success: false, error: err?.message || String(err) });
 }
 
@@ -1551,7 +1556,10 @@ apiRouter.get('/agent/work-items/:iid', async (req: Request, res: Response) => {
   try {
     const issueIid = Number(req.params.iid);
     const projectId = resolveAgentProjectId(res, req.query.projectId);
-    const item = await gitlabClient.getWorkItem(projectId, issueIid).catch(() => null);
+    const item = await gitlabClient.getWorkItem(projectId, issueIid).catch((err) => {
+      if (err instanceof RateLimitedError) throw err;
+      return null;
+    });
     if (!item) {
       return res.status(404).json({ success: false, error: `Work item #${issueIid} not found` });
     }
@@ -1644,7 +1652,10 @@ apiRouter.get('/agent/merge-requests/:iid', async (req: Request, res: Response) 
   try {
     const mrIid = Number(req.params.iid);
     const projectId = resolveAgentProjectId(res, req.query.projectId);
-    const mr = await gitlabClient.getMergeRequest(projectId, mrIid).catch(() => null);
+    const mr = await gitlabClient.getMergeRequest(projectId, mrIid).catch((err) => {
+      if (err instanceof RateLimitedError) throw err;
+      return null;
+    });
     if (!mr) {
       return res.status(404).json({ success: false, error: `Merge request !${mrIid} not found` });
     }

@@ -51,6 +51,8 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Fixed
 
+- Agent REST reads and writes return HTTP 429 with retry timing when the GitLab scheduler pauses requests, instead of a server error or a false not-found response. Vault backup permission assertions now account for Windows file attributes while retaining encrypted-file checks.
+
 - Cache retention counts UTF-8 bytes rather than characters, so non-ASCII GitLab content obeys the configured size cap.
 - CI/CD variables are read from every page; only the first 20 were read before.
 - Demo group variables were shown for every group.

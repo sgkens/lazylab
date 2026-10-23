@@ -4,6 +4,7 @@ import express from 'express';
 import type { Server } from 'http';
 import { apiGuard } from '../server/session.ts';
 import { vault } from '../server/vault.ts';
+import { RateLimitedError } from '../server/requestScheduler.ts';
 
 let server: Server;
 let base: string;
@@ -85,4 +86,29 @@ describe('projectId is required (GL-21)', () => {
     expect((await call('GET', '/work-items?projectId=901', undefined, '')).status).toBe(401);
     expect((await call('GET', '/work-items?projectId=901', undefined, 'llab_wrong')).status).toBe(401);
   });
+});
+
+
+test('agent reads, writes and pipeline runs preserve scheduler rate-limit responses', async () => {
+  const { getGitlabClient } = await import('../server/apiRouter.ts');
+  const client = getGitlabClient();
+  const retryAt = Date.now() + 60_000;
+  const methods = ['getWorkItem', 'getMergeRequest', 'updateWorkItem', 'createPipeline'] as const;
+  const originals = methods.map((method) => client[method]);
+  try {
+    for (const method of methods) (client as any)[method] = async () => { throw new RateLimitedError('GitLab quota exhausted', retryAt); };
+    for (const [method, url, body] of [
+      ['GET', '/work-items/1?projectId=901', undefined],
+      ['GET', '/merge-requests/1?projectId=901', undefined],
+      ['PATCH', '/work-items/1', { projectId: 901, state_event: 'close' }],
+      ['POST', '/pipelines', { projectId: 901, ref: 'main', watch: false }],
+    ] as const) {
+      const res = await fetch(base + url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      expect(res.status).toBe(429);
+      expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect(await res.json()).toMatchObject({ success: false, retryAt, error: 'GitLab quota exhausted' });
+    }
+  } finally {
+    methods.forEach((method, i) => (client as any)[method] = originals[i]);
+  }
 });
