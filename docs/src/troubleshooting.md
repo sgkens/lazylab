@@ -19,7 +19,7 @@ The code is only needed until the admin account exists. Only someone who can rea
 
 ### I forgot the password
 
-The password derives the key that encrypts the vault, so it cannot be reset or recovered. To start over, stop lazylab, move `vault.json` out of the [data directory](/configuration/#data-directory), and start it again: a new setup code is printed. GitLab profiles, secrets and agent tokens from the old vault are lost; the GitLab tokens themselves still work and can be added again.
+If you created a recovery key, choose **Forgot password? Use the recovery key** on the sign-in screen and set a new password. If you have a backup and know the password it was made with, restore it (see [Backup and recovery](/guide/vault/#backup-and-recovery)). Otherwise the password cannot be reset or recovered, because it derives the key that encrypts the vault. To start over, stop lazylab, move `vault.json` out of the [data directory](/configuration/#data-directory), and start it again: a new setup code is printed. GitLab profiles, secrets and agent tokens from the old vault are lost; the GitLab tokens themselves still work and can be added again.
 
 ### "Too many attempts. Retry in N s"
 

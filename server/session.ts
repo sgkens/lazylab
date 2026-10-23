@@ -381,3 +381,68 @@ sessionRouter.delete('/devices/:id', (req, res) => {
   if (self) clearSessionCookie(res);
   res.json({ success: true, self });
 });
+
+// Recovery operations share sign-in throttling and the session router's Origin guard.
+sessionRouter.get('/recovery', (req, res) => {
+  if (!getSession(req)) return res.status(401).json({ success: false, error: 'Not authenticated' });
+  res.json({ success: true, ...vault.recoveryStatus() });
+});
+
+sessionRouter.post('/recover', async (req, res) => {
+  if (rejectIfThrottled(req, res)) return;
+  const { recoveryKey, newPassword } = req.body || {};
+  if (typeof recoveryKey !== 'string' || typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ success: false, error: 'Recovery key and a new password of at least 12 characters are required' });
+  }
+  try {
+    const username = await vault.resetPasswordWithRecoveryKey(recoveryKey, newPassword);
+    throttle.clear(req.ip || '');
+    createSession(req, res, username);
+    res.json({ success: true });
+  } catch (err: any) {
+    throttle.recordFailure(req.ip || '');
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+sessionRouter.post(['/recovery', '/recovery/remove', '/backup', '/restore'], async (req, res) => {
+  const fresh = req.path === '/restore' && !vault.isInitialized();
+  if (!fresh && !getSession(req)) return res.status(401).json({ success: false, error: 'Not authenticated' });
+  if (rejectIfThrottled(req, res)) return;
+  const body = req.body || {};
+  try {
+    if (fresh) {
+      if (!setupCode || String(body.setupCode || '').trim().toUpperCase() !== setupCode) {
+        throttle.recordFailure(req.ip || '');
+        return res.status(403).json({ success: false, error: 'Invalid setup code (see the server log)' });
+      }
+    } else if (!(await vault.verifyAndUnlock(vault.getUsername()!, String(body.currentPassword || '')))) {
+      throttle.recordFailure(req.ip || '');
+      return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.path === '/recovery') {
+      const recoveryKey = await vault.createRecoveryKey(body.currentPassword);
+      if (!recoveryKey) throw new Error('Current password is incorrect');
+      return res.json({ success: true, recoveryKey });
+    }
+    if (req.path === '/recovery/remove') {
+      if (!(await vault.removeRecoveryKey(body.currentPassword))) throw new Error('Current password is incorrect');
+      return res.json({ success: true });
+    }
+    if (req.path === '/backup') {
+      const backup = await vault.exportBackup(body.currentPassword);
+      if (!backup) throw new Error('Current password is incorrect');
+      return res.json({ success: true, backup });
+    }
+    const restored = await vault.restoreBackup(body.backup, body.credential || {}, { mode: fresh ? 'fresh' : 'replace', replaceNewer: body.replaceNewer === true });
+    setupCode = null;
+    throttle.clear(req.ip || '');
+    createSession(req, res, restored.username);
+    res.json({ success: true });
+  } catch (err: any) {
+    if (err.details) return res.status(409).json({ success: false, error: err.message, conflict: err.details });
+    throttle.recordFailure(req.ip || '');
+    res.status(400).json({ success: false, error: err.message });
+  }
+});

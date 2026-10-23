@@ -43,7 +43,7 @@ cp .env.example .env
 | `labwi_cache.sqlite`, `labwi_cache.wal` | Cached GitLab responses and a change journal | No |
 | `tls/` | Self-signed certificate and key, when generated | No (key file mode 0600) |
 
-Back up `vault.json` and remember the password. The cache can be deleted at any time; lazylab refetches from GitLab.
+Download a vault backup from **Vault → Account** (or copy `vault.json`), create a recovery key, and remember the password; see [Backup and recovery](/guide/vault/#backup-and-recovery). The cache can be deleted at any time; lazylab refetches from GitLab.
 
 ## In-app settings
 

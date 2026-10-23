@@ -1,3 +1,4 @@
+import { VaultRecovery } from './VaultRecovery';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bell,
@@ -1039,6 +1040,8 @@ const AccountSection: React.FC<{ run: Run; onLocked: () => void }> = ({ run, onL
           <Lock className="w-3.5 h-3.5" /> Lock vault now
         </button>
       </Card>
+
+      <Card title="Backup and recovery" description="Save an encrypted backup and create a recovery key for a forgotten password."><VaultRecovery onRestored={onLocked} /></Card>
 
       <Card title="Change password" description="Re-encrypts the vault key with the new password. Stored secrets are unchanged.">
         <form

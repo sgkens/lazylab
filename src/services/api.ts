@@ -58,6 +58,12 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
 export const sessionApi = {
   state: () => request<SessionState>('/session/state'),
+  recoveryStatus: () => request<{ configured: boolean; createdAt: string | null }>('/session/recovery'),
+  createRecoveryKey: (currentPassword: string) => request<{ recoveryKey: string }>('/session/recovery', post({ currentPassword })),
+  removeRecoveryKey: (currentPassword: string) => request('/session/recovery/remove', post({ currentPassword })),
+  recover: (recoveryKey: string, newPassword: string) => request('/session/recover', post({ recoveryKey, newPassword })),
+  backup: (currentPassword: string) => request<{ backup: unknown }>('/session/backup', post({ currentPassword })),
+  restore: (payload: { backup: unknown; credential: { password?: string; recoveryKey?: string; newPassword?: string }; currentPassword?: string; setupCode?: string; replaceNewer?: boolean }) => request('/session/restore', post(payload)),
   setup: (payload: { setupCode: string; username: string; password: string; gitlabHost?: string; gitlabToken?: string }) =>
     request<{ success: boolean }>('/session/setup', post(payload)),
   login: (username: string, password: string) => request<{ success: boolean }>('/session/login', post({ username, password })),

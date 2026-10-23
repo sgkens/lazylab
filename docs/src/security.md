@@ -17,11 +17,14 @@ abstract: lazylab has one admin account, keeps every secret in a password-encryp
 ```mermaid
 flowchart LR
   P[Password] -->|scrypt N=2^16, r=8, p=1| K[Key-encryption key]
+  R[Recovery key, 256 bit, optional] -->|HKDF-SHA256| KR[Recovery key-encryption key]
   K -->|AES-256-GCM unwrap| D[Data key, 256 bit]
+  KR -->|AES-256-GCM unwrap| D
   D -->|AES-256-GCM| S[Secrets payload]
 ```
 
-- `vault.json` (file mode 0600) holds the scrypt parameters and salt, the data key wrapped with the password-derived key, and the payload encrypted with the data key.
+- `vault.json` (file mode 0600) holds the scrypt parameters and salt, the data key wrapped with the password-derived key, optionally a second copy of the data key wrapped with the recovery key, and the payload encrypted with the data key.
+- The recovery key is 256 random bits. Because it is not a human-chosen secret, it is stretched with HKDF-SHA256 (own salt) rather than scrypt. Its wrapped copy binds a separate purpose string, so it cannot be swapped with the password copy. See [Backup and recovery](/guide/vault/#backup-and-recovery).
 - The payload holds:
   - GitLab profiles
   - CI secrets, runner tokens and generic secrets
@@ -32,7 +35,8 @@ flowchart LR
 - The data key exists only in memory, between a successful sign-in and a lock or process exit.
 - After a restart the vault is locked. GitLab sync, watches and agent access stay paused until you sign in.
 - **Vault → Account → Lock** wipes the key from memory and signs every device out.
-- **A forgotten password means the vault contents are lost.** Changing the password re-wraps the data key; the secrets are not re-encrypted.
+- **A forgotten password with no recovery key and no backup means the vault contents are lost.** Changing the password re-wraps the data key; the secrets are not re-encrypted, and the recovery key keeps working.
+- Backups are the encrypted vault file. Downloading one, creating a recovery key and restoring each ask for the current password.
 
 ## Browser sessions
 

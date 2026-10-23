@@ -392,3 +392,37 @@ describe('device sessions', () => {
     expect(devices.some((d) => d.ip === fresh.ip && d.current)).toBe(true);
   });
 });
+
+
+describe('backup and recovery HTTP guards', () => {
+  test('requires session, Origin and current password for sensitive operations', async () => {
+    for (const endpoint of ['/recovery', '/recovery/remove', '/backup', '/restore']) {
+      expect((await client().call('POST', '/api/session' + endpoint, { body: {} })).status).toBe(401);
+      const c = await loggedIn();
+      expect((await c.call('POST', '/api/session' + endpoint, { origin: 'https://evil.example', body: {} })).status).toBe(403);
+      expect((await c.call('POST', '/api/session' + endpoint, { body: { currentPassword: 'wrong-password' } })).status).toBe(401);
+    }
+  });
+  test('exports encrypted data and recovery reset revokes other devices', async () => {
+    const a = await loggedIn(); const b = await loggedIn();
+    const keyRes = await a.call('POST', '/api/session/recovery', { body: { currentPassword: PASSWORD } });
+    expect(keyRes.status).toBe(200); expect(keyRes.headers.get('cache-control')).toBe('no-store');
+    const { recoveryKey } = await keyRes.json();
+    const downloaded = await a.call('POST', '/api/session/backup', { body: { currentPassword: PASSWORD } });
+    expect(downloaded.status).toBe(200); expect((await downloaded.json()).backup.format).toBe('lazylab-vault-backup');
+    const recovery = client();
+    expect((await recovery.call('POST', '/api/session/recover', { origin: 'https://evil.example', body: { recoveryKey, newPassword: PASSWORD } })).status).toBe(403);
+    expect((await recovery.call('POST', '/api/session/recover', { body: { recoveryKey, newPassword: 'short' } })).status).toBe(400);
+    expect((await recovery.call('POST', '/api/session/recover', { body: { recoveryKey, newPassword: PASSWORD } })).status).toBe(200);
+    expect((await a.call('GET', '/api/ping')).status).toBe(401);
+    expect((await b.call('GET', '/api/ping')).status).toBe(401);
+    expect((await recovery.call('GET', '/api/ping')).status).toBe(200);
+    expect((await recovery.call('POST', '/api/session/recovery/remove', { body: { currentPassword: PASSWORD } })).status).toBe(200);
+  });
+  test('recovery attempts share login back-off', async () => {
+    const c = client();
+    for (let i = 0; i < 5; i++) expect((await c.call('POST', '/api/session/recover', { body: { recoveryKey: 'invalid-key', newPassword: PASSWORD } })).status).toBe(400);
+    const blocked = await c.call('POST', '/api/session/recover', { body: { recoveryKey: 'invalid-key', newPassword: PASSWORD } });
+    expect(blocked.status).toBe(429); expect(blocked.headers.get('retry-after')).toBeTruthy();
+  });
+});
