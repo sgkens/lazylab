@@ -29,6 +29,10 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 - **Documentation site** (Eleventy), published with GitLab Pages; MIT licence.
 - Initial import: sign-in with a one-time setup code, encrypted vault, TLS options and the GitLab UI for work items, merge requests, pipelines, releases and project settings.
 
+### Changed
+
+- **Cache engine:** the GitLab response cache uses `bun:sqlite` in WAL mode instead of sql.js. Writes are single rows instead of a full database export, and only recently used entries stay in memory. Existing cache files open without conversion. The `sql.js` dependency is gone.
+
 ### Fixed
 
 - CI/CD variables are read from every page; only the first 20 were read before.

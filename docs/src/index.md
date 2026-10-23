@@ -83,7 +83,7 @@ flowchart LR
   T[lazy CLI] -->|MCP, agent token| L
   L -->|token from the vault| G[(GitLab REST and GraphQL)]
   L --> V[(vault.json, encrypted)]
-  L --> C[(cache, sql.js)]
+  L --> C[(cache, SQLite)]
   L -->|push| P[ntfy / Gotify / webhook]
 ```
 
