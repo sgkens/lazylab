@@ -10,6 +10,13 @@ const received: LazyNotification[] = [];
 
 beforeAll(async () => {
   if (!vault.isInitialized()) await vault.initialize('tester', 'correct horse battery');
+  // Session tests can trigger the router's background inbox refresh in the shared process.
+  // Keep automatic MR watches from racing this suite's explicitly created watches.
+  watchManager.stop();
+  vault.updateNotify((n) => {
+    n.watches = [];
+    n.rules.myMrPipelines = false;
+  });
   watchManager.attach(() => demo);
   watchManager.on('notification', (n) => received.push(n));
 });

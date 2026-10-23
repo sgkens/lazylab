@@ -68,6 +68,28 @@ describe('encrypted backups', () => {
     expect(target.vault.getEntry(entry.id).value).toBe('never-plaintext-marker');
     target.vault.lock(); expect(await target.vault.verifyAndUnlock('tester', password)).toBe(false); expect(await target.vault.verifyAndUnlock('tester', next)).toBe(true);
   });
+  test('recovery restore preserves token restrictions and spent CI quota', async () => {
+    const { vault } = await seed();
+    const { token, record } = vault.createAgentToken('restricted agent', {
+      scope: 'write', projects: [901], defaultProjectId: 901,
+      tools: ['run_pipeline'], dailyCiLimit: 1,
+    });
+    vault.consumeAgentCi(record.id);
+    const key = (await vault.createRecoveryKey(password))!;
+    const backup = (await vault.exportBackup(password))!;
+    const target = fresh();
+    await target.vault.restoreBackup(backup, { recoveryKey: key, newPassword: next }, { mode: 'fresh' });
+    target.vault.lock();
+    const reloaded = new Vault(target.file);
+    expect(await reloaded.verifyAndUnlock('tester', next)).toBe(true);
+    expect(reloaded.verifyAgentToken(token)).toMatchObject({
+      scope: 'write', projects: [901], defaultProjectId: 901,
+      tools: ['run_pipeline'], dailyCiLimit: 1,
+      ciUsage: { used: 1 },
+    });
+    expect(() => reloaded.consumeAgentCi(record.id)).toThrow('daily CI limit');
+    reloaded.lock();
+  });
   test('wrong credentials, tamper and malformed formats leave target uninitialized', async () => {
     const { vault } = await seed(); const key = (await vault.createRecoveryKey(password))!;
     const backup = (await vault.exportBackup(password))!;
