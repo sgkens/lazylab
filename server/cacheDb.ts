@@ -473,11 +473,11 @@ export class CacheDb {
       }
 
       if (this.maxBytes > 0) {
-        const total = db.query<{ bytes: number | null }, []>('SELECT SUM(length(data)) AS bytes FROM cache_store').get()?.bytes ?? 0;
+        const total = db.query<{ bytes: number | null }, []>('SELECT SUM(length(CAST(data AS BLOB))) AS bytes FROM cache_store').get()?.bytes ?? 0;
         if (total > this.maxBytes) {
           let excess = total - this.maxBytes;
           const victims: string[] = [];
-          for (const row of db.query<{ key: string; size: number }, []>('SELECT key, length(data) AS size FROM cache_store ORDER BY updated_at ASC').iterate()) {
+          for (const row of db.query<{ key: string; size: number }, []>('SELECT key, length(CAST(data AS BLOB)) AS size FROM cache_store ORDER BY updated_at ASC').iterate()) {
             if (excess <= 0) break;
             victims.push(row.key);
             excess -= row.size;

@@ -42,6 +42,8 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Fixed
 
+- Cache retention counts UTF-8 bytes rather than characters, so non-ASCII GitLab content obeys the configured size cap.
+
 - CI/CD variables are read from every page; only the first 20 were read before.
 - Demo group variables were shown for every group.
 - No expiry warnings for demo sample tokens.

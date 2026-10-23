@@ -257,6 +257,19 @@ describe('cacheDb retention', () => {
     c.close();
   });
 
+  test('counts UTF-8 bytes when enforcing the stored size cap', async () => {
+    const c = await open({ maxRows: 0, maxMegabytes: 1 });
+    const blob = '界'.repeat(200 * 1024);
+    c.set('unicode-old', 'test', null, blob);
+    await Bun.sleep(2);
+    c.set('unicode-new', 'test', null, blob);
+    // Each JSON value is about 600 KiB even though SQLite text length is 200 KiB.
+    expect(c.sweep().overCap).toBe(1);
+    expect(c.get('unicode-old')).toBeNull();
+    expect(c.get('unicode-new')).not.toBeNull();
+    c.close();
+  });
+
   test('a full purge removes every row and survives a reopen', async () => {
     const dir = freshDir();
     const c = new CacheDb({ dataDir: dir, sweepIntervalMs: 0 });
