@@ -11,7 +11,7 @@ abstract: The vault is lazylab's encrypted store for GitLab profiles, CI secrets
 | CI secrets | Values meant for CI/CD variables | **Push to GitLab** writes the value as a project or group variable (protected, masked, environment scope) |
 | Runner tokens | Runner authentication tokens | Registering a runner from the UI saves its token here |
 | Secrets | Anything else: API keys, passwords | Reveal for 30 seconds, copy |
-| Agent tokens | Hashes of `llab_…` tokens | Create (shown once, with setup commands for Claude Code, Codex and REST), revoke. **Can read secrets** lets a token read variable values and vault secrets for [`lazy env` and `lazy run`](/cli/#local-environment-lazy-env-and-lazy-run) |
+| Agent tokens | Hashes of `llab_…` tokens with their permissions | Create (shown once, with setup commands for Claude Code, Codex and REST), edit, revoke. Each token has a scope (read only or read and write), optional allowed projects and default project, an expiry, and **Can read secrets** for [`lazy env` and `lazy run`](/cli/#local-environment-lazy-env-and-lazy-run). See [Token permissions](/security/#token-permissions) |
 | Notes | Personal notes and tasks with comments | See [Notes and tasks](/guide/notes/) |
 | Notifications | Push channels and rules | See [Notifications](/guide/notifications/) |
 | Account | Password, signed-in devices, recovery key, backups | Change password, revoke a device, lock the vault, create a recovery key, download and restore a backup |

@@ -29,11 +29,16 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 - **Agent skill** for Claude Code, Codex and Antigravity.
 - **Documentation site** (Eleventy), published with GitLab Pages; MIT licence.
 - Initial import: sign-in with a one-time setup code, encrypted vault, TLS options and the GitLab UI for work items, merge requests, pipelines, releases and project settings.
+- **Aggregate coverage:** multi-project lists show how many of the 15 most recently active member projects loaded and name failed project reads. Successful rows remain usable when another project fails; responses include `coverage` and `errors[]`.
 - **Watch polling** (WATCH-10, WATCH-14): saved 10–300 second base interval in Settings; older pipelines and unchanged merge requests back off to at most 10 minutes. A watch is removed only after two consecutive typed GitLab API 404 responses; network, permission and rate-limit failures retain it.
 - **Request scheduler** (GL-19): every GitLab API call goes through one budget with per-plan presets (GitLab.com Free default: 4,000/h, 80/min, leaving room for other tools on the account), custom values, priority lanes (clicks, then watches, then background refresh), a slowdown when `RateLimit-Remaining` runs low, a pause on 429 that honours `Retry-After`, and a 15 s request timeout. The sync bar shows when requests are held back; `GET /api/status` reports the state under `scheduler`.
 - **Auto-fetch single-flight** (GL-20): only one background refresh runs at a time and the next one starts an interval after the previous one finished. The server enforces a 30 s minimum (Off or 30 to 3,600 s), saves the interval in `settings.json` across restarts, and reports the loop state under `autoFetch` in `GET /api/status`. The 15 s option is gone; a 5 min option was added.
+- **Production CSP:** restrict scripts and API connections to the app origin, block framing and embedded objects, and preserve inlined logos, GitLab images, React styles and the configured Google Fonts stylesheet. Development keeps Vite and HMR working.
 - **Vault recovery:** download encrypted backups, restore after checking credentials and confirming older or different vaults, and create a printable recovery key that resets a forgotten password. Recovery and restore revoke existing sessions; replaced vaults are retained as encrypted files.
 - **Revoke one device** (SEC-3): **Vault → Account → Signed-in devices** shows each session's IP, browser, sign-in time and last activity, with **Revoke** to sign out that device only (`DELETE /api/session/devices/:id`). Locking the vault still signs out every device.
+- **Agent CI budgets:** each token can cap combined pipeline runs and job retries per UTC day. New tokens default to 50 attempts; legacy tokens keep unlimited access. Reservations persist before GitLab calls, are shared by REST and MCP, and remain spent after upstream failures or restarts.
+- **MCP tool allowlists** (AGENT-7): limit each token to named tools in Vault. Unlisted tools are hidden and denied, and listed tools still need the token’s scope, project and secret permissions.
+- **Agent token permissions** (AGENT-2, SEC-6): each agent token has a scope (read only, the default for new tokens, or read and write), optional allowed projects, an optional default project for REST calls, an expiry (30 days by default in the UI) and a last-used time. Enforced on `/api/agent/*` and `/mcp`; **Vault → Agent tokens** shows and edits them. Tokens created earlier keep read and write access to every project with no expiry and are marked **legacy: review**.
 
 ### Changed
 
@@ -42,6 +47,7 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 - **Bounded cache journal:** the journal file rotates at 5 MiB with one previous file kept, and journal rows in the database are pruned to the newest 10,000 and the last 7 days (`LAZYLAB_JOURNAL_MAX_BYTES`, `LAZYLAB_JOURNAL_KEEP_ROWS`, `LAZYLAB_JOURNAL_KEEP_DAYS`). Re-caching an unchanged GitLab response only extends its TTL and is not journaled.
 - **Cache retention:** a sweep at start and every 10 minutes deletes rows expired for more than 24 hours and the oldest rows beyond 5,000 rows or 128 MiB (`LAZYLAB_CACHE_STALE_HOURS`, `LAZYLAB_CACHE_MAX_ROWS`, `LAZYLAB_CACHE_MAX_MB`). Expired rows of projects you are no longer a member of are deleted at the next project list refresh. Purged rows are overwritten on disk.
 - **labwi leftovers renamed:** the cache files are now `lazylab_cache.sqlite` and `lazylab_journal.jsonl`, and the theme is stored under `lazylab_theme`. Existing `labwi_cache.*` files and the `labwi_theme` setting are moved on first use.
+- **Breaking (agent REST):** work item, merge request, pipeline and job routes under `/api/agent` require `projectId` and answer `400` without it. They used to fall back to the most recently active project, or to demo project 901 in live mode, which could send writes to the wrong project (GL-21).
 
 ### Fixed
 

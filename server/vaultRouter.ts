@@ -4,6 +4,7 @@
  */
 import { Request, Response, Router } from 'express';
 import { GitLabClient } from './gitlabClient.js';
+import { parseAgentTokenSettings } from './agentPolicy.js';
 import { CiPushTarget, EntryKind, vault, VaultLockedError } from './vault.js';
 
 export const vaultRouter = Router();
@@ -175,8 +176,18 @@ vaultRouter.post('/agent-tokens', (req: Request, res: Response) => {
   try {
     const name = String(req.body?.name || '').trim();
     if (!name) throw new Error('name is required');
-    const { token } = vault.createAgentToken(name, { secrets: req.body?.secrets === true });
+    const { token } = vault.createAgentToken(name, parseAgentTokenSettings(req.body, false));
     res.json({ success: true, token, agentTokens: vault.listAgentTokens() });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/** Change scope, allowed projects, default project, expiry or secret access. Absent fields stay as they are. */
+vaultRouter.patch('/agent-tokens/:id', (req: Request, res: Response) => {
+  try {
+    vault.updateAgentToken(req.params.id, parseAgentTokenSettings(req.body, true));
+    res.json({ success: true, agentTokens: vault.listAgentTokens() });
   } catch (err) {
     fail(res, err);
   }

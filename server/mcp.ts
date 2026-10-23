@@ -4,6 +4,7 @@
  * - Transport: Streamable HTTP at `/mcp`, stateless. Every request is a POST carrying one JSON-RPC message
  *   (or a batch, for 2025-03-26 clients) and gets a JSON response; no SSE stream and no session id.
  * - Auth: `Authorization: Bearer llab_...` agent tokens from the vault, the same as `/api/agent/*`.
+ *   Each token's policy (server/agentPolicy.ts) decides which tools it sees and may call, and on which projects.
  *   A browser Origin, when present, must match the host (DNS rebinding guard required by the spec).
  * - Tools call the GitLab client of the active vault profile and return compact JSON so agents spend
  *   few tokens on fields they do not use.
@@ -15,6 +16,7 @@ import { loadEnvLevels, resolveEnv } from './envResolve.js';
 import { GitLabClient, GitLabMergeRequest, GitLabWorkItem } from './gitlabClient.js';
 import { getInbox } from './inbox.js';
 import { originMatches } from './session.js';
+import { AgentScope, projectAllowed, projectDeniedMessage, READ_ONLY_MESSAGE } from './agentPolicy.js';
 import { parseRunPipelineInput } from './triage.js';
 import { vault } from './vault.js';
 import { watchManager } from './watch.js';
@@ -78,8 +80,11 @@ type JsonSchema = {
 
 export interface ToolContext {
   client: GitLabClient;
-  /** The agent token making the call; absent in tests and treated as a token without secret access. */
-  token?: { id?: string; name: string; secrets: boolean };
+  /**
+   * The agent token making the call. Absent in tests: no secret access, write scope, every project.
+   * HTTP requests always carry the token's full policy (vault.authenticateAgentToken).
+   */
+  token?: { id?: string; name: string; secrets: boolean; scope?: AgentScope; tools?: string[] | null; projects?: number[] | null };
   /** Profile captured with the client at request dispatch; null is the demo namespace. */
   profileId?: string | null;
 }
@@ -94,6 +99,8 @@ export interface ToolDef {
   creates?: boolean;
   /** Returns secret values: listed and callable only for agent tokens created with secret access. */
   secrets?: boolean;
+  /** Writes only lazylab's own local state (watches, handoffs, notes), so read-scope tokens may call it. */
+  local?: boolean;
   run: (args: any, ctx: ToolContext) => Promise<unknown>;
 }
 
@@ -163,7 +170,7 @@ export const TOOLS: ToolDef[] = [
       const profileId = ctx.profileId === undefined ? vault.getActiveProfile()?.id ?? null : ctx.profileId;
       const task: TaskRef = { project_id: await resolveProject(ctx.client, args.project), kind: args.kind, iid: args.iid };
       validateTask(task);
-      return buildTaskBriefing(ctx.client, task, vault.getAgentHandoffs(profileId, task, 3));
+      return buildTaskBriefing(ctx.client, task, vault.getAgentHandoffs(profileId, task, 3), undefined, (id) => projectAllowed(ctx.token, id));
     }
   },
   {
@@ -191,7 +198,7 @@ export const TOOLS: ToolDef[] = [
         }
       }, required: ['project', 'kind', 'iid', 'handoff']
     },
-    readOnly: false, creates: true,
+    readOnly: false, creates: true, local: true,
     run: async (args, ctx) => {
       const profileId = ctx.profileId === undefined ? vault.getActiveProfile()?.id ?? null : ctx.profileId;
       const task: TaskRef = { project_id: await resolveProject(ctx.client, args.project), kind: args.kind, iid: args.iid };
@@ -281,6 +288,7 @@ export const TOOLS: ToolDef[] = [
     },
     readOnly: false,
     creates: true,
+    local: true,
     run: async (args, ctx) => vault.createNote(namespaceFor(ctx.client), {
       title: args.title, ...(args.body !== undefined ? { body: args.body } : {}),
       ...(args.kind ? { kind: args.kind } : {}), ...(args.tags ? { tags: args.tags } : {})
@@ -296,6 +304,7 @@ export const TOOLS: ToolDef[] = [
       required: ['id', 'status']
     },
     readOnly: false,
+    local: true,
     run: async (args, ctx) => {
       const ns = namespaceFor(ctx.client);
       return vault.updateNote(ns, resolveNoteId(vault.listNotes(ns), args.id), { status: args.status });
@@ -308,12 +317,15 @@ export const TOOLS: ToolDef[] = [
       'What needs the user across all projects: merge requests and issues grouped as action (needs the user), waiting (on others) and assigned, each with a reason such as "Pipeline failed" or "Review requested".',
     inputSchema: { type: 'object', properties: { refresh: { type: 'boolean', description: 'Bypass the 30 s cache' } } },
     readOnly: true,
-    run: async (args, { client }) => {
+    run: async (args, { client, token }) => {
       const inbox = await getInbox(client, Boolean(args.refresh));
+      const items = inbox.items.filter((i) => projectAllowed(token, i.project_id));
+      const counts = { action: 0, waiting: 0, assigned: 0 };
+      for (const i of items) counts[i.bucket]++;
       return {
-        counts: inbox.counts,
+        counts,
         errors: inbox.errors,
-        items: inbox.items.map((i) => ({
+        items: items.map((i) => ({
           bucket: i.bucket,
           reason: i.reason,
           kind: i.kind,
@@ -333,9 +345,10 @@ export const TOOLS: ToolDef[] = [
     description: 'Projects the user is a member of, most recently active first.',
     inputSchema: { type: 'object', properties: { search: { type: 'string', description: 'Filter by name or path' } } },
     readOnly: true,
-    run: async (args, { client }) => {
+    run: async (args, { client, token }) => {
       const q = String(args.search || '').toLowerCase();
       return (await client.getProjects())
+        .filter((p) => projectAllowed(token, p.id))
         .filter((p) => !q || p.path_with_namespace.toLowerCase().includes(q) || p.name.toLowerCase().includes(q))
         .map((p) => ({ id: p.id, path: p.path_with_namespace, default_branch: p.default_branch, web_url: p.web_url }));
     }
@@ -625,10 +638,11 @@ export const TOOLS: ToolDef[] = [
     },
     readOnly: false,
     creates: true,
-    run: async (args, { client }) => {
+    run: async (args, { client, token }) => {
       const projectId = await resolveProject(client, args.project);
       const input = parseRunPipelineInput(args);
       if ('error' in input) throw new Error(input.error);
+      if (token?.id) vault.consumeAgentCi(token.id);
       const pipeline = await client.createPipeline(projectId, input.ref, input.variables);
       const watched = input.watch
         ? Boolean(await watchManager.addWatch({ kind: 'pipeline', project_id: pipeline.project_id, target_id: pipeline.id, source: 'agent' }).catch(() => null))
@@ -647,8 +661,10 @@ export const TOOLS: ToolDef[] = [
     },
     readOnly: false,
     creates: true,
-    run: async (args, { client }) => {
+    run: async (args, { client, token }) => {
       const projectId = await resolveProject(client, args.project);
+      if (!Number.isSafeInteger(args.job_id) || args.job_id <= 0) throw new Error('job_id must be a positive integer');
+      if (token?.id) vault.consumeAgentCi(token.id);
       const job = await client.retryJob(projectId, args.job_id);
       const watched =
         args.watch !== false
@@ -672,6 +688,7 @@ export const TOOLS: ToolDef[] = [
       required: ['project', 'kind', 'target_id']
     },
     readOnly: false,
+    local: true,
     run: async (args, { client }) => {
       const projectId = await resolveProject(client, args.project);
       const w = await watchManager.addWatch({ kind: args.kind, project_id: projectId, target_id: args.target_id, source: 'agent' });
@@ -719,8 +736,8 @@ export const TOOLS: ToolDef[] = [
     description: 'Pipelines, jobs and merge requests currently watched for the user.',
     inputSchema: { type: 'object', properties: {} },
     readOnly: true,
-    run: async () =>
-      watchManager.listWatches().map((w) => ({ id: w.id, kind: w.kind, project_id: w.project_id, target_id: w.target_id, label: w.label, status: w.status ?? null, source: w.source }))
+    run: async (_args, { token }) =>
+      watchManager.listWatches().filter((w) => projectAllowed(token, w.project_id)).map((w) => ({ id: w.id, kind: w.kind, project_id: w.project_id, target_id: w.target_id, label: w.label, status: w.status ?? null, source: w.source }))
   }
 ];
 
@@ -767,8 +784,22 @@ export function validateArgs(schema: JsonSchema, args: any): string | null {
 
 // ---- JSON-RPC dispatch (no I/O apart from the tools themselves) --------------
 
-export function listTools(canReadSecrets = false) {
-  return TOOLS.filter((t) => canReadSecrets || !t.secrets).map((t) => ({
+type ToolToken = ToolContext['token'];
+
+/** Why this token may not call the tool, or null when it may. Project checks happen per call. */
+export function toolDenial(tool: ToolDef, token: ToolToken): string | null {
+  if (token?.tools && !token.tools.includes(tool.name)) return `This agent token is not allowed to call ${tool.name}. Allowed MCP tools are set in Vault → Agent tokens.`;
+  if (tool.secrets && !token?.secrets) {
+    return `${tool.name} needs an agent token with secret access. Create one in Vault → Agent tokens with "Can read secrets" ticked.`;
+  }
+  if (!tool.readOnly && !tool.local && token?.scope === 'read') return READ_ONLY_MESSAGE;
+  return null;
+}
+
+/** Tools this token may call. A boolean is shorthand for a write-scope token with or without secret access. */
+export function listTools(token: ToolToken | boolean = false) {
+  const t = typeof token === 'boolean' ? { name: '', secrets: token } : token;
+  return TOOLS.filter((tool) => !toolDenial(tool, t)).map((t) => ({
     name: t.name,
     title: t.title,
     description: t.description,
@@ -815,20 +846,24 @@ export async function handleMessage(msg: any, getCtx: () => ToolContext): Promis
     case 'ping':
       return { jsonrpc: '2.0', id, result: {} };
     case 'tools/list':
-      return { jsonrpc: '2.0', id, result: { tools: listTools(Boolean(getCtx().token?.secrets)) } };
+      return { jsonrpc: '2.0', id, result: { tools: listTools(getCtx().token) } };
     case 'tools/call': {
       const tool = TOOLS.find((t) => t.name === req.params?.name);
       if (!tool) return rpcError(id, INVALID_PARAMS, `Unknown tool: ${req.params?.name}`);
       const ctx = getCtx();
-      if (tool.secrets && !ctx.token?.secrets) {
-        const text = `${tool.name} needs an agent token with secret access. Create one in Vault → Agent tokens with "Can read secrets" ticked.`;
-        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: true } };
-      }
+      const denied = toolDenial(tool, ctx.token);
+      if (denied) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: denied }], isError: true } };
       const args = req.params?.arguments ?? {};
       const invalid = validateArgs(tool.inputSchema, args);
       // Bad arguments are reported as a tool error so the model can correct itself.
       if (invalid) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: invalid }], isError: true } };
       try {
+        if (ctx.token?.projects && 'project' in tool.inputSchema.properties && args.project !== undefined) {
+          const projectId = await resolveProject(ctx.client, args.project);
+          if (!projectAllowed(ctx.token, projectId)) {
+            return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: projectDeniedMessage(projectId) }], isError: true } };
+          }
+        }
         const data = await tool.run(args, ctx);
         return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(data) }], isError: false } };
       } catch (err: any) {
@@ -854,12 +889,13 @@ function mcpAuth(req: Request, res: Response, next: NextFunction) {
   if (!vault.isUnlocked()) {
     return res.status(503).json(rpcError(null, INVALID_REQUEST, 'lazylab is locked. Log in to lazylab in a browser to unlock it.'));
   }
-  const token = vault.verifyAgentToken(auth.slice(7).trim());
-  if (!token) {
+  const result = vault.authenticateAgentToken(auth.slice(7).trim());
+  if (!result.ok) {
     res.setHeader('WWW-Authenticate', 'Bearer realm="lazylab", error="invalid_token"');
-    return res.status(401).json(rpcError(null, INVALID_REQUEST, 'Invalid agent token'));
+    const message = result.reason === 'expired' ? `Agent token expired at ${result.expiresAt}` : 'Invalid agent token';
+    return res.status(401).json(rpcError(null, INVALID_REQUEST, message));
   }
-  res.locals.agentToken = { id: token.id, name: token.name, secrets: Boolean(token.secrets) };
+  res.locals.agentToken = result.token;
   next();
 }
 

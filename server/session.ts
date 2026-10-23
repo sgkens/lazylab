@@ -217,9 +217,13 @@ export function apiGuard(req: Request, res: Response, next: NextFunction) {
     if (!vault.isUnlocked()) {
       return res.status(423).json({ success: false, error: 'Vault is locked. Log in to lazylab in a browser to unlock it.' });
     }
-    if (!vault.verifyAgentToken(auth.slice(7).trim())) {
-      return res.status(401).json({ success: false, error: 'Invalid agent token' });
+    const result = vault.authenticateAgentToken(auth.slice(7).trim());
+    if (!result.ok) {
+      const error = result.reason === 'expired' ? `Agent token expired at ${result.expiresAt}` : 'Invalid agent token';
+      return res.status(401).json({ success: false, error });
     }
+    // Scope, project allowlist and caps are enforced by the agent routes (server/apiRouter.ts).
+    res.locals.agentToken = result.token;
     return next();
   }
 

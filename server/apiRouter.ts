@@ -7,6 +7,7 @@ import { redactVariable } from './variables.js';
 import { TokenExpiryMonitor } from './tokenExpiry.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
+import { AgentCiLimitError, AgentPolicy, projectAllowed, projectDeniedMessage, READ_ONLY_MESSAGE } from './agentPolicy.js';
 import { getInbox } from './inbox.js';
 import { watchManager, parseWatchPollInterval } from './watch.js';
 import { extractFailure, parseRunPipelineInput } from './triage.js';
@@ -928,6 +929,7 @@ async function runPipeline(req: Request, res: Response, projectId: number, sourc
   const parsed = parseRunPipelineInput(req.body);
   if ('error' in parsed) return res.status(400).json({ success: false, error: parsed.error });
   try {
+    if (source === 'agent' && agentPolicy(res)?.id) vault.consumeAgentCi(agentPolicy(res)!.id);
     const pipeline = await gitlabClient.createPipeline(projectId, parsed.ref, parsed.variables);
     broadcastEvent('pipeline_updated', { pipelineId: pipeline.id, status: pipeline.status });
     let watch = null;
@@ -941,6 +943,7 @@ async function runPipeline(req: Request, res: Response, projectId: number, sourc
     }
     res.json({ success: true, pipeline, watch });
   } catch (err: any) {
+    if (err instanceof AgentCiLimitError) return res.status(429).json({ success: false, error: err.message, resetAt: err.resetAt });
     // GitLab answers 400 with the reason for refs it cannot run (missing ref, no jobs, rules exclude all).
     res.status(/\(400\)/.test(err.message) ? 400 : 500).json({ success: false, error: err.message });
   }
@@ -1264,15 +1267,48 @@ apiRouter.patch('/projects/:projectId/pages', async (req: Request, res: Response
 // ============================================================================
 
 
-// Helper to determine active project ID
-async function resolveAgentProjectId(requestedId?: any): Promise<number> {
-  if (requestedId) return Number(requestedId);
-  try {
-    const projects = await gitlabClient.getProjects();
-    return projects[0]?.id || 901;
-  } catch {
-    return 901;
+/** A client error on an agent route: sent with its own status instead of 500. */
+class AgentRequestError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
   }
+}
+
+/** Policy of the bearer token on this request; undefined for a signed-in browser session (full access). */
+const agentPolicy = (res: Response): AgentPolicy | undefined => res.locals.agentToken;
+
+/**
+ * Token scope: a read-scope token may only read, and add watches (lazylab's own state, no GitLab write).
+ * Projects and caps are checked per route, once the project is known.
+ */
+apiRouter.use('/agent', (req: Request, res: Response, next) => {
+  const policy = agentPolicy(res);
+  const mutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+  if (policy?.scope === 'read' && mutating && !(req.method === 'POST' && req.path === '/watches')) {
+    return res.status(403).json({ success: false, error: READ_ONLY_MESSAGE });
+  }
+  next();
+});
+
+/**
+ * The project an agent call acts on: the request's projectId, else the token's default project.
+ * Never guessed (the most recently active project, or a demo id in live mode, sent writes to the wrong project).
+ * Projects outside the token's allowlist answer 403.
+ */
+function resolveAgentProjectId(res: Response, requested: unknown): number {
+  const policy = agentPolicy(res);
+  const requestedId = requested === undefined || requested === null || requested === '' ? policy?.defaultProjectId ?? undefined : requested;
+  if (requestedId === undefined) {
+    throw new AgentRequestError(400, 'projectId is required. Pass the numeric GitLab project id (list it with GET /api/agent/inbox or the MCP tool list_projects).');
+  }
+  const id = typeof requestedId === 'number' || (typeof requestedId === 'string' && /^\d+$/.test(requestedId.trim())) ? Number(requestedId) : NaN;
+  if (!Number.isSafeInteger(id) || id <= 0) throw new AgentRequestError(400, 'projectId must be a positive integer');
+  if (!projectAllowed(policy, id)) throw new AgentRequestError(403, projectDeniedMessage(id));
+  return id;
+}
+
+function agentError(res: Response, err: any) {
+  res.status(err instanceof AgentRequestError ? err.status : 500).json({ success: false, error: err?.message || String(err) });
 }
 
 // 1. Agent Skill & Documentation
@@ -1337,7 +1373,7 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
         description: 'Run a pipeline for a ref with variables; watches it by default so a notification arrives when it finishes',
         body: {
           ref: 'string (required)',
-          projectId: 'number (optional, defaults to primary project)',
+          projectId: 'number (required)',
           variables: '{ key, value, variable_type?: env_var | file }[] (optional)',
           watch: 'boolean (optional, default true)'
         }
@@ -1346,19 +1382,19 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
         method: 'GET',
         path: '/api/agent/pipelines/:pipelineId/failures',
         description: 'Failing section of each failed job (allowed failures excluded): error line, exit code, failure reason, retryable',
-        queryParams: { projectId: 'number (optional)' }
+        queryParams: { projectId: 'number (required)' }
       },
       {
         method: 'GET',
         path: '/api/agent/jobs/:jobId/failure',
         description: 'Failing section of one job log',
-        queryParams: { projectId: 'number (optional)' }
+        queryParams: { projectId: 'number (required)' }
       },
       {
         method: 'GET',
         path: '/api/agent/work-items',
         description: 'List work items (issues)',
-        queryParams: { projectId: 'number (optional)', state: 'opened | closed | all (optional)' }
+        queryParams: { projectId: 'number (required)', state: 'opened | closed | all (optional)' }
       },
       {
         method: 'POST',
@@ -1367,7 +1403,7 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
         body: {
           title: 'string (required)',
           description: 'string (optional, Markdown)',
-          projectId: 'number (optional, defaults to primary project)',
+          projectId: 'number (required)',
           labels: 'string[] (optional)',
           assignee_ids: 'number[] (optional)',
           issue_type: 'issue | incident | task (optional)'
@@ -1380,7 +1416,7 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
         body: {
           title: 'string (optional)',
           description: 'string (optional, Markdown)',
-          projectId: 'number (optional)',
+          projectId: 'number (required)',
           labels: 'string[] (optional)',
           assignee_ids: 'number[] (optional)',
           state_event: 'close | reopen (optional)'
@@ -1390,7 +1426,7 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
         method: 'GET',
         path: '/api/agent/merge-requests',
         description: 'List merge requests',
-        queryParams: { projectId: 'number (optional)', state: 'opened | closed | merged | all (optional)' }
+        queryParams: { projectId: 'number (required)', state: 'opened | closed | merged | all (optional)' }
       },
       {
         method: 'POST',
@@ -1401,7 +1437,7 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
           description: 'string (optional, Markdown)',
           source_branch: 'string (required)',
           target_branch: 'string (optional, default main)',
-          projectId: 'number (optional)',
+          projectId: 'number (required)',
           labels: 'string[] (optional)',
           assignee_ids: 'number[] (optional)'
         }
@@ -1413,7 +1449,7 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
         body: {
           title: 'string (optional)',
           description: 'string (optional, Markdown)',
-          projectId: 'number (optional)',
+          projectId: 'number (required)',
           labels: 'string[] (optional)',
           draft: 'boolean (optional)',
           state_event: 'close | reopen (optional)'
@@ -1427,15 +1463,21 @@ apiRouter.get('/agent/docs', (_req: Request, res: Response) => {
 apiRouter.get('/agent/inbox', async (req: Request, res: Response) => {
   try {
     const inbox = await getInbox(gitlabClient, req.query.force === 'true');
-    res.json({ success: true, ...inbox });
+    const policy = agentPolicy(res);
+    if (!policy?.projects) return res.json({ success: true, ...inbox });
+    const items = inbox.items.filter((i) => projectAllowed(policy, i.project_id));
+    const counts = { action: 0, waiting: 0, assigned: 0 };
+    for (const i of items) counts[i.bucket]++;
+    res.json({ success: true, ...inbox, items, counts });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
 // Watches: agents (and the `lazy` CLI) ask to be told when a pipeline, job or MR finishes
 apiRouter.get('/agent/watches', (_req: Request, res: Response) => {
-  res.json({ success: true, watches: watchManager.listWatches() });
+  const policy = agentPolicy(res);
+  res.json({ success: true, watches: watchManager.listWatches().filter((w) => projectAllowed(policy, w.project_id)) });
 });
 
 apiRouter.post('/agent/watches', async (req: Request, res: Response) => {
@@ -1444,12 +1486,14 @@ apiRouter.post('/agent/watches', async (req: Request, res: Response) => {
     if (!['pipeline', 'job', 'merge_request'].includes(kind)) {
       return res.status(400).json({ success: false, error: 'kind must be pipeline, job or merge_request' });
     }
-    if (!Number(projectId) || !Number(targetId)) {
-      return res.status(400).json({ success: false, error: 'projectId and targetId are required' });
+    if (!Number.isSafeInteger(Number(targetId)) || Number(targetId) <= 0) {
+      return res.status(400).json({ success: false, error: 'targetId must be a positive integer' });
     }
-    const watch = await watchManager.addWatch({ kind, project_id: Number(projectId), target_id: Number(targetId), source: 'agent' });
+    const project = resolveAgentProjectId(res, projectId);
+    const watch = await watchManager.addWatch({ kind, project_id: project, target_id: Number(targetId), source: 'agent' });
     res.json({ success: true, watch });
   } catch (err: any) {
+    if (err instanceof AgentRequestError) return agentError(res, err);
     res.status(/not found|404/i.test(err.message) ? 404 : 500).json({ success: false, error: err.message });
   }
 });
@@ -1457,37 +1501,37 @@ apiRouter.post('/agent/watches', async (req: Request, res: Response) => {
 // Triage and pipelines for agents and the `lazy` CLI
 apiRouter.get('/agent/jobs/:jobId/failure', async (req: Request, res: Response) => {
   try {
-    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const projectId = resolveAgentProjectId(res, req.query.projectId);
     const failure = await gitlabClient.getJobFailure(projectId, Number(req.params.jobId));
     res.json({ success: true, failure });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
 apiRouter.get('/agent/pipelines/:pipelineId/failures', async (req: Request, res: Response) => {
   try {
-    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const projectId = resolveAgentProjectId(res, req.query.projectId);
     const failures = await gitlabClient.getPipelineFailures(projectId, Number(req.params.pipelineId));
     res.json({ success: true, failures });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
 apiRouter.post('/agent/pipelines', async (req: Request, res: Response) => {
   try {
-    const projectId = await resolveAgentProjectId(req.body?.projectId);
+    const projectId = resolveAgentProjectId(res, req.body?.projectId);
     return runPipeline(req, res, projectId, 'agent');
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
 // 2. Work Items: List
 apiRouter.get('/agent/work-items', async (req: Request, res: Response) => {
   try {
-    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const projectId = resolveAgentProjectId(res, req.query.projectId);
     const state = (req.query.state as any) || 'all';
     const items = await gitlabClient.getWorkItems(projectId, state, true);
     res.json({
@@ -1497,7 +1541,7 @@ apiRouter.get('/agent/work-items', async (req: Request, res: Response) => {
       workItems: items
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
@@ -1505,7 +1549,7 @@ apiRouter.get('/agent/work-items', async (req: Request, res: Response) => {
 apiRouter.get('/agent/work-items/:iid', async (req: Request, res: Response) => {
   try {
     const issueIid = Number(req.params.iid);
-    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const projectId = resolveAgentProjectId(res, req.query.projectId);
     const item = await gitlabClient.getWorkItem(projectId, issueIid).catch(() => null);
     if (!item) {
       return res.status(404).json({ success: false, error: `Work item #${issueIid} not found` });
@@ -1513,18 +1557,18 @@ apiRouter.get('/agent/work-items/:iid', async (req: Request, res: Response) => {
     const notes = await gitlabClient.getWorkItemNotes(projectId, issueIid);
     res.json({ success: true, workItem: item, notes });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
 // Work Items: Create
 apiRouter.post('/agent/work-items', async (req: Request, res: Response) => {
   try {
-    const { title, description, issue_type = 'issue', labels = [], assignee_ids = [], weight, milestone_id } = req.body;
+    const { title, description, issue_type = 'issue', labels = [], assignee_ids = [], weight, milestone_id } = req.body || {};
     if (!title) {
       return res.status(400).json({ success: false, error: 'title is required' });
     }
-    const projectId = await resolveAgentProjectId(req.body.projectId);
+    const projectId = resolveAgentProjectId(res, req.body?.projectId);
     const item = await gitlabClient.createWorkItem(projectId, {
       title,
       description: description || '',
@@ -1541,7 +1585,7 @@ apiRouter.post('/agent/work-items', async (req: Request, res: Response) => {
       workItem: item
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
@@ -1549,8 +1593,8 @@ apiRouter.post('/agent/work-items', async (req: Request, res: Response) => {
 const handleAgentWorkItemUpdate = async (req: Request, res: Response) => {
   try {
     const issueIid = Number(req.params.iid);
-    const projectId = await resolveAgentProjectId(req.body.projectId || req.query.projectId);
-    const { title, description, state_event, labels, add_labels, remove_labels, assignee_ids, milestone_id } = req.body;
+    const projectId = resolveAgentProjectId(res, req.body?.projectId ?? req.query.projectId);
+    const { title, description, state_event, labels, add_labels, remove_labels, assignee_ids, milestone_id } = req.body || {};
 
     const updated = await gitlabClient.updateWorkItem(projectId, issueIid, {
       title,
@@ -1570,7 +1614,7 @@ const handleAgentWorkItemUpdate = async (req: Request, res: Response) => {
       workItem: updated
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 };
 
@@ -1580,7 +1624,7 @@ apiRouter.patch('/agent/work-items/:iid', handleAgentWorkItemUpdate);
 // 3. Merge Requests: List
 apiRouter.get('/agent/merge-requests', async (req: Request, res: Response) => {
   try {
-    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const projectId = resolveAgentProjectId(res, req.query.projectId);
     const state = (req.query.state as any) || 'all';
     const mrs = await gitlabClient.getMergeRequests(projectId, state, true);
     res.json({
@@ -1590,7 +1634,7 @@ apiRouter.get('/agent/merge-requests', async (req: Request, res: Response) => {
       mergeRequests: mrs
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
@@ -1598,7 +1642,7 @@ apiRouter.get('/agent/merge-requests', async (req: Request, res: Response) => {
 apiRouter.get('/agent/merge-requests/:iid', async (req: Request, res: Response) => {
   try {
     const mrIid = Number(req.params.iid);
-    const projectId = await resolveAgentProjectId(req.query.projectId);
+    const projectId = resolveAgentProjectId(res, req.query.projectId);
     const mr = await gitlabClient.getMergeRequest(projectId, mrIid).catch(() => null);
     if (!mr) {
       return res.status(404).json({ success: false, error: `Merge request !${mrIid} not found` });
@@ -1606,18 +1650,18 @@ apiRouter.get('/agent/merge-requests/:iid', async (req: Request, res: Response) 
     const notes = await gitlabClient.getMergeRequestNotes(projectId, mrIid);
     res.json({ success: true, mergeRequest: mr, notes });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
 // Merge Requests: Create
 apiRouter.post('/agent/merge-requests', async (req: Request, res: Response) => {
   try {
-    const { title, description, source_branch, target_branch = 'main', labels = [], assignee_ids = [] } = req.body;
+    const { title, description, source_branch, target_branch = 'main', labels = [], assignee_ids = [] } = req.body || {};
     if (!title || !source_branch) {
       return res.status(400).json({ success: false, error: 'title and source_branch are required' });
     }
-    const projectId = await resolveAgentProjectId(req.body.projectId);
+    const projectId = resolveAgentProjectId(res, req.body?.projectId);
     const mr = await gitlabClient.createMergeRequest(projectId, {
       title,
       description: description || '',
@@ -1633,7 +1677,7 @@ apiRouter.post('/agent/merge-requests', async (req: Request, res: Response) => {
       mergeRequest: mr
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 });
 
@@ -1641,8 +1685,8 @@ apiRouter.post('/agent/merge-requests', async (req: Request, res: Response) => {
 const handleAgentMergeRequestUpdate = async (req: Request, res: Response) => {
   try {
     const mrIid = Number(req.params.iid);
-    const projectId = await resolveAgentProjectId(req.body.projectId || req.query.projectId);
-    const { title, description, labels, draft, state_event } = req.body;
+    const projectId = resolveAgentProjectId(res, req.body?.projectId ?? req.query.projectId);
+    const { title, description, labels, draft, state_event } = req.body || {};
 
     const updated = await gitlabClient.updateMergeRequest(projectId, mrIid, {
       title,
@@ -1659,7 +1703,7 @@ const handleAgentMergeRequestUpdate = async (req: Request, res: Response) => {
       mergeRequest: updated
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    agentError(res, err);
   }
 };
 
