@@ -1,9 +1,10 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, renameSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { CacheDb, envInt } from '../server/cacheDb.ts';
+import { readStoredTheme, storeTheme } from '../src/utils/theme.ts';
 
 const freshDir = () => mkdtempSync(path.join(tmpdir(), 'lazylab-cache-'));
 
@@ -130,6 +131,67 @@ describe('cacheDb journal bounds', () => {
     expect(envInt('LAZYLAB_TEST_INT', 3)).toBe(3);
     delete process.env.LAZYLAB_TEST_INT;
     expect(envInt('LAZYLAB_TEST_INT', 3)).toBe(3);
+  });
+});
+
+describe('labwi file migration', () => {
+  test('moves labwi_cache.* to the lazylab names once and keeps the rows', async () => {
+    const dir = freshDir();
+    const legacy = new CacheDb({ dataDir: dir, sweepIntervalMs: 0 });
+    await legacy.init();
+    legacy.set('user:current', 'user', null, { username: 'ada' }, undefined, 60_000);
+    legacy.close();
+    // Recreate the pre-rename layout from the files just written.
+    renameSync(legacy.dbPath, path.join(dir, 'labwi_cache.sqlite'));
+    for (const s of ['-wal', '-shm']) if (existsSync(legacy.dbPath + s)) renameSync(legacy.dbPath + s, path.join(dir, `labwi_cache.sqlite${s}`));
+    renameSync(legacy.walPath, path.join(dir, 'labwi_cache.wal'));
+    writeFileSync(path.join(dir, 'labwi_cache.wal.1'), '{}\n');
+
+    const c = new CacheDb({ dataDir: dir, sweepIntervalMs: 0 });
+    await c.init();
+    expect(path.basename(c.dbPath)).toBe('lazylab_cache.sqlite');
+    expect(c.get<{ username: string }>('user:current')?.data.username).toBe('ada');
+    expect(existsSync(`${c.walPath}.1`)).toBe(true);
+    expect(readdirSync(dir).filter((f) => f.startsWith('labwi_'))).toEqual([]);
+    c.close();
+  });
+
+  test('leaves legacy files alone when the new files exist', async () => {
+    const dir = freshDir();
+    const c = new CacheDb({ dataDir: dir, sweepIntervalMs: 0 });
+    await c.init();
+    c.close();
+    writeFileSync(path.join(dir, 'labwi_cache.wal'), '{}\n');
+    await c.init();
+    expect(existsSync(path.join(dir, 'labwi_cache.wal'))).toBe(true);
+    c.close();
+  });
+});
+
+describe('theme storage', () => {
+  const memoryStorage = (init: Record<string, string> = {}) => {
+    const m = new Map(Object.entries(init));
+    return {
+      map: m,
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => void m.set(k, v),
+      removeItem: (k: string) => void m.delete(k)
+    };
+  };
+
+  test('moves labwi_theme to lazylab_theme', () => {
+    const s = memoryStorage({ labwi_theme: 'light' });
+    expect(readStoredTheme(s)).toBe('light');
+    expect(s.map.get('lazylab_theme')).toBe('light');
+    expect(s.map.has('labwi_theme')).toBe(false);
+  });
+
+  test('prefers the current key and defaults to dark', () => {
+    expect(readStoredTheme(memoryStorage({ lazylab_theme: 'light', labwi_theme: 'dark' }))).toBe('light');
+    expect(readStoredTheme(memoryStorage({ labwi_theme: 'purple' }))).toBe('dark');
+    const s = memoryStorage();
+    storeTheme('light', s);
+    expect(readStoredTheme(s)).toBe('light');
   });
 });
 

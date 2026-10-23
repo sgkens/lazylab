@@ -50,7 +50,7 @@ flowchart LR
 
 ## What is not encrypted
 
-- The GitLab response cache (`labwi_cache.*`). It holds issue, merge request and pipeline data, but no tokens. Switching or removing the active GitLab profile purges it; deleted rows are overwritten on disk (SQLite `secure_delete`). Expired rows are deleted after a grace period, see [Cache retention](/configuration/#cache-retention).
+- The GitLab response cache (`lazylab_cache.sqlite` and `lazylab_journal.jsonl`). It holds issue, merge request and pipeline data, but no tokens. Switching or removing the active GitLab profile purges it; deleted rows are overwritten on disk (SQLite `secure_delete`). Expired rows are deleted after a grace period, see [Cache retention](/configuration/#cache-retention).
 - Notification history is in memory only.
 - Job logs and failure excerpts are fetched on demand and not stored.
 

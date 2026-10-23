@@ -37,6 +37,7 @@ import { SyncProgressBar } from './components/SyncProgressBar';
 import { AgentSkillModal } from './components/AgentSkillModal';
 import { api, notifyApi, sessionApi } from './services/api';
 import { reportError } from './utils/reportError';
+import { readStoredTheme, storeTheme, type Theme } from './utils/theme';
 import { SessionState } from './types/vault';
 import {
   AppStatus,
@@ -103,9 +104,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   const [searchQuery, setSearchQuery] = useState('');
 
   // Matte Black Dark Mode vs Light Mode
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('labwi_theme') as 'dark' | 'light') || 'dark';
-  });
+  const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
 
   // Domain entities
   const [workItems, setWorkItems] = useState<GitLabWorkItem[]>([]);
@@ -158,7 +157,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
-    localStorage.setItem('labwi_theme', next);
+    storeTheme(next);
   };
 
   useEffect(() => {

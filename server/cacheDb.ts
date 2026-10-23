@@ -57,6 +57,12 @@ interface CacheRow {
   expires_at: number;
 }
 
+const CACHE_FILE = 'lazylab_cache.sqlite';
+const JOURNAL_FILE = 'lazylab_journal.jsonl';
+/** Names used before the project was renamed from labwi; moved once on start. */
+const LEGACY_CACHE_FILE = 'labwi_cache.sqlite';
+const LEGACY_JOURNAL_FILE = 'labwi_cache.wal';
+
 const DEFAULT_MEMORY_ENTRIES = 256;
 const DEFAULT_JOURNAL_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_JOURNAL_KEEP_ROWS = 10_000;
@@ -121,8 +127,8 @@ export class CacheDb {
 
   constructor(opts: CacheDbOptions = {}) {
     this.dataDir = path.resolve(opts.dataDir ?? (process.env.LAZYLAB_DATA_DIR || path.join(process.cwd(), '.data')));
-    this.dbPath = path.join(this.dataDir, 'labwi_cache.sqlite');
-    this.walPath = path.join(this.dataDir, 'labwi_cache.wal');
+    this.dbPath = path.join(this.dataDir, CACHE_FILE);
+    this.walPath = path.join(this.dataDir, JOURNAL_FILE);
     this.memoryEntries = Math.max(1, opts.memoryEntries ?? envInt('LAZYLAB_CACHE_MEMORY_ENTRIES', DEFAULT_MEMORY_ENTRIES));
     this.journalMaxBytes = opts.journalMaxBytes ?? envInt('LAZYLAB_JOURNAL_MAX_BYTES', DEFAULT_JOURNAL_MAX_BYTES);
     this.journalKeepRows = opts.journalKeepRows ?? envInt('LAZYLAB_JOURNAL_KEEP_ROWS', DEFAULT_JOURNAL_KEEP_ROWS);
@@ -140,6 +146,7 @@ export class CacheDb {
   private initSync() {
     if (this.isInitialized) return;
     fs.mkdirSync(this.dataDir, { recursive: true });
+    this.migrateLegacyFiles();
 
     try {
       this.db = this.open();
@@ -175,6 +182,33 @@ export class CacheDb {
     if (this.sweepIntervalMs > 0) {
       this.sweepTimer = setInterval(() => this.sweep(), this.sweepIntervalMs);
       this.sweepTimer.unref?.();
+    }
+  }
+
+  /**
+   * Moves `labwi_cache.*` files to the current names, once. SQLite's `-wal` and `-shm` files move
+   * with the database so committed but not yet checkpointed rows are kept. Nothing is moved when a
+   * file with the new name exists already.
+   */
+  private migrateLegacyFiles() {
+    const moves: [string, string][] = [];
+    const legacyDb = path.join(this.dataDir, LEGACY_CACHE_FILE);
+    if (fs.existsSync(legacyDb) && !fs.existsSync(this.dbPath)) {
+      for (const suffix of ['', '-wal', '-shm']) moves.push([legacyDb + suffix, this.dbPath + suffix]);
+    }
+    const legacyJournal = path.join(this.dataDir, LEGACY_JOURNAL_FILE);
+    if (fs.existsSync(legacyJournal) && !fs.existsSync(this.walPath)) {
+      for (const suffix of ['', '.1']) moves.push([legacyJournal + suffix, this.walPath + suffix]);
+    }
+    for (const [from, to] of moves) {
+      try {
+        if (fs.existsSync(from)) {
+          fs.renameSync(from, to);
+          console.log(`Renamed ${path.basename(from)} to ${path.basename(to)}`);
+        }
+      } catch (err) {
+        console.warn(`Could not rename ${from} to ${to}:`, err);
+      }
     }
   }
 

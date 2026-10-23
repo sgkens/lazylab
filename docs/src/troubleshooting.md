@@ -104,7 +104,7 @@ GitLab never returns the value of a variable that is masked and hidden. Store th
 
 ### Can I delete the cache?
 
-Yes. `labwi_cache.sqlite` and `labwi_cache.wal` hold cached GitLab responses and the change journal. lazylab refetches from GitLab. Keep `vault.json`.
+Yes. `lazylab_cache.sqlite` (with its `-wal` and `-shm` files) and `lazylab_journal.jsonl` hold cached GitLab responses and the change journal. Older installs used `labwi_cache.*`; lazylab renames them on start. lazylab refetches from GitLab. Keep `vault.json`.
 
 ### What should I back up?
 

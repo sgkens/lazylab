@@ -47,7 +47,7 @@ cp .env.example .env
 | Path | Contents | Encrypted |
 |---|---|---|
 | `vault.json` | Everything in the vault | Yes, AES-256-GCM |
-| `labwi_cache.sqlite` (plus SQLite's `-wal` and `-shm` files), `labwi_cache.wal`, `labwi_cache.wal.1` | Cached GitLab responses and a change journal with one rotated file | No |
+| `lazylab_cache.sqlite` (plus SQLite's `-wal` and `-shm` files), `lazylab_journal.jsonl`, `lazylab_journal.jsonl.1` | Cached GitLab responses and a change journal with one rotated file. Earlier builds named them `labwi_cache.*`; they are renamed on the first start | No |
 | `tls/` | Self-signed certificate and key, when generated | No (key file mode 0600) |
 
 Back up `vault.json` and remember the password. The cache can be deleted at any time; lazylab refetches from GitLab.

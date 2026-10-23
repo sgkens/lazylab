@@ -34,6 +34,7 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 - **Cache engine:** the GitLab response cache uses `bun:sqlite` in WAL mode instead of sql.js. Writes are single rows instead of a full database export, and only recently used entries stay in memory. Existing cache files open without conversion. The `sql.js` dependency is gone.
 - **Bounded cache journal:** the journal file rotates at 5 MiB with one previous file kept, and journal rows in the database are pruned to the newest 10,000 and the last 7 days (`LAZYLAB_JOURNAL_MAX_BYTES`, `LAZYLAB_JOURNAL_KEEP_ROWS`, `LAZYLAB_JOURNAL_KEEP_DAYS`). Re-caching an unchanged GitLab response only extends its TTL and is not journaled.
 - **Cache retention:** a sweep at start and every 10 minutes deletes rows expired for more than 24 hours and the oldest rows beyond 5,000 rows or 128 MiB (`LAZYLAB_CACHE_STALE_HOURS`, `LAZYLAB_CACHE_MAX_ROWS`, `LAZYLAB_CACHE_MAX_MB`). Expired rows of projects you are no longer a member of are deleted at the next project list refresh. Purged rows are overwritten on disk.
+- **labwi leftovers renamed:** the cache files are now `lazylab_cache.sqlite` and `lazylab_journal.jsonl`, and the theme is stored under `lazylab_theme`. Existing `labwi_cache.*` files and the `labwi_theme` setting are moved on first use.
 
 ### Fixed
 
