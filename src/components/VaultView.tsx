@@ -907,6 +907,7 @@ function parseProjectIds(text: string): number[] | null {
 
 interface TokenFormState {
   scope: AgentScope;
+  dailyCiLimit: string;
   restrictTools: boolean;
   toolsText: string;
   secrets: boolean;
@@ -918,6 +919,7 @@ interface TokenFormState {
 
 const formFromToken = (t?: AgentTokenInfo): TokenFormState => ({
   scope: t?.scope ?? 'read',
+  dailyCiLimit: t ? (t.dailyCiLimit === null ? '' : String(t.dailyCiLimit)) : '50',
   restrictTools: t?.tools !== undefined && t.tools !== null,
   toolsText: t?.tools?.join(', ') ?? '',
   secrets: t?.secrets ?? false,
@@ -932,6 +934,7 @@ function settingsFromForm(f: TokenFormState): AgentTokenSettings {
   if (projects === null) throw new Error('Allowed projects must be numeric project ids separated by commas');
   const settings: AgentTokenSettings = {
     scope: f.scope,
+    dailyCiLimit: f.dailyCiLimit.trim() ? Number(f.dailyCiLimit) : null,
     tools: f.restrictTools ? [...new Set(f.toolsText.split(/[\s,]+/).filter(Boolean))] : null,
     secrets: f.secrets,
     projects: projects.length ? projects : null,
@@ -1039,6 +1042,11 @@ const AgentTokenFields: React.FC<{ form: TokenFormState; setForm: (f: TokenFormS
         </label>
       </div>
 
+      <label className="block space-y-1" htmlFor={`${idPrefix}-daily-ci`}>
+        <span>Daily CI attempt limit (runs and retries combined, UTC); 0 disables CI, empty is unlimited</span>
+        <input id={`${idPrefix}-daily-ci`} className={inputClass} type="number" min="0" max="10000" step="1" placeholder="Unlimited" value={form.dailyCiLimit} onChange={(e) => setForm({ ...form, dailyCiLimit: e.target.value })} />
+      </label>
+
       <div className="space-y-1">
         <label className="flex items-start gap-2">
           <input type="checkbox" className="mt-0.5" checked={form.restrictTools} onChange={(e) => setForm({ ...form, restrictTools: e.target.checked })} />
@@ -1080,6 +1088,7 @@ const AgentTokenRow: React.FC<{ t: AgentTokenInfo; projects: GitLabProject[]; ru
             >
               {t.scope === 'write' ? 'read and write' : 'read only'}
             </span>
+            {t.dailyCiLimit !== null && <span className={`${badge} border-zinc-700 bg-zinc-900 text-zinc-400`} title="Pipeline runs and job retries; resets at midnight UTC">CI {t.ciUsage?.day === new Date().toISOString().slice(0, 10) ? t.ciUsage.used : 0}/{t.dailyCiLimit} today</span>}
             {t.tools !== null && <span className={`${badge} border-zinc-700 bg-zinc-900 text-zinc-400`} title={t.tools.join(', ') || 'No MCP tools allowed'}>{t.tools.length} MCP tools</span>}
             {t.secrets && <span className={`${badge} border-amber-800/60 bg-amber-950/30 text-amber-300`}>reads secrets</span>}
             <ExpiryBadge days={daysUntil(t.expiresAt)} />

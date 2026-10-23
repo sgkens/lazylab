@@ -122,3 +122,10 @@ curl -s -X POST "$LAZYLAB_URL/mcp" \
 Node-based clients reject self-signed certificates. See [Remote access → Agents on another machine](/remote-access/#agents-on-another-machine).
 
 Restrict an agent to specific MCP tools with **Vault → Agent tokens → Edit → Restrict MCP tools**. Enter names such as `get_inbox, list_projects, get_task_briefing`. Unlisted tools are hidden and direct calls are refused. An empty restricted list allows no tools; turn the restriction off to restore all tools permitted by the scope and secret settings. This restriction does not change REST access.
+
+
+## CI attempt limits
+
+**Vault → Agent tokens** sets a token's combined daily limit for `run_pipeline` and `retry_job`. New tokens default to 50; existing tokens stay unlimited until a limit is set. Set 0 to disable CI or leave the field empty for unlimited attempts. Scope, project and tool permissions still apply. Counters reset at midnight UTC.
+
+A validated, permitted attempt is reserved in the encrypted vault before GitLab is contacted. Failed GitLab requests still consume an attempt, preventing retry loops from exhausting compute. A restart preserves usage. MCP returns a tool error when the budget is exhausted; agent REST pipeline requests return HTTP 429 with `resetAt`. Browser-initiated actions do not use agent quotas.

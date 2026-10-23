@@ -638,10 +638,11 @@ export const TOOLS: ToolDef[] = [
     },
     readOnly: false,
     creates: true,
-    run: async (args, { client }) => {
+    run: async (args, { client, token }) => {
       const projectId = await resolveProject(client, args.project);
       const input = parseRunPipelineInput(args);
       if ('error' in input) throw new Error(input.error);
+      if (token?.id) vault.consumeAgentCi(token.id);
       const pipeline = await client.createPipeline(projectId, input.ref, input.variables);
       const watched = input.watch
         ? Boolean(await watchManager.addWatch({ kind: 'pipeline', project_id: pipeline.project_id, target_id: pipeline.id, source: 'agent' }).catch(() => null))
@@ -660,8 +661,10 @@ export const TOOLS: ToolDef[] = [
     },
     readOnly: false,
     creates: true,
-    run: async (args, { client }) => {
+    run: async (args, { client, token }) => {
       const projectId = await resolveProject(client, args.project);
+      if (!Number.isSafeInteger(args.job_id) || args.job_id <= 0) throw new Error('job_id must be a positive integer');
+      if (token?.id) vault.consumeAgentCi(token.id);
       const job = await client.retryJob(projectId, args.job_id);
       const watched =
         args.watch !== false

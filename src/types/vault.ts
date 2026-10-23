@@ -68,6 +68,8 @@ export interface AgentTokenInfo {
   prefix: string;
   /** read: read GitLab and local writes (watches, handoffs, notes); write: also GitLab writes and CI runs. */
   scope: AgentScope;
+  dailyCiLimit: number | null;
+  ciUsage?: { day: string; used: number };
   /** MCP-only allowlist; null allows every tool, [] allows none. */
   tools: string[] | null;
   /** May read CI variable values and vault secrets (lazy env pull, lazy run). */
@@ -86,6 +88,7 @@ export interface AgentTokenInfo {
 /** Create or edit payload; absent fields are left unchanged on edit. */
 export interface AgentTokenSettings {
   scope?: AgentScope;
+  dailyCiLimit?: number | null;
   tools?: string[] | null;
   secrets?: boolean;
   projects?: number[] | null;

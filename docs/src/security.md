@@ -76,3 +76,5 @@ Tokens stored before these settings existed keep the access they had: **Read and
 ## Sharing with other people
 
 lazylab is built for one person. Anyone you give the password or an agent token to acts with your GitLab token.
+
+Agent token CI limits count combined pipeline runs and job retries per UTC day, persist before the GitLab request, and survive restart. New tokens default to 50 attempts, 0 denies CI, and null is unlimited. Tokens predating this setting retain unlimited access; edit them to set a budget. Failed upstream attempts count.

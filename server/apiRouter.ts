@@ -7,7 +7,7 @@ import { redactVariable } from './variables.js';
 import { TokenExpiryMonitor } from './tokenExpiry.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
-import { AgentPolicy, projectAllowed, projectDeniedMessage, READ_ONLY_MESSAGE } from './agentPolicy.js';
+import { AgentCiLimitError, AgentPolicy, projectAllowed, projectDeniedMessage, READ_ONLY_MESSAGE } from './agentPolicy.js';
 import { getInbox } from './inbox.js';
 import { watchManager } from './watch.js';
 import { extractFailure, parseRunPipelineInput } from './triage.js';
@@ -879,6 +879,7 @@ async function runPipeline(req: Request, res: Response, projectId: number, sourc
   const parsed = parseRunPipelineInput(req.body);
   if ('error' in parsed) return res.status(400).json({ success: false, error: parsed.error });
   try {
+    if (source === 'agent' && agentPolicy(res)?.id) vault.consumeAgentCi(agentPolicy(res)!.id);
     const pipeline = await gitlabClient.createPipeline(projectId, parsed.ref, parsed.variables);
     broadcastEvent('pipeline_updated', { pipelineId: pipeline.id, status: pipeline.status });
     let watch = null;
@@ -892,6 +893,7 @@ async function runPipeline(req: Request, res: Response, projectId: number, sourc
     }
     res.json({ success: true, pipeline, watch });
   } catch (err: any) {
+    if (err instanceof AgentCiLimitError) return res.status(429).json({ success: false, error: err.message, resetAt: err.resetAt });
     // GitLab answers 400 with the reason for refs it cannot run (missing ref, no jobs, rules exclude all).
     res.status(/\(400\)/.test(err.message) ? 400 : 500).json({ success: false, error: err.message });
   }

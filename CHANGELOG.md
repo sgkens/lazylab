@@ -8,6 +8,8 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Added
 
+- **Agent CI budgets:** each token can cap combined pipeline runs and job retries per UTC day. New tokens default to 50 attempts; legacy tokens keep unlimited access. Reservations persist before GitLab calls, are shared by REST and MCP, and remain spent after upstream failures or restarts.
+
 - **MCP tool allowlists** (AGENT-7): limit each token to named tools in Vault. Unlisted tools are hidden and denied, and listed tools still need the token’s scope, project and secret permissions.
 
 - **Agent token permissions** (AGENT-2, SEC-6): each agent token has a scope (read only, the default for new tokens, or read and write), optional allowed projects, an optional default project for REST calls, an expiry (30 days by default in the UI) and a last-used time. Enforced on `/api/agent/*` and `/mcp`; **Vault → Agent tokens** shows and edits them. Tokens created earlier keep read and write access to every project with no expiry and are marked **legacy: review**.

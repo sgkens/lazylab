@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'crypto';
 import { AgentHandoff, HANDOFFS_PER_TASK, HANDOFFS_TOTAL, parseHandoff, sameTask, TaskRef, validateTask } from './handoffs.js';
-import { AgentPolicy, AgentTokenFields, checkDefaultProject, isExpired, normalizeAgentToken } from './agentPolicy.js';
+import { AgentPolicy, AgentTokenFields, AgentCiLimitError, checkDefaultProject, isExpired, normalizeAgentToken } from './agentPolicy.js';
 import { matchesFilter, Note, NOTE_LIMITS, NoteComment, NoteFilter, NoteMigration, NoteNamespace, parseCommentBody, parseNoteInput } from './notes.js';
 
 const VAULT_VERSION = 1;
@@ -77,6 +77,7 @@ export interface AgentToken extends AgentTokenFields {
   createdAt: string;
   /** Last successful authentication; persisted at most once a minute per token. */
   lastUsedAt?: string | null;
+  ciUsage?: { day: string; used: number };
 }
 
 export type AgentTokenView = Omit<AgentToken, 'hash'> & AgentPolicy & { lastUsedAt: string | null; expired: boolean; legacy: boolean };
@@ -618,6 +619,7 @@ class Vault extends EventEmitter {
       prefix: token.slice(0, 9),
       hash: hashAgentToken(token),
       scope: settings.scope ?? 'read',
+      dailyCiLimit: settings.dailyCiLimit === undefined ? 50 : settings.dailyCiLimit,
       tools: settings.tools ? [...settings.tools] : null,
       secrets: Boolean(settings.secrets),
       projects: settings.projects ?? null,
@@ -641,6 +643,7 @@ class Vault extends EventEmitter {
     const next: AgentToken = {
       ...t,
       scope: settings.scope ?? current.scope,
+      dailyCiLimit: settings.dailyCiLimit !== undefined ? settings.dailyCiLimit : current.dailyCiLimit,
       tools: settings.tools !== undefined ? (settings.tools === null ? null : [...settings.tools]) : current.tools,
       secrets: settings.secrets ?? current.secrets,
       projects: settings.projects !== undefined ? settings.projects : current.projects,
@@ -657,6 +660,28 @@ class Vault extends EventEmitter {
       throw err;
     }
     return this.viewAgentToken(next);
+  }
+
+  /** Reserve and persist one CI attempt before contacting GitLab. Failed attempts are not refunded.
+   * Synchronous persistence makes concurrent requests share one counter, including after restart.
+   */
+  consumeAgentCi(id: string, now = Date.now()): void {
+    const t = this.requireOpen().agentTokens.find((item) => item.id === id);
+    if (!t || isExpired(t.expiresAt) || normalizeAgentToken(t).scope !== 'write') throw new Error('Agent token cannot run CI');
+    const limit = normalizeAgentToken(t).dailyCiLimit;
+    if (limit === null) return;
+    const day = new Date(now).toISOString().slice(0, 10);
+    const used = t.ciUsage?.day === day ? t.ciUsage.used : 0;
+    const resetAt = new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString();
+    if (used >= limit) throw new AgentCiLimitError(limit, resetAt);
+    const previous = t.ciUsage;
+    t.ciUsage = { day, used: used + 1 };
+    try {
+      this.persist();
+    } catch (err) {
+      t.ciUsage = previous;
+      throw err;
+    }
   }
 
   deleteAgentToken(id: string) {

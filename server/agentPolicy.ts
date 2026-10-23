@@ -7,6 +7,7 @@
  * - defaultProjectId: used by agent REST routes when a call omits projectId.
  * - expiresAt: the token stops authenticating after this instant; null means no expiry.
  * - secrets: may call get_env (CI variable values and vault secrets).
+ * - dailyCiLimit: combined CI attempts per UTC day; 0 disables, null is unlimited.
  *
  * Tokens stored before scopes existed have none of these fields. They keep the access they had:
  * write scope, every project, no expiry (see normalizeAgentToken).
@@ -21,6 +22,8 @@ export const MAX_EXPIRY_DAYS = 3650;
 /** Stored token fields that define its access. All optional so older vault records still parse. */
 export interface AgentTokenFields {
   scope?: AgentScope;
+  /** Combined run_pipeline/retry_job attempts per UTC day; null is unlimited. */
+  dailyCiLimit?: number | null;
   /** MCP tool names; null means unrestricted, [] disables every MCP tool. */
   tools?: string[] | null;
   secrets?: boolean;
@@ -34,6 +37,7 @@ export interface AgentPolicy {
   id: string;
   name: string;
   scope: AgentScope;
+  dailyCiLimit: number | null;
   tools: string[] | null;
   secrets: boolean;
   projects: number[] | null;
@@ -47,6 +51,7 @@ export function normalizeAgentToken(t: { id: string; name: string } & AgentToken
     name: t.name,
     // Legacy records (no scope field) had full access; keeping it avoids silently breaking agents in use.
     scope: t.scope === 'read' ? 'read' : 'write',
+    dailyCiLimit: t.dailyCiLimit === undefined ? null : t.dailyCiLimit,
     tools: Array.isArray(t.tools) ? [...t.tools] : null,
     secrets: Boolean(t.secrets),
     projects: Array.isArray(t.projects) && t.projects.length ? [...t.projects] : null,
@@ -77,7 +82,7 @@ const positiveInt = (v: unknown) => typeof v === 'number' && Number.isSafeIntege
 
 /**
  * Validates token settings from the vault API. `partial` (an edit) leaves absent fields unchanged;
- * a create fills defaults: read scope, no secrets, every project, no default project, no expiry.
+ * a create fills defaults: read scope, 50 daily CI attempts, no secrets, every project, no default project, no expiry.
  * `expiresInDays` (1..3650, or null for none) is converted to `expiresAt`.
  */
 export function parseAgentTokenSettings(input: unknown, partial: boolean, now = Date.now()): AgentTokenFields {
@@ -90,6 +95,13 @@ export function parseAgentTokenSettings(input: unknown, partial: boolean, now = 
     if (!AGENT_SCOPES.includes(body.scope as AgentScope)) throw new Error('scope must be read or write');
     out.scope = body.scope as AgentScope;
   } else if (!partial) out.scope = 'read';
+
+  if (body.dailyCiLimit !== undefined) {
+    if (body.dailyCiLimit !== null && (typeof body.dailyCiLimit !== 'number' || !Number.isSafeInteger(body.dailyCiLimit) || body.dailyCiLimit < 0 || body.dailyCiLimit > 10000)) {
+      throw new Error('dailyCiLimit must be an integer from 0 to 10000, or null for unlimited');
+    }
+    out.dailyCiLimit = body.dailyCiLimit as number | null;
+  } else if (!partial) out.dailyCiLimit = 50;
 
   if (body.tools !== undefined) {
     if (body.tools === null) out.tools = null;
@@ -141,5 +153,12 @@ export function parseAgentTokenSettings(input: unknown, partial: boolean, now = 
 export function checkDefaultProject(fields: AgentTokenFields) {
   if (fields.defaultProjectId && fields.projects?.length && !fields.projects.includes(fields.defaultProjectId)) {
     throw new Error('defaultProjectId must be one of the allowed projects');
+  }
+}
+
+/** A shared persisted quota prevents automated CI retry loops from exhausting compute. */
+export class AgentCiLimitError extends Error {
+  constructor(public limit: number, public resetAt: string) {
+    super(`This agent token has reached its daily CI limit (${limit}). Pipeline runs and job retries share this limit; resets at ${resetAt}.`);
   }
 }

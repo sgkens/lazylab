@@ -64,3 +64,8 @@ curl -s -X POST "$LAZYLAB_URL/api/agent/work-items" \
 ## From the browser
 
 The same routes accept a signed-in browser session. **Agent API → Try it** in the UI sends a create request this way, against a project you choose.
+
+
+## Daily CI budget
+
+`POST /api/agent/pipelines` shares the token's daily CI attempt budget with MCP `run_pipeline` and `retry_job`. Exhausted budgets return HTTP 429 with `error` and the next midnight UTC as `resetAt`. Invalid input and denied permissions do not reserve attempts; upstream failures count. Configure the limit and inspect today's usage in Vault → Agent tokens.

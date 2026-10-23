@@ -1,5 +1,6 @@
 // Agent token scopes (AGENT-2 / SEC-6): read-only vs write, project allowlist, default project, expiry, last use.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'child_process';
 import express from 'express';
 import { buildTaskBriefing } from '../server/briefing.ts';
 import type { Server } from 'http';
@@ -56,7 +57,7 @@ const tool = async (token: string, name: string, args: unknown) => {
 
 describe('settings validation', () => {
   test('a new token defaults to read scope, every project, no expiry, no secrets', () => {
-    expect(parseAgentTokenSettings({}, false)).toEqual({ scope: 'read', tools: null, secrets: false, projects: null, defaultProjectId: null, expiresAt: null });
+    expect(parseAgentTokenSettings({}, false)).toEqual({ scope: 'read', dailyCiLimit: 50, tools: null, secrets: false, projects: null, defaultProjectId: null, expiresAt: null });
     expect(parseAgentTokenSettings(undefined, false).scope).toBe('read');
   });
 
@@ -100,7 +101,7 @@ describe('settings validation', () => {
 
   test('legacy records keep write scope; unreadable expiry fails closed', () => {
     expect(normalizeAgentToken({ id: 'x', name: 'old' })).toEqual({
-      id: 'x', name: 'old', scope: 'write', tools: null, secrets: false, projects: null, defaultProjectId: null, expiresAt: null
+      id: 'x', name: 'old', scope: 'write', dailyCiLimit: null, tools: null, secrets: false, projects: null, defaultProjectId: null, expiresAt: null
     });
     expect(isExpired('not a date')).toBe(true);
     expect(isExpired(null)).toBe(false);
@@ -305,5 +306,88 @@ describe('MCP enforcement', () => {
     const res: any = await handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx);
     expect(res.result.tools.map((t: any) => t.name)).toContain('create_work_item');
     expect(listTools({ name: 'r', secrets: false, scope: 'read' }).map((t) => t.name)).not.toContain('run_pipeline');
+  });
+});
+
+
+describe('daily CI quotas', () => {
+  test('validates limits and preserves legacy unlimited access', () => {
+    expect(parseAgentTokenSettings({}, false).dailyCiLimit).toBe(50);
+    expect(parseAgentTokenSettings({ dailyCiLimit: 0 }, true).dailyCiLimit).toBe(0);
+    expect(parseAgentTokenSettings({ dailyCiLimit: null }, true).dailyCiLimit).toBeNull();
+    expect(parseAgentTokenSettings({}, true).dailyCiLimit).toBeUndefined();
+    for (const dailyCiLimit of [-1, 1.5, 10001, '3', true]) expect(() => parseAgentTokenSettings({ dailyCiLimit }, true)).toThrow('dailyCiLimit');
+    expect(normalizeAgentToken({ id: 'legacy', name: 'old' }).dailyCiLimit).toBeNull();
+  });
+
+  test('runs and retries share quota across REST and MCP; other tokens stay independent', async () => {
+    const { token, record } = vault.createAgentToken('combined-cap', { scope: 'write', dailyCiLimit: 2 });
+    const first = await rest(token, 'POST', '/pipelines', { projectId: 901, ref: 'main', watch: false });
+    expect(first.status).toBe(200);
+    const existingPipelines = await demo.getPipelines(901);
+    const existingJobs = await demo.getPipelineJobs(901, existingPipelines.find(p => p.id !== first.body.pipeline.id)!.id);
+    expect((await tool(token, 'retry_job', { project: 901, job_id: existingJobs.jobs[0].id, watch: false })).isError).toBe(false);
+    const denied = await rest(token, 'POST', '/pipelines', { projectId: 901, ref: 'main', watch: false });
+    expect(denied.status).toBe(429);
+    expect(denied.body.resetAt).toMatch(/T00:00:00.000Z$/);
+    expect((await tool(token, 'run_pipeline', { project: 901, ref: 'main', watch: false })).text).toContain('daily CI limit (2)');
+    expect(vault.listAgentTokens().find(t => t.id === record.id)!.ciUsage?.used).toBe(2);
+    const other = vault.createAgentToken('other-cap', { scope: 'write', dailyCiLimit: 1 });
+    expect((await tool(other.token, 'run_pipeline', { project: 901, ref: 'main', watch: false })).isError).toBe(false);
+  });
+
+  test('concurrent requests reserve one remaining slot only', async () => {
+    const { token } = vault.createAgentToken('concurrent-cap', { scope: 'write', dailyCiLimit: 1 });
+    const responses = await Promise.all([1, 2, 3].map(() => rest(token, 'POST', '/pipelines', { projectId: 901, ref: 'main', watch: false })));
+    expect(responses.map(r => r.status).sort()).toEqual([200, 429, 429]);
+  });
+
+  test('denied projects and invalid arguments do not consume budget; zero disables CI', async () => {
+    const { token, record } = vault.createAgentToken('validated-cap', { scope: 'write', projects: [901], dailyCiLimit: 1 });
+    expect((await rest(token, 'POST', '/pipelines', { projectId: 902, ref: 'main' })).status).toBe(403);
+    expect((await rest(token, 'POST', '/pipelines', { projectId: 901 })).status).toBe(400);
+    expect((await tool(token, 'retry_job', { project: 901, job_id: -1 })).text).toContain('positive integer');
+    expect(vault.listAgentTokens().find(t => t.id === record.id)!.ciUsage).toBeUndefined();
+    vault.updateAgentToken(record.id, { dailyCiLimit: 0 });
+    expect((await rest(token, 'POST', '/pipelines', { projectId: 901, ref: 'main' })).status).toBe(429);
+    vault.updateAgentToken(record.id, { dailyCiLimit: null });
+    expect((await rest(token, 'POST', '/pipelines', { projectId: 901, ref: 'main', watch: false })).status).toBe(200);
+  });
+
+  test('upstream failures count and persistence failure rolls the reservation back', async () => {
+    const { record } = vault.createAgentToken('failure-cap', { scope: 'write', dailyCiLimit: 1 });
+    const policy = normalizeAgentToken(record);
+    let calls = 0;
+    const context = { token: policy, client: { createPipeline: async () => { calls++; throw new Error('upstream down'); } } } as unknown as ToolContext;
+    const request = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'run_pipeline', arguments: { project: 901, ref: 'main', watch: false } } };
+    const first = await handleMessage(request, () => context) as any;
+    expect(first.result.content[0].text).toContain('upstream down');
+    const second = await handleMessage(request, () => context) as any;
+    expect(second.result.content[0].text).toContain('daily CI limit');
+    expect(calls).toBe(1);
+    const other = vault.createAgentToken('persist-failure-cap', { scope: 'write', dailyCiLimit: 1 });
+    const persist = (vault as any).persist;
+    try {
+      (vault as any).persist = () => { throw new Error('disk full'); };
+      expect(() => vault.consumeAgentCi(other.record.id)).toThrow('disk full');
+      expect(vault.listAgentTokens().find(t => t.id === other.record.id)!.ciUsage).toBeUndefined();
+    } finally { (vault as any).persist = persist; }
+    expect(() => vault.consumeAgentCi(other.record.id)).not.toThrow();
+  });
+
+  test('UTC rollover resets the budget and fresh process reload keeps the spent quota', () => {
+    const { record } = vault.createAgentToken('rollover-cap', { scope: 'write', dailyCiLimit: 1 });
+    const midnight = Date.parse('2026-10-24T00:00:00Z');
+    vault.consumeAgentCi(record.id, midnight - 1);
+    expect(() => vault.consumeAgentCi(record.id, midnight - 1)).toThrow('daily CI limit');
+    expect(() => vault.consumeAgentCi(record.id, midnight)).not.toThrow();
+    expect(vault.listAgentTokens().find(t => t.id === record.id)!.ciUsage).toEqual({ day: '2026-10-24', used: 1 });
+    const script = `import { vault } from './server/vault.ts';
+      if (!await vault.verifyAndUnlock('tester', 'correct horse battery')) process.exit(2);
+      try { vault.consumeAgentCi(${JSON.stringify(record.id)}, ${midnight}); process.exit(3); }
+      catch (err) { if (!String(err).includes('daily CI limit')) process.exit(4); }
+      vault.lock();`;
+    const child = spawnSync(process.execPath, ['-e', script], { cwd: process.cwd(), env: { ...process.env }, encoding: 'utf8' });
+    expect(child.status).toBe(0);
   });
 });
