@@ -280,14 +280,16 @@ export class Vault extends EventEmitter {
     } catch {
       return false;
     }
-    const userOk =
-      username.length === this.file.username.length &&
-      timingSafeEqual(Buffer.from(username), Buffer.from(this.file.username));
-    if (!userOk) return false;
+    // Compare byte lengths: timingSafeEqual throws on buffers of different length.
+    const given = Buffer.from(username);
+    const stored = Buffer.from(this.file.username);
+    if (given.length !== stored.length || !timingSafeEqual(given, stored)) return false;
 
     if (!this.dek) {
+      // Decrypt before keeping the key: a tampered payload must leave the vault fully locked.
+      const payload = { ...emptyPayload(), ...JSON.parse(open(dek, this.file.payload, AAD_PAYLOAD).toString('utf-8')) };
       this.dek = dek;
-      this.payload = { ...emptyPayload(), ...JSON.parse(open(dek, this.file.payload, AAD_PAYLOAD).toString('utf-8')) };
+      this.payload = payload;
       this.emit('unlocked');
     }
     return true;
@@ -298,9 +300,16 @@ export class Vault extends EventEmitter {
     if (!(await this.verifyAndUnlock(this.file.username, current))) return false;
     const salt = randomBytes(16);
     const kek = await deriveKey(next, salt);
+    const previous = { kdf: this.file.kdf, dek: this.file.dek };
     this.file.kdf = { name: 'scrypt', salt: salt.toString('base64'), ...KDF_PARAMS };
     this.file.dek = seal(kek, this.dek, AAD_DEK);
-    this.writeFile();
+    try {
+      this.writeFile();
+    } catch (err) {
+      // The file on disk still holds the old wrapping; keep memory consistent with it.
+      Object.assign(this.file, previous);
+      throw err;
+    }
     return true;
   }
 
