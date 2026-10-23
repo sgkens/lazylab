@@ -16,6 +16,7 @@ export default [
     title: 'Using lazylab',
     items: [
       { title: 'Inbox', url: '/guide/inbox/' },
+      { title: 'Notes and tasks', url: '/guide/notes/' },
       { title: 'Notifications and watches', url: '/guide/notifications/' },
       { title: 'CI failures and running pipelines', url: '/guide/ci/' },
       { title: 'Work items and merge requests', url: '/guide/planning/' },

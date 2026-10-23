@@ -48,6 +48,7 @@ Every button, menu and form in the UI was traced to a server route and a GitLab 
 | MCP server | Verified with the official MCP client | Claude Code and Codex end to end not yet run |
 | Task briefings and persistent handoffs | Verified locally | Demo MCP/CLI runs, fake GitLab reads, encrypted restart persistence and profile isolation; not yet checked against live GitLab |
 | BugKB integration | Verified with real BugKB hooks in disposable storage | Authenticated MCP/CLI checks for search, explicit writes, duplicates, evidence, trust and offline fallback; GitLab attribution tested with a fake GitLab; shared deployment not yet checked |
+| Notes and tasks | Verified locally | Encrypted persistence across lock and restart, demo/live separation, migrate (both modes) against demo data and a fake GitLab, ZIP export checked with an independent reader, `unzip -t` and Python `zipfile`; not yet migrated against a live instance |
 | Work items, MRs, milestones, labels | Wired | List calls return the first 50 per project |
 | CI editor, lint | Wired | GitLab lint on request; local parser for the graph |
 | Variables, badges, Pages | Wired | Masked values are read one at a time on Reveal; Pages needs GitLab 16.8+ |

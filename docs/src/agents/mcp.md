@@ -46,6 +46,10 @@ Every tool that takes `project` accepts a numeric id or a full path such as `gro
 | `get_task_briefing` | yes | One issue or MR with discussion, acceptance checks, linked MRs, bounded diffs, CI failures and recent local handoffs |
 | `save_handoff` | no | Append an encrypted local checkpoint with decisions, attempts, verification and next steps; does not write to GitLab |
 | `list_handoffs` | yes | Recent checkpoints for the task and active GitLab profile, newest first |
+| `list_notes` | yes | The user's personal lazylab notes and tasks (not GitLab items), with a body excerpt; filters by kind, status, tag and text |
+| `get_note` | yes | One personal note with its full body and comments |
+| `add_note` | no | Jot down a personal note or task, encrypted locally; does not write to GitLab |
+| `set_note_status` | no | Mark a personal note done or open again |
 | `list_projects` | yes | Member projects, most recently active first; `search` filters |
 | `list_work_items` | yes | Issues in a project (`state`: opened, closed, all) |
 | `get_work_item` | yes | One issue with description and comments |

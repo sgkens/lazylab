@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-c2410c" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/bun-%E2%89%A5%201.3-18181b" alt="Bun 1.3 or later">
   <img src="https://img.shields.io/badge/status-pre--1.0-a1a1aa" alt="Status: pre-1.0">
-  <a href="docs/src/agents/mcp.md"><img src="https://img.shields.io/badge/MCP-26%20tools-ea580c" alt="MCP: 26 tools"></a>
+  <a href="docs/src/agents/mcp.md"><img src="https://img.shields.io/badge/MCP-30%20tools-ea580c" alt="MCP: 30 tools"></a>
 </p>
 
 <p align="center">
@@ -45,6 +45,7 @@ GitLab's own UI covers most single-project work. lazylab does what a hosted UI c
   - work items and merge requests with comments, labels, subtasks and attachments uploaded to GitLab;
   - approve, draft, merge, close and reopen merge requests;
   - milestones and labels across projects.
+- **Notes and tasks:** personal notes and tasks with tags, Markdown bodies and a comment log, encrypted in the vault and kept out of GitLab. Migrate one to an issue when it is ready, or export all of them as Markdown files in a `.zip`. Also available through `lazy note` and MCP. See [Notes and tasks](docs/src/guide/notes.md).
 - **Releases:** release notes generated from Conventional Commits since the previous tag, with a suggested semantic version, and tag comparison.
 - **Project settings:**
   - CI/CD variables (project and group, with bulk import and `.env` export);
@@ -53,7 +54,7 @@ GitLab's own UI covers most single-project work. lazylab does what a hosted UI c
 - **Encrypted vault:** GitLab profiles for several instances, CI secrets you can push to GitLab, runner tokens, other secrets and agent tokens. Everything is encrypted with a key derived from your password.
 - **Token expiry:** warnings 14, 7, 3 and 1 days before a personal, project, group or deploy token expires, and rotation of a profile's personal access token from the vault.
 - **Command line:** `lazy push` follows the pipeline after a push, `lazy job log --failed` prints the failure, `lazy mr create` opens the MR, and `lazy run` gives local commands the project's CI/CD variables.
-- **Agents:** an MCP server at `/mcp` with 26 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens; only tokens created with **Can read secrets** see the `get_env` tool. Agent skills for Claude Code, Codex and Antigravity are included.
+- **Agents:** an MCP server at `/mcp` with 30 tools, and a REST API at `/api/agent`. Each uses revocable per-agent tokens; only tokens created with **Can read secrets** see the `get_env` tool. Agent skills for Claude Code, Codex and Antigravity are included.
 - **Agent continuity:** gather an issue or MR's discussion, acceptance checks, patches and CI failures in one briefing, then save an encrypted handoff for the next agent or session. Available through MCP and `lazy brief` / `lazy handoff`; see [Task briefings and handoffs](docs/src/agents/handoffs.md).
 - **Shared findings:** optionally connect an independent BugKB to include prior fixes in briefings and explicitly record or confirm verified lessons through MCP or `lazy kb`. Duplicate detection and trust remain in BugKB. See [Shared findings](docs/src/agents/knowledge.md).
 
