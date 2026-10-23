@@ -45,7 +45,7 @@ export function parseBudget(input: unknown): RequestBudget {
   const body = (input ?? {}) as Record<string, unknown>;
   const plan = body.plan as BudgetPlan;
   if (plan !== 'custom') {
-    if (!(plan in PLAN_BUDGETS)) throw new Error('plan must be free, premium, ultimate, unlimited or custom');
+    if (typeof plan !== 'string' || !Object.hasOwn(PLAN_BUDGETS, plan)) throw new Error('plan must be free, premium, ultimate, unlimited or custom');
     return { plan, ...PLAN_BUDGETS[plan as keyof typeof PLAN_BUDGETS] };
   }
   const perHour = Number(body.perHour);

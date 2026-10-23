@@ -36,6 +36,9 @@ describe('header parsing', () => {
     expect(parseBudget({ plan: 'free' })).toEqual({ plan: 'free', perHour: 4000, perMinute: 80 });
     expect(parseBudget({ plan: 'custom', perHour: 100, perMinute: 10 })).toEqual({ plan: 'custom', perHour: 100, perMinute: 10 });
     expect(() => parseBudget({ plan: 'gold' })).toThrow();
+    for (const plan of ['toString', '__proto__', 'constructor', ['free'], {}]) {
+      expect(() => parseBudget({ plan })).toThrow();
+    }
     expect(() => parseBudget({ plan: 'custom', perHour: -1, perMinute: 1 })).toThrow();
     expect(() => parseBudget({ plan: 'custom', perHour: 1.5, perMinute: 1 })).toThrow();
     expect(() => parseBudget(null)).toThrow();
