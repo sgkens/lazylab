@@ -1,5 +1,6 @@
 import {
   AppStatus,
+  AggregateResponse,
   GitLabLabel,
   GitLabMergeRequest,
   GitLabPipeline,
@@ -53,6 +54,10 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   if (!res.ok || data.success === false) {
     // The body stays reachable for responses that carry data on failure (token rotation).
     throw Object.assign(new Error(data.error || `HTTP error ${res.status}`), { data });
+  }
+  const aggregateKind = endpoint.split('?')[0].slice(1);
+  if (['work_items', 'merge_requests', 'pipelines', 'milestones', 'labels', 'packages'].includes(aggregateKind) && (!options?.method || options.method === 'GET')) {
+    window.dispatchEvent(new CustomEvent('lazylab:aggregate', { detail: { kind: aggregateKind, coverage: data.coverage, errors: data.errors || [] } }));
   }
   return data;
 }
@@ -136,7 +141,7 @@ export const api = {
     if (projectId) params.set('projectId', String(projectId));
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; milestones: GitLabMilestone[] }>(`/milestones${qs}`);
+    return request<AggregateResponse & { success: boolean; milestones: GitLabMilestone[] }>(`/milestones${qs}`);
   },
 
   createMilestone: (payload: { projectId: number; title: string; description?: string; due_date?: string; start_date?: string }) =>
@@ -152,7 +157,7 @@ export const api = {
     if (state !== 'all') params.set('state', state);
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; workItems: GitLabWorkItem[] }>(`/work_items${qs}`);
+    return request<AggregateResponse & { success: boolean; workItems: GitLabWorkItem[] }>(`/work_items${qs}`);
   },
 
   createWorkItem: (payload: {
@@ -223,7 +228,7 @@ export const api = {
     if (state !== 'all') params.set('state', state);
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; mergeRequests: GitLabMergeRequest[] }>(`/merge_requests${qs}`);
+    return request<AggregateResponse & { success: boolean; mergeRequests: GitLabMergeRequest[] }>(`/merge_requests${qs}`);
   },
 
   updateMergeRequest: (iid: number, payload: {
@@ -268,7 +273,7 @@ export const api = {
     if (projectId) params.set('projectId', String(projectId));
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; pipelines: GitLabPipeline[] }>(`/pipelines${qs}`);
+    return request<AggregateResponse & { success: boolean; pipelines: GitLabPipeline[] }>(`/pipelines${qs}`);
   },
 
   getPipelineJobs: (projectId: number, pipelineId: number) =>
@@ -376,7 +381,7 @@ export const api = {
     if (projectId) params.set('projectId', String(projectId));
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; labels: GitLabLabel[] }>(`/labels${qs}`);
+    return request<AggregateResponse & { success: boolean; labels: GitLabLabel[] }>(`/labels${qs}`);
   },
 
   createLabel: (projectId: number, name: string, color: string, description?: string) =>
@@ -400,7 +405,7 @@ export const api = {
     if (packageType && packageType !== 'all') params.set('packageType', packageType);
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; packages: GitLabPackage[] }>(`/packages${qs}`);
+    return request<AggregateResponse & { success: boolean; packages: GitLabPackage[] }>(`/packages${qs}`);
   },
 
   getPackageDetails: (projectId: number, packageId: number) =>

@@ -8,6 +8,8 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Added
 
+- **Aggregate coverage:** multi-project lists show how many of the 15 most recently active member projects loaded and name failed project reads. Successful rows remain usable when another project fails; responses include `coverage` and `errors[]`.
+
 - **Watch polling** (WATCH-10, WATCH-14): saved 10–300 second base interval in Settings; older pipelines and unchanged merge requests back off to at most 10 minutes. A watch is removed only after two consecutive typed GitLab API 404 responses; network, permission and rate-limit failures retain it.
 
 - **Request scheduler** (GL-19): every GitLab API call goes through one budget with per-plan presets (GitLab.com Free default: 4,000/h, 80/min, leaving room for other tools on the account), custom values, priority lanes (clicks, then watches, then background refresh), a slowdown when `RateLimit-Remaining` runs low, a pause on 429 that honours `Retry-After`, and a 15 s request timeout. The sync bar shows when requests are held back; `GET /api/status` reports the state under `scheduler`.

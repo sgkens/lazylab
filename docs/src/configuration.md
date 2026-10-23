@@ -93,3 +93,11 @@ Settings → **Watch check interval** sets the base interval from 10 to 300 whol
 Pipeline creation time and job start time determine backoff: under 10 minutes uses the base interval, 10–30 minutes doubles it, 30 minutes–2 hours quadruples it, and older runs use eight times the base, capped at 10 minutes. Merge requests use time since their last observed change. Failures retry at the base interval and also obey the shared request scheduler's quota limits.
 
 Only two consecutive `GitLabApiError` responses with HTTP status 404 remove a missing watch. A successful check or another error resets that count. Permission failures, timeouts, rate limits and error messages containing “not found” retain the watch.
+
+## Aggregate list coverage
+
+The all-project milestones, work items, merge requests, pipelines, labels and packages views read at most the 15 most recently active member projects returned by GitLab. They are bounded working lists, not an account-wide inventory. The project selector reads the first 50 member projects; complete project pagination remains planned.
+
+The view reports `n of m projects loaded`, with the recent-project limit and expandable project errors. One failed project does not hide rows loaded from other projects. If every project read fails, the request fails and the existing view keeps its previous rows with an error notification. Selecting one project reads that project directly.
+
+These list HTTP responses add `coverage: {limit, attempted, loaded}` and `errors: [{projectId, projectName, message}]` to the existing data envelope. `coverage` is omitted for single-project and demo reads, and `errors` is an empty array when there are no project failures. Counts describe project list reads, not complete pagination or per-item enrichment.

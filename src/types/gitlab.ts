@@ -522,3 +522,9 @@ export interface GitLabPagesInfo {
   pipeline_id?: number;
 }
 
+
+/** Coverage of a bounded multi-project list; absent for a single-project read or demo data. */
+export interface AggregateResponse {
+  coverage?: { limit: number; attempted: number; loaded: number };
+  errors: { projectId: number; projectName: string; message: string }[];
+}

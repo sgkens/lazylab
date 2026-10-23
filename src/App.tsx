@@ -40,6 +40,7 @@ import { reportError } from './utils/reportError';
 import { SessionState } from './types/vault';
 import {
   AppStatus,
+  AggregateResponse,
   GitLabLabel,
   GitLabMergeRequest,
   GitLabMilestone,
@@ -93,6 +94,18 @@ export default function App() {
 
 function Workspace({ username, onSignedOut }: { username: string | null; onSignedOut: () => void }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('inbox');
+  const [aggregateReads, setAggregateReads] = useState<Record<string, AggregateResponse>>({});
+  useEffect(() => {
+    const update = (event: Event) => {
+      const { kind, ...report } = (event as CustomEvent<AggregateResponse & { kind: string }>).detail;
+      setAggregateReads((previous) => ({ ...previous, [kind]: report }));
+    };
+    window.addEventListener('lazylab:aggregate', update);
+    return () => window.removeEventListener('lazylab:aggregate', update);
+  }, []);
+  const coverageKinds = activeTab === 'dashboard' ? ['work_items', 'merge_requests', 'pipelines', 'milestones'] : [activeTab];
+  const coverageReports = coverageKinds.filter((kind) => aggregateReads[kind]?.coverage);
+
   const [inbox, setInbox] = useState<Inbox | null>(null);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [notifyState, setNotifyState] = useState<NotifyState | null>(null);
@@ -872,6 +885,19 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
           setSettingsSection(section || 'badges');
         }}
       />
+
+      {coverageReports.length > 0 && (
+        <div className="shrink-0 border-b border-zinc-800 px-6 py-2 text-xs text-zinc-400" role="status">
+          {coverageReports.map((kind) => {
+            const { coverage, errors } = aggregateReads[kind];
+            return <div key={kind}>
+              <span className={errors.length ? 'text-amber-400' : ''}>{kind.replaceAll('_', ' ')}: {coverage!.loaded} of {coverage!.attempted} projects loaded</span>
+              <span> · covers up to the {coverage!.limit} most recently active member projects</span>
+              {errors.length > 0 && <details className="mt-1 text-amber-400"><summary>{errors.length} project {errors.length === 1 ? 'read' : 'reads'} failed</summary><ul>{errors.map((error) => <li key={error.projectId}>{error.projectName}: {error.message}</li>)}</ul></details>}
+            </div>;
+          })}
+        </div>
+      )}
 
       {/* Main Content Workspace View */}
       <WatchContext.Provider value={watchContext}>
