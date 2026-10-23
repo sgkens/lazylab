@@ -4,6 +4,7 @@
  */
 import { GitLabClient } from './gitlabClient.js';
 import { vault } from './vault.js';
+import { runInLane } from './requestScheduler.js';
 
 export type TrackedTokenKind = 'personal' | 'project' | 'group' | 'deploy';
 
@@ -99,10 +100,10 @@ export class TokenExpiryMonitor {
 
   start() {
     this.stop();
-    this.check().catch((err) => console.warn('Token expiry check failed:', err?.message ?? err));
-    this.timer = setInterval(() => {
-      this.check().catch((err) => console.warn('Token expiry check failed:', err?.message ?? err));
-    }, CHECK_INTERVAL_MS);
+    // Scheduled scans use the background lane of the request scheduler; a forced check from the UI stays interactive.
+    const scan = () => runInLane('background', () => this.check()).catch((err) => console.warn('Token expiry check failed:', err?.message ?? err));
+    scan();
+    this.timer = setInterval(scan, CHECK_INTERVAL_MS);
     this.timer.unref?.();
   }
 

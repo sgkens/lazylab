@@ -48,27 +48,4 @@ cp .env.example .env
 |---|---|---|
 | `vault.json` | Everything in the vault | Yes, AES-256-GCM |
 | `lazylab_cache.sqlite` (plus SQLite's `-wal` and `-shm` files), `lazylab_journal.jsonl`, `lazylab_journal.jsonl.1` | Cached GitLab responses and a change journal with one rotated file. Earlier builds named them `labwi_cache.*`; they are renamed on the first start | No |
-| `tls/` | Self-signed certificate and key, when generated | No (key file mode 0600) |
-
-Back up `vault.json` and remember the password. The cache can be deleted at any time; lazylab refetches from GitLab.
-
-### Cache retention
-
-A sweep runs at start and every 10 minutes. It deletes:
-
-- rows that expired more than `LAZYLAB_CACHE_STALE_HOURS` ago;
-- the least recently written rows beyond `LAZYLAB_CACHE_MAX_ROWS` or `LAZYLAB_CACHE_MAX_MB`.
-
-When the member project list is refreshed, expired rows of projects no longer in it are deleted without the grace period. Switching or removing the active GitLab profile purges the whole cache. The change journal has its own limits (`LAZYLAB_JOURNAL_*`).
-
-## In-app settings
-
-- **Vault → Notifications:** push channels and notification rules.
-- **Settings modal (gear icon):** background refresh interval, **Refresh now**, and the active GitLab connection. Hosts and tokens are managed in **Vault → GitLab profiles**; the modal links there.
-- **Vault → Account:** change password, signed-in devices.
-
-## Container health
-
-`GET /healthz` returns HTTP 200 with `{"status":"ok"}` when the server can answer requests. It works before setup and while the vault is locked, exposes no vault or session data, and makes no GitLab requests. It is a liveness probe; it does not verify GitLab connectivity or vault readiness.
-
-The Docker image probes this route every 30 seconds, with a 5-second timeout, a 20-second startup allowance and three failed attempts before marking the container unhealthy. The probe follows `HOST`, `PORT` and built-in TLS settings, including the generated self-signed certificate. Container health alone does not restart a container.
+| `settings.json` | Non-secret server settings: background refresh interval, watch interval, request budget | No |

@@ -8,14 +8,16 @@ import { TokenExpiryMonitor } from './tokenExpiry.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
 import { getInbox } from './inbox.js';
-import { watchManager } from './watch.js';
+import { watchManager, parseWatchPollInterval } from './watch.js';
 import { extractFailure, parseRunPipelineInput } from './triage.js';
+import { AutoFetchLoop, parseAutoFetchInterval } from './autoFetch.js';
+import { getSettings, updateSettings } from './settings.js';
+import { parseBudget, requestScheduler, runInLane } from './requestScheduler.js';
 
 export const apiRouter = Router();
 
 // Runtime configuration. The GitLab host/token come from the active vault profile;
 // with no active profile (or while the vault is locked) the client runs in demo mode.
-let autoFetchIntervalSec = 30; // default 30s auto-fetch
 let lastSyncTime = Date.now();
 let gitlabClient = new GitLabClient();
 
@@ -41,10 +43,7 @@ export function broadcastEvent(event: string, payload: any) {
   }
 }
 
-// Background auto-fetching scheduler
-let autoFetchTimer: NodeJS.Timeout | null = null;
-
-async function runAutoFetch() {
+async function autoFetchCycle() {
   if (!vault.isUnlocked()) return;
   try {
     lastSyncTime = Date.now();
@@ -78,15 +77,16 @@ async function runAutoFetch() {
   }
 }
 
-function restartAutoFetchTimer() {
-  if (autoFetchTimer) {
-    clearInterval(autoFetchTimer);
-    autoFetchTimer = null;
-  }
-  if (autoFetchIntervalSec > 0 && vault.isUnlocked()) {
-    autoFetchTimer = setInterval(runAutoFetch, autoFetchIntervalSec * 1000);
-  }
+// Background auto-fetch (GL-20): single-flight, next cycle scheduled after the previous one ends.
+const autoFetch = new AutoFetchLoop(() => runInLane('background', autoFetchCycle), getSettings().autoFetchIntervalSec);
+
+// Request budget (GL-19). A hand-edited or outdated settings file falls back to the default budget.
+try {
+  requestScheduler.setBudget(parseBudget(getSettings().requestBudget));
+} catch (err: any) {
+  console.warn(`Ignoring the saved request budget: ${err.message}`);
 }
+const runAutoFetch = (opts?: { rerun?: boolean }) => autoFetch.run(opts);
 
 // Initialize SQLite cache. Auto-fetch starts only once the vault is unlocked.
 const cacheReady = cacheDb.init();
@@ -101,27 +101,29 @@ const tokenMonitor = new TokenExpiryMonitor(() => gitlabClient, (n) => watchMana
 vault.on('unlocked', async () => {
   await cacheReady;
   rebuildClientFromVault();
-  restartAutoFetchTimer();
+  autoFetch.start();
   watchManager.start();
   tokenMonitor.start();
-  runAutoFetch();
+  runAutoFetch({ rerun: true });
 });
 
 vault.on('profile-changed', async () => {
   await cacheReady;
   rebuildClientFromVault();
+  // Rate-limit state (pause, remaining) belongs to the previous account.
+  requestScheduler.resetRemoteState();
   // Rule baselines belong to the previous GitLab host; watches are filtered by profile.
   watchManager.start();
   cacheDb.clear();
   const profile = vault.getActiveProfile();
   cacheDb.logWal('AUTH_CHANGE', 'system', 'auth', profile ? `Switched to profile ${profile.name}` : 'Switched to demo mode');
   tokenMonitor.start();
-  runAutoFetch();
+  // A cycle still running for the previous profile is followed by one for the new profile.
+  runAutoFetch({ rerun: true });
 });
 
 vault.on('locked', () => {
-  if (autoFetchTimer) clearInterval(autoFetchTimer);
-  autoFetchTimer = null;
+  autoFetch.stop();
   watchManager.reset();
   tokenMonitor.reset();
   gitlabClient = new GitLabClient();
@@ -188,7 +190,10 @@ apiRouter.get('/status', async (_req: Request, res: Response) => {
       profileName: profile?.name ?? null,
       isDemo: gitlabClient.isDemo(),
       user,
-      autoFetchIntervalSec,
+      autoFetchIntervalSec: autoFetch.getInterval(),
+      watchPollSec: watchManager.getPollIntervalSec(),
+      autoFetch: autoFetch.getStatus(),
+      scheduler: requestScheduler.getStatus(),
       lastSyncTime,
       walStats,
       metrics
@@ -199,10 +204,55 @@ apiRouter.get('/status', async (_req: Request, res: Response) => {
 });
 
 apiRouter.post('/config/autofetch', (req: Request, res: Response) => {
-  const { intervalSec } = req.body;
-  autoFetchIntervalSec = Number(intervalSec) || 0;
-  restartAutoFetchTimer();
-  res.json({ success: true, autoFetchIntervalSec });
+  let intervalSec: number;
+  try {
+    intervalSec = parseAutoFetchInterval(req.body?.intervalSec);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  try {
+    updateSettings({ autoFetchIntervalSec: intervalSec });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: `Could not save the interval: ${err.message}` });
+  }
+  autoFetch.setInterval(intervalSec);
+  res.json({ success: true, autoFetchIntervalSec: autoFetch.getInterval() });
+});
+
+apiRouter.post('/config/watch-poll', (req: Request, res: Response) => {
+  let intervalSec: number;
+  try {
+    intervalSec = parseWatchPollInterval(req.body?.intervalSec);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  try {
+    updateSettings({ watchPollSec: intervalSec });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: `Could not save the watch interval: ${err.message}` });
+  }
+  watchManager.setPollInterval(intervalSec);
+  res.json({ success: true, watchPollSec: intervalSec });
+});
+
+apiRouter.get('/config/request-budget', (_req: Request, res: Response) => {
+  res.json({ success: true, budget: requestScheduler.getBudget(), scheduler: requestScheduler.getStatus() });
+});
+
+apiRouter.post('/config/request-budget', (req: Request, res: Response) => {
+  let budget;
+  try {
+    budget = parseBudget(req.body);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  try {
+    updateSettings({ requestBudget: budget });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: `Could not save the request budget: ${err.message}` });
+  }
+  requestScheduler.setBudget(budget);
+  res.json({ success: true, budget });
 });
 
 apiRouter.post('/sync/refresh', async (_req: Request, res: Response) => {
