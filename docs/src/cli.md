@@ -48,6 +48,17 @@ The token acts as the active GitLab profile in lazylab, like any agent token. la
 | Command | Does |
 |---|---|
 | `lazy inbox [--refresh]` | MRs, issues and To-Dos that need you, grouped like the [inbox](/guide/inbox/) |
+| `lazy brief issue\|mr <iid>` | Gather task context, patches, CI failures and recent handoffs |
+| `lazy handoff list issue\|mr <iid> [--limit 5]` | Read saved checkpoints, newest first |
+| `lazy handoff save issue\|mr <iid> --file handoff.json` | Save an encrypted checkpoint for the next agent or session |
+| `lazy kb search <keywords> [--tag t] [--type bug\|gotcha\|perf] [--limit 5]` | Search shared findings across projects |
+| `lazy kb show <entry-id>` | Read the full fix, tested environment and evidence |
+| `lazy kb add --file finding.json` | Explicitly record a verified finding for this live GitLab project |
+| `lazy kb confirm <entry-id> --note "checks and results"` | Confirm an existing fix after verifying it here |
+| `lazy note add <title> [--body <text> \| --file notes.md] [--task] [--tag a,b]` | Jot down a personal note or task, encrypted in lazylab |
+| `lazy note list [--kind note\|task] [--status open\|done\|migrated] [--tag t] [--search text] [--limit 50]` | Personal notes and tasks, newest change first |
+| `lazy note show <id>` | One note with its body and comments; a unique prefix of 6+ characters works |
+| `lazy note done\|reopen <id>` | Mark a task done, or open again |
 | `lazy ci [--ref <ref>] [--all]` | The 10 most recent pipelines for the current branch |
 | `lazy ci watch [<pipeline-id>]` | Follows a pipeline until it finishes: job starts and results, then the failure excerpt |
 | `lazy job log <job-id>` | The failing section of one job log, with the error line and exit code |
@@ -60,6 +71,12 @@ The token acts as the active GitLab profile in lazylab, like any agent token. la
 | `lazy run [--env <name>] -- <command>` | Runs a command with them in its environment; nothing is written to the project |
 
 Common options: `--project`, `--json` (raw tool result for scripts), `--interval <seconds>` while following (default 5), `--no-notify`.
+
+See [Task briefings and handoffs](/agents/handoffs/) for the JSON checkpoint format and a complete resume workflow.
+
+The `note` commands work outside a checkout. See [Notes and tasks](/guide/notes/) for storage, migration and export.
+
+The `kb` commands use the optional [BugKB connection](/agents/knowledge/). Search and show work outside a checkout; add and confirm require a live GitLab project.
 
 ### lazy push
 

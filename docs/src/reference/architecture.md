@@ -68,9 +68,10 @@ sequenceDiagram
   A-->>B: JSON
 ```
 
-- **Cache:** sql.js in memory, snapshotted to `labwi_cache.sqlite`, with an append-only journal. Entries have a TTL. Expired entries can still be read with `allowStale`.
+- **Cache:** `bun:sqlite` in WAL mode at `lazylab_cache.sqlite`; each write is one row, and only recently used entries are held in memory. An append-only journal (`lazylab_journal.jsonl`) records changes. Entries have a TTL. Expired entries can still be read with `allowStale`. A database written by earlier versions (sql.js) opens as is; an unreadable file is moved aside and the cache starts empty.
 - **All projects:** GitLab has no instance-wide list for pipelines, milestones, labels or packages. lazylab fans out over the 15 most recently active member projects, 4 requests at a time.
-- **Live updates:** an auto-fetch timer (30 s by default) refreshes data. It pushes Server-Sent Events (`sync_completed`, `inbox_updated`, `notification`, `watches_changed`) to open browsers.
+- **Request budget:** every GitLab call passes one request scheduler: per-plan token buckets, priority lanes (interactive, watch, background), `RateLimit-*` slowdown, a pause on 429 and a 15 s timeout. See [Configuration](/configuration/#request-budget).
+- **Live updates:** an auto-fetch loop (30 s by default, 30 s minimum, one cycle at a time) refreshes data. It pushes Server-Sent Events (`sync_completed`, `inbox_updated`, `notification`, `watches_changed`) to open browsers.
 
 ## Watch loop
 

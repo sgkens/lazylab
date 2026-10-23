@@ -5,6 +5,9 @@
  */
 import { CliConfig, CliError, configPath, LazyClient, loadConfig, normalizeUrl, saveConfig } from './client.js';
 import * as cmd from './commands.js';
+import * as agent from './agent.js';
+import * as knowledge from './knowledge.js';
+import * as notes from './notes.js';
 import { parseSecretSpecs } from './env.js';
 import { detectProject, GitError, tryGit } from './git.js';
 import { err, out, paint, resetTerminal, UI } from './ui.js';
@@ -18,6 +21,21 @@ Usage: lazy <command> [options]
 Commands:
   login <url> [--token llab_…]     Save the lazylab URL and an agent token (prompted if omitted)
   inbox [--refresh]                MRs, issues and To-Dos that need you
+  brief issue|mr <iid>             Gather task context, diffs, failures and recent handoffs
+  handoff list issue|mr <iid>      Read saved agent checkpoints (--limit 1..20)
+  handoff save issue|mr <iid> --file <handoff.json>
+                                   Save an encrypted checkpoint for the next agent or session
+  kb search <keywords>            Search shared BugKB findings (--tag, --type, --limit)
+  kb show <entry-id>              Read a finding's full fix, evidence and tested environment
+  kb add --file <finding.json>    Record a verified fix; refuses duplicates
+  kb confirm <entry-id> --note <verification>
+                                   Record that an existing fix worked in this project
+  note add <title> [--body <text> | --file <notes.md>] [--task] [--tag a,b]
+                                   Jot down a personal note or task (encrypted in lazylab)
+  note list [--kind note|task] [--status open|done|migrated] [--tag t] [--search text]
+                                   Personal notes and tasks, newest first (--limit, default 50)
+  note show <id>                   A note with its body and comments (id or 6+ character prefix)
+  note done|reopen <id>            Mark a task done, or open again
   ci [--ref <ref>] [--all]         Recent pipelines for the current branch
   ci watch [<pipeline-id>]         Follow a pipeline until it finishes (latest on this branch by default)
   job log <job-id>                 The failing section of a job log
@@ -51,7 +69,7 @@ Options:
 Environment: LAZYLAB_URL and LAZYLAB_TOKEN override ${configPath()}
 Exit codes: 0 done or pipeline passed, 1 error or pipeline failed, 2 usage error, 130 interrupted`;
 
-const BOOLEAN_FLAGS = new Set(['json', 'refresh', 'all', 'failed', 'follow', 'draft', 'watch', 'detach', 'no-notify', 'force', 'help', 'version']);
+const BOOLEAN_FLAGS = new Set(['task', 'json', 'refresh', 'all', 'failed', 'follow', 'draft', 'watch', 'detach', 'no-notify', 'force', 'help', 'version']);
 const SHORT: Record<string, string> = { h: 'help', v: 'version' };
 
 export interface ParsedArgs {
@@ -144,6 +162,39 @@ export async function main(argv: string[]): Promise<number> {
   const notify = !flags['no-notify'];
 
   switch (command) {
+    case 'kb':
+      if (sub === 'search') return knowledge.searchKnowledge(ctx, {
+        query: more.join(' '), ...(str(flags.tag) ? { tag: str(flags.tag) } : {}),
+        ...(str(flags.type) ? { type: str(flags.type) as 'bug' | 'gotcha' | 'perf' } : {}),
+        ...(flags.limit !== undefined ? { limit: intArg(str(flags.limit), '--limit') } : {})
+      });
+      if (sub === 'show' && more.length === 1) return knowledge.showKnowledge(ctx, more[0]);
+      if (sub === 'add' && !more.length) return knowledge.recordKnowledge(ctx, str(flags.file));
+      if (sub === 'confirm' && more.length === 1) return knowledge.confirmKnowledge(ctx, more[0], str(flags.note));
+      throw new CliError('Usage: lazy kb search|show|add|confirm. See lazy --help', 2);
+    case 'note': {
+      const usage = 'Usage: lazy note add|list|show|done|reopen. See lazy --help';
+      if (sub === 'add') return notes.noteAdd(ctx, {
+        title: more.join(' '), body: str(flags.body), file: str(flags.file), task: Boolean(flags.task),
+        tags: (str(flags.tag) ?? '').split(',').map((t) => t.trim()).filter(Boolean)
+      });
+      if (sub === 'list' && !more.length) return notes.noteList(ctx, {
+        kind: str(flags.kind), status: str(flags.status), tag: str(flags.tag), search: str(flags.search),
+        limit: intArg(str(flags.limit), '--limit')
+      });
+      if (sub === 'show' && more.length === 1) return notes.noteShow(ctx, more[0]);
+      if ((sub === 'done' || sub === 'reopen') && more.length === 1) return notes.noteStatus(ctx, more[0], sub === 'done' ? 'done' : 'open');
+      throw new CliError(usage, 2);
+    }
+    case 'brief':
+      if (more.length !== 1) throw new CliError('Usage: lazy brief issue|mr <iid>', 2);
+      return agent.brief(ctx, agent.parseTask(sub, more[0]));
+    case 'handoff': {
+      if (!['list', 'save'].includes(sub) || more.length !== 2) throw new CliError('Usage: lazy handoff list|save issue|mr <iid> [--file handoff.json]', 2);
+      const task = agent.parseTask(more[0], more[1]);
+      return sub === 'save' ? agent.handoffSave(ctx, task, str(flags.file))
+        : agent.handoffList(ctx, task, intArg(str(flags.limit), '--limit') ?? 5);
+    }
     case 'inbox':
       return cmd.inbox(ctx, { refresh: Boolean(flags.refresh) });
     case 'ci':

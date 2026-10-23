@@ -9,11 +9,13 @@ Every request sends `Authorization: Bearer $LAZYLAB_TOKEN`, a token from **Vault
 
 | Status | Meaning |
 |---|---|
-| `401` | Missing, invalid or revoked token |
+| `401` | Missing, invalid, revoked or expired token |
 | `423` | The vault is locked; sign in to lazylab in a browser |
+| `400` | A required field is missing or invalid, for example `projectId` |
+| `403` | The token is read only and the call writes, or the project is not in the token's allowed projects |
 | `404` | The item does not exist on the active GitLab profile |
 
-Pass `projectId` on every call. When it is omitted, the server uses the first project in the list, which is rarely the one you want.
+Every work item, merge request, pipeline and job route needs `projectId`, the numeric GitLab project id, in the query string for reads and in the body (or query string) for writes. Without it the server uses the token's default project, if one is set in **Vault → Agent tokens**, and otherwise answers `400 projectId is required`; it does not guess a project. The inbox and watches routes are not tied to one project; for a token with allowed projects they leave other projects out. A **Read only** token may call the `GET` routes and `POST /api/agent/watches`; other writes get `403`. See [Token permissions](/security/#token-permissions).
 
 ## Endpoints
 
@@ -62,3 +64,8 @@ curl -s -X POST "$LAZYLAB_URL/api/agent/work-items" \
 ## From the browser
 
 The same routes accept a signed-in browser session. **Agent API → Try it** in the UI sends a create request this way, against a project you choose.
+
+
+## Daily CI budget
+
+`POST /api/agent/pipelines` shares the token's daily CI attempt budget with MCP `run_pipeline` and `retry_job`. Exhausted budgets return HTTP 429 with `error` and the next midnight UTC as `resetAt`. Invalid input and denied permissions do not reserve attempts; upstream failures count. Configure the limit and inspect today's usage in Vault → Agent tokens.

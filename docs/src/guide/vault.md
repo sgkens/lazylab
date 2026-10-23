@@ -1,6 +1,6 @@
 ---
 title: Vault
-abstract: The vault is lazylab's encrypted store for GitLab profiles, CI secrets, runner tokens, generic secrets, agent tokens and notification settings, opened by your password at sign-in.
+abstract: The vault is lazylab's encrypted store for GitLab profiles, CI secrets, runner tokens, generic secrets, agent tokens, personal notes and notification settings, opened by your password at sign-in.
 ---
 
 ## Sections
@@ -11,9 +11,10 @@ abstract: The vault is lazylab's encrypted store for GitLab profiles, CI secrets
 | CI secrets | Values meant for CI/CD variables | **Push to GitLab** writes the value as a project or group variable (protected, masked, environment scope) |
 | Runner tokens | Runner authentication tokens | Registering a runner from the UI saves its token here |
 | Secrets | Anything else: API keys, passwords | Reveal for 30 seconds, copy |
-| Agent tokens | Hashes of `llab_…` tokens | Create (shown once, with setup commands for Claude Code, Codex and REST), revoke. **Can read secrets** lets a token read variable values and vault secrets for [`lazy env` and `lazy run`](/cli/#local-environment-lazy-env-and-lazy-run) |
+| Agent tokens | Hashes of `llab_…` tokens with their permissions | Create (shown once, with setup commands for Claude Code, Codex and REST), edit, revoke. Each token has a scope (read only or read and write), optional allowed projects and default project, an expiry, and **Can read secrets** for [`lazy env` and `lazy run`](/cli/#local-environment-lazy-env-and-lazy-run). See [Token permissions](/security/#token-permissions) |
+| Notes | Personal notes and tasks with comments | See [Notes and tasks](/guide/notes/) |
 | Notifications | Push channels and rules | See [Notifications](/guide/notifications/) |
-| Account | Password, signed-in devices | Change password, lock the vault |
+| Account | Password, signed-in devices, recovery key, backups | Change password, revoke a device, lock the vault, create a recovery key, download and restore a backup |
 
 ## Revealing values
 
@@ -68,5 +69,84 @@ GitLab revokes the old token at once. If saving to the vault fails after that, t
 
 ## Backup and recovery
 
-- Back up `<data dir>/vault.json`. It is useless without the password.
-- There is no password recovery. Losing the password means starting with a new vault: delete `vault.json`, restart, and use the new setup code.
+A backup and a recovery key are two independent ways back into the vault: the backup protects against a lost or damaged `vault.json`, and the recovery key protects against a forgotten password.
+
+### Recovery key
+
+**Vault → Account → Backup and recovery → Create recovery key** asks for the current password and shows a key once:
+
+```text
+LLRK-ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z2345-67ABC-DEFGH-IJKLM-NOPQR-STUVW
+```
+
+- Print it (**Print recovery key**) or store it in a password manager. lazylab keeps no readable copy.
+- The key opens the vault without the password. Anyone holding it has the same access as the password.
+- **Create** again replaces the key; the old key stops working at once. **Remove** deletes it.
+- Changing the password does not change the recovery key.
+- The last three characters are a checksum, so a mistyped key is reported as a typo rather than as a wrong key. Spaces, dashes, case and the letters O, I and B typed as 0, 1 and 8 do not matter.
+
+To use it, choose **Forgot password? Use the recovery key** on the sign-in screen, enter the key and a new password. lazylab:
+
+1. opens the data key with the recovery key;
+2. wraps the data key with the new password, replacing the old password;
+3. signs out every other device and signs you in.
+
+The recovery key stays valid. Create a new one if you think the old one was seen. Failed attempts count towards the sign-in back-off.
+
+### Download a backup
+
+**Vault → Account → Backup and recovery → Download encrypted backup** asks for the current password and downloads `lazylab-vault-<date>.json`:
+
+```json
+{
+  "format": "lazylab-vault-backup",
+  "formatVersion": 1,
+  "exportedAt": "2026-10-24T09:30:00.000Z",
+  "vault": { "version": 1, "id": "…", "revision": 42, "kdf": { "…": "…" }, "dek": { "…": "…" }, "payload": { "…": "…" } }
+}
+```
+
+The backup is the vault file as it is on disk: it stays encrypted and opens with the password **or** the recovery key that were current when it was downloaded. Store it away from the server. A copy of `vault.json` taken by hand restores the same way.
+
+### Restore a backup
+
+The browser accepts backup files up to 8 MiB; larger vault files can be copied into the data directory while the server is stopped.
+
+Restoring checks the backup before anything is written: the format, the vault version, and that the given password or recovery key opens it (the AES-GCM tag of the data key and of the payload must verify). A damaged or modified backup is refused.
+
+| Situation | Where | Needs |
+|---|---|---|
+| New or empty instance | Setup screen → **Restore from a backup** | The setup code from the server log, the backup file, and its password (or its recovery key and a new password) |
+| Running vault | **Vault → Account → Backup and recovery → Restore backup** | Your session, the current password, the backup file and its password (or its recovery key and a new password) |
+
+A running vault is not replaced silently by older data. Each vault has an `id` and a `revision` that increases on every write. Restore asks for confirmation when:
+
+- the backup belongs to a different vault (`id` differs), or
+- the backup's `revision` is lower than the running vault's (it is older).
+
+After confirmation, or when the backup is the same vault at the same or a later revision, lazylab:
+
+1. copies the current file to `vault.json.pre-restore-<time>` (mode 0600);
+2. writes the backup with a revision above both, so it counts as the newest;
+3. locks the vault, which signs out every device and stops GitLab sync, and reopens it with the backup's key;
+4. signs you in again.
+
+To undo a restore, restore `vault.json.pre-restore-<time>` the same way.
+
+### Files kept next to the vault
+
+| File | Written | Purpose |
+|---|---|---|
+| `vault.json` | Every change | The vault |
+| `vault.json.bak` | Before every change | The previous version, in case the last write is damaged |
+| `vault.json.pre-restore-<time>` | Before a restore | The vault that a restore replaced |
+
+All three are encrypted the same way and open with the password or recovery key that was current when they were written.
+
+### Without a recovery key or backup
+
+A forgotten password with no recovery key and no backup means the vault contents are lost: stop lazylab, move `vault.json` out of the data directory, start it again and use the new setup code.
+
+### Compatibility
+
+The recovery key, `id` and `revision` are optional fields in the same vault format (version 1). A vault created before them opens unchanged and gains `id` and `revision` on its next write. An older lazylab still opens a vault that has them and keeps them when it writes.

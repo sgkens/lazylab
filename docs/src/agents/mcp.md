@@ -39,6 +39,17 @@ Every tool that takes `project` accepts a numeric id or a full path such as `gro
 | Tool | Read-only | Does |
 |---|---|---|
 | `get_inbox` | yes | What needs the user across projects, with reasons |
+| `search_bugkb` | yes | Prior fixes across projects, with trust, tested environment and evidence; optional BugKB connection |
+| `get_bugkb_entry` | yes | Full finding before applying or confirming its fix |
+| `record_bugkb_finding` | no | Explicitly record a verified fix or measured improvement; BugKB refuses duplicates and controls trust |
+| `confirm_bugkb_finding` | no | Record evidence that an existing fix worked here; increments hits, so inspect before retrying |
+| `get_task_briefing` | yes | One issue or MR with discussion, acceptance checks, linked MRs, bounded diffs, CI failures and recent local handoffs |
+| `save_handoff` | no | Append an encrypted local checkpoint with decisions, attempts, verification and next steps; does not write to GitLab |
+| `list_handoffs` | yes | Recent checkpoints for the task and active GitLab profile, newest first |
+| `list_notes` | yes | The user's personal lazylab notes and tasks (not GitLab items), with a body excerpt; filters by kind, status, tag and text |
+| `get_note` | yes | One personal note with its full body and comments |
+| `add_note` | no | Jot down a personal note or task, encrypted locally; does not write to GitLab |
+| `set_note_status` | no | Mark a personal note done or open again |
 | `list_projects` | yes | Member projects, most recently active first; `search` filters |
 | `list_work_items` | yes | Issues in a project (`state`: opened, closed, all) |
 | `get_work_item` | yes | One issue with description and comments |
@@ -60,12 +71,19 @@ Every tool that takes `project` accepts a numeric id or a full path such as `gro
 
 Read-only tools carry `readOnlyHint`, so clients can allow them without asking each time. Results are compact JSON that keeps only the fields an agent uses.
 
+`tools/list` shows only the tools the token may call. A **Read only** token gets the read-only tools plus `watch`, `save_handoff`, `add_note` and `set_note_status`, which change only lazylab's own state. A token with allowed projects gets a tool error for any other project, and `get_inbox`, `list_projects` and `list_watches` leave other projects out. See [Token permissions](/security/#token-permissions).
+
 On connect, the server sends short instructions:
 
 - start with `get_inbox`;
+- for a specific task, use `get_task_briefing`; before pausing or finishing, use `save_handoff` so another session can continue;
 - after pushing, use `watch` instead of polling;
 - read `get_pipeline_failures` before any full log;
 - follow the title and body formats for issues and MRs.
+
+See [Task briefings and handoffs](/agents/handoffs/) for the checkpoint format, CLI commands, retention and freshness checks. Briefing and handoff tools are available to ordinary agent tokens; `get_env` still requires secret access.
+
+When `LAZYLAB_BUGKB_URL` is configured, briefings search the independent KB automatically. Read the finding and check its environment before applying a fix. Record or confirm findings explicitly after verification; task handoffs are not automatically published as findings. See [Shared findings with BugKB](/agents/knowledge/).
 
 ## A typical session
 
@@ -85,7 +103,7 @@ you:    (phone notification when it finishes)
 |---|---|
 | Transport | Streamable HTTP, stateless: every request is a `POST /mcp` with one JSON-RPC message (or a batch for 2025-03-26 clients) and gets a JSON response |
 | Protocol versions | 2025-06-18, 2025-03-26, 2024-11-05 |
-| Auth | `Authorization: Bearer llab_…` (agent token); browser cookies are not accepted |
+| Auth | `Authorization: Bearer llab_…` (agent token); browser cookies are not accepted. An expired token gets `401` |
 | Origin | A request with an `Origin` header naming another host gets `403` |
 | Locked vault | `503` with a message; sign in to lazylab in a browser |
 | `GET` / `DELETE /mcp` | `405`: no server-initiated stream and no sessions |
@@ -102,3 +120,12 @@ curl -s -X POST "$LAZYLAB_URL/mcp" \
 ## Certificates
 
 Node-based clients reject self-signed certificates. See [Remote access → Agents on another machine](/remote-access/#agents-on-another-machine).
+
+Restrict an agent to specific MCP tools with **Vault → Agent tokens → Edit → Restrict MCP tools**. Enter names such as `get_inbox, list_projects, get_task_briefing`. Unlisted tools are hidden and direct calls are refused. An empty restricted list allows no tools; turn the restriction off to restore all tools permitted by the scope and secret settings. This restriction does not change REST access.
+
+
+## CI attempt limits
+
+**Vault → Agent tokens** sets a token's combined daily limit for `run_pipeline` and `retry_job`. New tokens default to 50; existing tokens stay unlimited until a limit is set. Set 0 to disable CI or leave the field empty for unlimited attempts. Scope, project and tool permissions still apply. Counters reset at midnight UTC.
+
+A validated, permitted attempt is reserved in the encrypted vault before GitLab is contacted. Failed GitLab requests still consume an attempt, preventing retry loops from exhausting compute. A restart preserves usage. MCP returns a tool error when the budget is exhausted; agent REST pipeline requests return HTTP 429 with `resetAt`. Browser-initiated actions do not use agent quotas.

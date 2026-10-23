@@ -36,35 +36,35 @@ flowchart LR
   D -.DEPLOY.-> D
 ```
 
-| Step | Today without lazylab | lazylab answer |
-|---|---|---|
-| Pick work | Check To-Do list, MR lists and issue boards per project | INBOX: one list across projects and hosts |
-| Branch | Copy the issue number by hand, type a branch name | REPO-4: start work on an issue |
-| Code | Copy CI variables into `.env` by hand; secrets drift | ENV-1/2: pull or inject secrets from the vault |
-| Wait for CI | Refresh the pipeline page, or forget about it | WATCH: notification on the laptop or phone when it finishes |
-| Fix failures | Scroll a 5 MB log; retry flaky jobs by hand | TRIAGE: failure excerpt, flaky detection, retry policy |
-| Open MR | Web form, copy the branch name | REPO-3 / CLI-1: MR from the current branch |
-| Review | Email notifications, tab hunting | INBOX + WATCH: review queue, re-review on new push |
-| Release | Work out the semver bump and write the changelog by hand | REL: bump and changelog from Conventional Commits |
-| Deploy | Environments page per project | DEPLOY: environments across projects, review app cleanup |
-| Across N projects | Repeat every setting change N times | FLEET: bulk labels, settings baseline, project bootstrap |
-| Agents | Hand the agent a full-scope PAT | AGENT: MCP server, scoped tokens, approval queue |
+| Step              | Today without lazylab                                    | lazylab answer                                              |
+| ----------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+| Pick work         | Check To-Do list, MR lists and issue boards per project  | INBOX: one list across projects and hosts                   |
+| Branch            | Copy the issue number by hand, type a branch name        | REPO-4: start work on an issue                              |
+| Code              | Copy CI variables into `.env` by hand; secrets drift     | ENV-1/2: pull or inject secrets from the vault              |
+| Wait for CI       | Refresh the pipeline page, or forget about it            | WATCH: notification on the laptop or phone when it finishes |
+| Fix failures      | Scroll a 5 MB log; retry flaky jobs by hand              | TRIAGE: failure excerpt, flaky detection, retry policy      |
+| Open MR           | Web form, copy the branch name                           | REPO-3 / CLI-1: MR from the current branch                  |
+| Review            | Email notifications, tab hunting                         | INBOX + WATCH: review queue, re-review on new push          |
+| Release           | Work out the semver bump and write the changelog by hand | REL: bump and changelog from Conventional Commits           |
+| Deploy            | Environments page per project                            | DEPLOY: environments across projects, review app cleanup    |
+| Across N projects | Repeat every setting change N times                      | FLEET: bulk labels, settings baseline, project bootstrap    |
+| Agents            | Hand the agent a full-scope PAT                          | AGENT: MCP server, scoped tokens, approval queue            |
 
 ### Integrations considered
 
-| Integration | Verdict | Where |
-|---|---|---|
-| Notification push (ntfy, Gotify, generic webhook, browser Notification API) | Yes: covers phone, laptop and chat (Slack/Discord/Matrix incoming webhooks) with one mechanism | WATCH-2/3 |
-| GitLab webhooks | Yes, optional: replaces polling when GitLab can reach the desktop (Tailscale Funnel, LAN self-hosted GitLab) | WATCH-5 |
-| MCP (Model Context Protocol) | Yes: Claude Code and Codex connect natively instead of using the curl skill | AGENT-1 |
-| Local git checkouts | Yes: branch, ahead/behind and pipeline status for local HEAD | REPO |
-| Editor deep links (`vscode://`, `cursor://`, JetBrains) | Yes: little effort, removes "find that file" steps | REPO-5 |
-| Docker on the host | Opt-in only (socket access is root-equivalent): local runner lifecycle | RL-2 |
-| Container registry | Yes: storage cleanup is a recurring chore | REG |
-| Renovate / Dependabot MRs | Yes: group and bulk-merge across projects | FLEET-4 |
-| Jira / Linear | No for now: GitLab work items cover it; revisit if asked | n/a |
-| Hosted LLM in the app | No: the mission is local-first. Agents are reached through MCP and skills instead | AGENT |
-| Sentry / uptime | Later: link releases to errors once REL and DEPLOY exist | n/a |
+| Integration                                                                 | Verdict                                                                                                      | Where     |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------- |
+| Notification push (ntfy, Gotify, generic webhook, browser Notification API) | Yes: covers phone, laptop and chat (Slack/Discord/Matrix incoming webhooks) with one mechanism               | WATCH-2/3 |
+| GitLab webhooks                                                             | Yes, optional: replaces polling when GitLab can reach the desktop (Tailscale Funnel, LAN self-hosted GitLab) | WATCH-5   |
+| MCP (Model Context Protocol)                                                | Yes: Claude Code and Codex connect natively instead of using the curl skill                                  | AGENT-1   |
+| Local git checkouts                                                         | Yes: branch, ahead/behind and pipeline status for local HEAD                                                 | REPO      |
+| Editor deep links (`vscode://`, `cursor://`, JetBrains)                     | Yes: little effort, removes "find that file" steps                                                           | REPO-5    |
+| Docker on the host                                                          | Opt-in only (socket access is root-equivalent): local runner lifecycle                                       | RL-2      |
+| Container registry                                                          | Yes: storage cleanup is a recurring chore                                                                    | REG       |
+| Renovate / Dependabot MRs                                                   | Yes: group and bulk-merge across projects                                                                    | FLEET-4   |
+| Jira / Linear                                                               | No for now: GitLab work items cover it; revisit if asked                                                     | n/a       |
+| Hosted LLM in the app                                                       | No: the mission is local-first. Agents are reached through MCP and skills instead                            | AGENT     |
+| Sentry / uptime                                                             | Later: link releases to errors once REL and DEPLOY exist                                                     | n/a       |
 
 ### Non-goals
 
@@ -90,63 +90,63 @@ Classification of the live (token configured) code path. With no token everythin
 
 ### Server: GitLab features
 
-| Area | Feature | Status | Notes |
-|---|---|---|---|
-| Auth | verify / save / clear token | WIRED | Since 2026-10-17 (second pass), save/clear create/deactivate an encrypted vault profile |
-| Sync | auto-fetch timer + SSE `/api/events` | WIRED | Since 2026-10-17 (third pass): fans out over the 15 most recently active member projects and refreshes the per-project cache keys; also refreshes the inbox |
-| Projects | list | WIRED | Capped at 50, no pagination |
-| Projects | update settings | WIRED | |
-| Projects | avatar upload | WIRED | Seventh pass: multipart `PUT /projects/:id`; 200 KB limit checked in the UI |
-| Milestones | list | WIRED | Third pass: per-project fan-out; active milestones only; counts from `issues_statistics`, "n/a" when unavailable |
-| Milestones | create | WIRED | |
-| Work items | list | WIRED | Capped at 50 per project. All-projects view fans out over member projects (was `/issues?scope=all`, which includes every public project on gitlab.com) |
-| Work items | create / update | WIRED | Seventh pass: results mapped; empty strings kept; milestone 0 unassigns |
-| Work items | subtasks (checkbox lines) | PARTIAL | IDs are positional (an added subtask now gets its position). Toggle returns `[]`; the drawer's description is not refreshed after a toggle |
-| Notes | list / create (issues and MRs) | WIRED | |
-| Notes | attachments | WIRED | Seventh pass: `POST /api/projects/:id/uploads` (raw body, 10 MB) proxies to GitLab `/projects/:id/uploads`; GitLab's relative Markdown link does not render in lazylab's own preview |
-| MRs | list | PARTIAL | `approved` = approved by me, from one `approved_by_usernames[]` call per project (seventh pass). List responses carry no pipeline; only the inbox fetches single MRs for `head_pipeline` |
-| MRs | approve / unapprove / merge | WIRED | |
-| MRs | update | WIRED | Seventh pass: `draft` sets or strips the `Draft:` title prefix; result mapped |
-| MRs | create | WIRED | Agent API, MCP and Agent access → Try it; no dedicated form |
-| Pipelines | list | WIRED | Third pass: per-project fan-out, newest 50 |
-| Pipelines | jobs, retry, cancel, play job, run with variables | WIRED | Fifth pass: `POST /projects/:id/pipeline`; job retry uses `/jobs/:id/retry` (the log view used `play`, which only works on manual jobs) |
-| Jobs | trace, failure excerpt | WIRED | Whole log per request (tail capped at 2 MB), no incremental tail; errors are masked as a fake trace. Failed jobs return a failure excerpt with the trace |
-| Runners | list | WIRED | `/runners` returns only runners the user owns, not the admin `/runners/all` |
-| Runners | pause, assign, unassign, delete, runner jobs | WIRED | |
-| Runners | register | WIRED | Fixed in the second pass (GL-6): uses the returned token, saves it to the vault, surfaces API errors |
-| Labels | list | WIRED | Third pass: per-project fan-out, de-duplicated by name; project scope uses `with_counts=true` |
-| Labels | create | WIRED | |
-| Packages | list | WIRED | Third pass: per-project fan-out |
-| Packages | details | WIRED | Server and client function exist, but no UI calls them |
-| Tags / releases | list / create | WIRED | Not yet exercised against a live instance |
-| CI editor | read `.gitlab-ci.yml` | WIRED | Seventh pass: default branch or a given ref; 404 = empty with a notice; other errors are shown, never sample YAML |
-| CI editor | save | WIRED | Real commit id; a new branch is created from the default branch; unchecking Run pipeline adds `[skip ci]` |
-| CI editor | lint | WIRED | Local parser per keystroke for the graph; GitLab `/projects/:id/ci/lint` after a pause decides validity |
-| Variables | list / save / delete | PARTIAL | Group scope uses the project namespace (seventh pass). Save does POST, then PUT on *any* error. Masked values are returned to the browser |
-| Badges | list / create / delete | WIRED | Seventh pass: explicit id required; group badges use the project namespace |
-| Badges | pipeline-setup preset | WIRED | Seventh pass: URLs from the project's `web_url`; release badge `/-/badges/release.svg`; preview and copied Markdown use the real URLs |
-| Pages | info | WIRED | Seventh pass: deployments, `force_https`, `pages_access_level`; 404 = not deployed; unknown values labelled. Update sends `pages_https_only`; redeploy runs a watched pipeline |
-| Pages | update | WIRED | |
+| Area            | Feature                                           | Status  | Notes                                                                                                                                                                                    |
+| --------------- | ------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth            | verify / save / clear token                       | WIRED   | Since 2026-10-17 (second pass), save/clear create/deactivate an encrypted vault profile                                                                                                  |
+| Sync            | auto-fetch timer + SSE `/api/events`              | WIRED   | Since 2026-10-17 (third pass): fans out over the 15 most recently active member projects and refreshes the per-project cache keys; also refreshes the inbox                              |
+| Projects        | list                                              | WIRED   | Capped at 50, no pagination                                                                                                                                                              |
+| Projects        | update settings                                   | WIRED   |                                                                                                                                                                                          |
+| Projects        | avatar upload                                     | WIRED   | Seventh pass: multipart `PUT /projects/:id`; 200 KB limit checked in the UI                                                                                                              |
+| Milestones      | list                                              | WIRED   | Third pass: per-project fan-out; active milestones only; counts from `issues_statistics`, "n/a" when unavailable                                                                         |
+| Milestones      | create                                            | WIRED   |                                                                                                                                                                                          |
+| Work items      | list                                              | WIRED   | Capped at 50 per project. All-projects view fans out over member projects (was `/issues?scope=all`, which includes every public project on gitlab.com)                                   |
+| Work items      | create / update                                   | WIRED   | Seventh pass: results mapped; empty strings kept; milestone 0 unassigns                                                                                                                  |
+| Work items      | subtasks (checkbox lines)                         | PARTIAL | IDs are positional (an added subtask now gets its position). Toggle returns `[]`; the drawer's description is not refreshed after a toggle                                               |
+| Notes           | list / create (issues and MRs)                    | WIRED   |                                                                                                                                                                                          |
+| Notes           | attachments                                       | WIRED   | Seventh pass: `POST /api/projects/:id/uploads` (raw body, 10 MB) proxies to GitLab `/projects/:id/uploads`; GitLab's relative Markdown link does not render in lazylab's own preview     |
+| MRs             | list                                              | PARTIAL | `approved` = approved by me, from one `approved_by_usernames[]` call per project (seventh pass). List responses carry no pipeline; only the inbox fetches single MRs for `head_pipeline` |
+| MRs             | approve / unapprove / merge                       | WIRED   |                                                                                                                                                                                          |
+| MRs             | update                                            | WIRED   | Seventh pass: `draft` sets or strips the `Draft:` title prefix; result mapped                                                                                                            |
+| MRs             | create                                            | WIRED   | Agent API, MCP and Agent access → Try it; no dedicated form                                                                                                                              |
+| Pipelines       | list                                              | WIRED   | Third pass: per-project fan-out, newest 50                                                                                                                                               |
+| Pipelines       | jobs, retry, cancel, play job, run with variables | WIRED   | Fifth pass: `POST /projects/:id/pipeline`; job retry uses `/jobs/:id/retry` (the log view used `play`, which only works on manual jobs)                                                  |
+| Jobs            | trace, failure excerpt                            | WIRED   | Whole log per request (tail capped at 2 MB), no incremental tail; errors are masked as a fake trace. Failed jobs return a failure excerpt with the trace                                 |
+| Runners         | list                                              | WIRED   | `/runners` returns only runners the user owns, not the admin `/runners/all`                                                                                                              |
+| Runners         | pause, assign, unassign, delete, runner jobs      | WIRED   |                                                                                                                                                                                          |
+| Runners         | register                                          | WIRED   | Fixed in the second pass (GL-6): uses the returned token, saves it to the vault, surfaces API errors                                                                                     |
+| Labels          | list                                              | WIRED   | Third pass: per-project fan-out, de-duplicated by name; project scope uses `with_counts=true`                                                                                            |
+| Labels          | create                                            | WIRED   |                                                                                                                                                                                          |
+| Packages        | list                                              | WIRED   | Third pass: per-project fan-out                                                                                                                                                          |
+| Packages        | details                                           | WIRED   | Server and client function exist, but no UI calls them                                                                                                                                   |
+| Tags / releases | list / create                                     | WIRED   | Not yet exercised against a live instance                                                                                                                                                |
+| CI editor       | read `.gitlab-ci.yml`                             | WIRED   | Seventh pass: default branch or a given ref; 404 = empty with a notice; other errors are shown, never sample YAML                                                                        |
+| CI editor       | save                                              | WIRED   | Real commit id; a new branch is created from the default branch; unchecking Run pipeline adds `[skip ci]`                                                                                |
+| CI editor       | lint                                              | WIRED   | Local parser per keystroke for the graph; GitLab `/projects/:id/ci/lint` after a pause decides validity                                                                                  |
+| Variables       | list / save / delete                              | PARTIAL | Group scope uses the project namespace (seventh pass). Save does POST, then PUT on _any_ error. Masked values are returned to the browser                                                |
+| Badges          | list / create / delete                            | WIRED   | Seventh pass: explicit id required; group badges use the project namespace                                                                                                               |
+| Badges          | pipeline-setup preset                             | WIRED   | Seventh pass: URLs from the project's `web_url`; release badge `/-/badges/release.svg`; preview and copied Markdown use the real URLs                                                    |
+| Pages           | info                                              | WIRED   | Seventh pass: deployments, `force_https`, `pages_access_level`; 404 = not deployed; unknown values labelled. Update sends `pages_https_only`; redeploy runs a watched pipeline           |
+| Pages           | update                                            | WIRED   |                                                                                                                                                                                          |
 
 ### Server: infrastructure
 
-| Component | Status | Notes |
-|---|---|---|
-| `cacheDb` | PARTIAL | TTL enforced since the third pass (`get(key, { allowStale })` keeps expired rows for offline use). The "WAL" is an append-only JSON-lines file, not SQLite WAL. The whole sql.js DB is exported to disk on each write batch. Journal file and `wal_logs` table grow without bound |
-| `metricsManager` | WIRED | Seventh pass: starts at zero with an empty 30-minute window |
-| `/api/metrics/simulate-hit` | REMOVED | Seventh pass |
-| Error handling | PARTIAL | Most list calls swallow errors and return `[]`, so the UI cannot tell an empty result from a failure |
-| Agent API `/api/agent/*` | WIRED | Defaults to the first project when `projectId` is omitted. `GET /:iid` reads the item directly (seventh pass). `skill.md` is served from `skills/` (single copy) |
+| Component                   | Status  | Notes                                                                                                                                                                                                                                                                             |
+| --------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cacheDb`                   | PARTIAL | TTL enforced since the third pass (`get(key, { allowStale })` keeps expired rows for offline use). The "WAL" is an append-only JSON-lines file, not SQLite WAL. The whole sql.js DB is exported to disk on each write batch. Journal file and `wal_logs` table grow without bound |
+| `metricsManager`            | WIRED   | Seventh pass: starts at zero with an empty 30-minute window                                                                                                                                                                                                                       |
+| `/api/metrics/simulate-hit` | REMOVED | Seventh pass                                                                                                                                                                                                                                                                      |
+| Error handling              | PARTIAL | Most list calls swallow errors and return `[]`, so the UI cannot tell an empty result from a failure                                                                                                                                                                              |
+| Agent API `/api/agent/*`    | WIRED   | Defaults to the first project when `projectId` is omitted. `GET /:iid` reads the item directly (seventh pass). `skill.md` is served from `skills/` (single copy)                                                                                                                  |
 
 ### Frontend
 
-| Area | Status | Notes |
-|---|---|---|
-| All views call `src/services/api.ts` → `/api/*` | WIRED | No direct GitLab calls from the browser |
-| Sync progress bar | WIRED | Seventh pass: indeterminate bar with elapsed time |
-| Global search (Ctrl+K) | WIRED | Client-side filter over loaded data; work items and MRs open their drawers; settings results open the right section |
-| External assets | — | Google Fonts, Unsplash avatars in demo data, and shields.io all need network access |
-| Bundle | — | Single 549 kB JS chunk |
+| Area                                            | Status | Notes                                                                                                               |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| All views call `src/services/api.ts` → `/api/*` | WIRED  | No direct GitLab calls from the browser                                                                             |
+| Sync progress bar                               | WIRED  | Seventh pass: indeterminate bar with elapsed time                                                                   |
+| Global search (Ctrl+K)                          | WIRED  | Client-side filter over loaded data; work items and MRs open their drawers; settings results open the right section |
+| External assets                                 | —      | Google Fonts, Unsplash avatars in demo data, and shields.io all need network access                                 |
+| Bundle                                          | —      | Single 549 kB JS chunk                                                                                              |
 
 ## Done this session (2026-10-17)
 
@@ -163,6 +163,7 @@ Classification of the live (token configured) code path. With no token everythin
 ## Done 2026-10-17 (second pass): authentication + vault
 
 Scope change: lazylab runs on the desktop and is used from a laptop, so it needs login, an encrypted secrets store and HTTPS. Decisions:
+
 - **Vault unlock:** login password only (no keyfile auto-unlock).
 - **Transport:** built-in TLS plus proxy support.
 - **Vault contents:** GitLab profiles, CI secrets, runner tokens, generic secrets.
@@ -192,9 +193,9 @@ flowchart LR
 - [x] AUTH-12 Security headers (nosniff, frame DENY, no-referrer); plain-HTTP-on-LAN startup warning (was SEC-5)
 - [x] AUTH-13 UI: setup/login screen, Vault view (profiles, CI secrets, runner tokens, secrets, agent tokens, account), sign-out
 - [x] Verified:
-  - curl flow (setup, login, throttle, origin rejection, reveal, agent token, restart → locked/423, password change, lock)
-  - Container with TLS
-  - Headless Chromium UI flow (setup → vault → add/reveal secret → agent token → sign out → sign in), no page errors
+    - curl flow (setup, login, throttle, origin rejection, reveal, agent token, restart → locked/423, password change, lock)
+    - Container with TLS
+    - Headless Chromium UI flow (setup → vault → add/reveal secret → agent token → sign out → sign in), no page errors
 
 ## Done 2026-10-17 (third pass): foundation + inbox
 
@@ -208,8 +209,9 @@ flowchart LR
 - Verified: `tsc`, `vite build`, 19 tests, headless Chromium flow (setup → inbox → milestones → dashboard → vault → agent token → sign out → sign in), no page errors
 
 Follow-ups found on the way:
+
 - [ ] INBOX-7 "Already approved by me" state for review requests (needs `/merge_requests/:iid/approvals` per item)
-- [ ] GL-17 Make `AGGREGATE_PROJECT_LIMIT` (15) a setting, or let the user pin the projects the all-projects views aggregate
+- [ ] GL-17 (SCALE audit: drop in favour of FLEET-5 + CACHE-7; raising the limit without incremental sync multiplies request cost) Make `AGGREGATE_PROJECT_LIMIT` (15) a setting, or let the user pin the projects the all-projects views aggregate
 - [ ] GL-18 MR list pipeline status for the MR view (single-MR fetch or `/pipelines?ref=`) — list responses have none
 
 ## Done 2026-10-17 (fourth pass): watches and notifications
@@ -233,10 +235,11 @@ flowchart LR
 - Verified: 34 tests (wire formats, evaluation, manager with a real vault), curl end-to-end against a capture server (formats, failures-only filter, masking, agent bearer, restart persistence), headless Chromium (watch toggle, bell menu, add channel), no page errors
 
 Follow-ups:
+
 - [ ] WATCH-7 Snooze / mute a watch or rule for N hours; quiet hours for push channels
 - [ ] WATCH-8 Notification history survives restart (today in memory, cleared on lock)
 - [ ] WATCH-9 MR watch: notify on new approvals and new comments (needs notes polling)
-- [ ] WATCH-10 Poll interval setting; back off on GitLab rate-limit headers
+- [x] WATCH-10 Poll interval setting; back off on GitLab rate-limit headers
 
 ## Done 2026-10-17 (fifth pass): CI failure triage and run pipeline
 
@@ -251,9 +254,9 @@ flowchart LR
 ```
 
 - [x] TRIAGE-1 `server/triage.ts`: parses `section_start`/`section_end`, skips post-script runner sections, keeps the last 40 lines of the failing section, highlights error lines, picks an `errorLine` (cause lines such as `error:`/`fatal` before summary lines such as `1 fail`), exit code, `failure_reason` hint and `retryable`
-  - Log view opens on a Failure tab for failed jobs (copy excerpt, GitLab link); the trace response carries the excerpt so the log is fetched once
-  - CI/CD: failed pipelines list each failed job's error line (allowed failures excluded)
-  - Watch failure notifications append `job: error line` and carry `failedJob`; "Why it failed" in the bell and a click on the desktop notification open the excerpt
+    - Log view opens on a Failure tab for failed jobs (copy excerpt, GitLab link); the trace response carries the excerpt so the log is fetched once
+    - CI/CD: failed pipelines list each failed job's error line (allowed failures excluded)
+    - Watch failure notifications append `job: error line` and carry `failedJob`; "Why it failed" in the bell and a click on the desktop notification open the excerpt
 - [x] TRIAGE-6 Run pipeline: ref with branch suggestions, variables prefilled from GraphQL `ciConfigVariables` (descriptions, option lists), last run per project in localStorage, watch by default. Variables left at the declared default are not sent
 - Fixed: the log view's Retry called `play` (manual jobs only); finished jobs now use `/jobs/:id/retry` and the new job is watched and opened
 - Agent API: `POST /api/agent/pipelines`, `GET /api/agent/pipelines/:id/failures`, `GET /api/agent/jobs/:id/failure`
@@ -261,6 +264,7 @@ flowchart LR
 - Not verified against live GitLab: `ciConfigVariables` (GraphQL field availability varies by version), `/jobs/:id/retry` response, trace section markers from a real runner
 
 Follow-ups:
+
 - [ ] TRIAGE-8 Run pipeline from the Inbox and from an MR row (prefill the source branch)
 - [ ] TRIAGE-9 Excerpt for very large logs without downloading the whole trace (needs TRIAGE-5 offset fetch)
 - [ ] TRIAGE-10 Show failures for jobs in child/downstream pipelines (bridges)
@@ -283,17 +287,18 @@ sequenceDiagram
 ```
 
 - [x] AGENT-1 `server/mcp.ts`: stateless Streamable HTTP (POST JSON, GET/DELETE 405, notifications 202, batches for 2025-03-26), protocol versions 2025-06-18 / 2025-03-26 / 2024-11-05, bearer agent tokens, Origin check, 503 while locked
-  - 17 tools: inbox, projects, work items (list/get/create/update), comments, MRs (list/get/create), pipelines, pipeline and job failures, run pipeline, retry job, watch, list watches
-  - Tools accept a project id or `group/project` path; outputs are trimmed to the fields an agent uses; read-only tools are annotated
-  - Argument validation against each tool's input schema; bad arguments and GitLab errors come back as tool errors (`isError`) so the model can correct itself
-  - `GitLabClient.getWorkItem` reads one issue directly instead of searching the first 50
+    - 17 tools: inbox, projects, work items (list/get/create/update), comments, MRs (list/get/create), pipelines, pipeline and job failures, run pipeline, retry job, watch, list watches
+    - Tools accept a project id or `group/project` path; outputs are trimmed to the fields an agent uses; read-only tools are annotated
+    - Argument validation against each tool's input schema; bad arguments and GitLab errors come back as tool errors (`isError`) so the model can correct itself
+    - `GitLabClient.getWorkItem` reads one issue directly instead of searching the first 50
 - [~] AGENT-5 Vault → Agent tokens shows Claude Code, Codex and REST setup after creating a token (skill install not generated)
 - Verified: 61 tests (protocol, version negotiation, validation, tools against demo data); the official MCP TypeScript SDK client (1.17.0) connected over HTTP, listed and called tools; curl for 401 without or with a bad token or cookie only, 403 foreign Origin, 405 GET, 202 notification, batch, 400 empty body, 503 locked; headless Chromium for the setup snippets
 - Not verified: Claude Code and Codex end to end (the Codex `bearer_token_env_var` config key is from Codex docs, not tested here); live GitLab for the new single work item read
 
 Follow-ups:
+
 - [ ] AGENT-6 MCP resources: job logs and `.gitlab-ci.yml` as readable resources (feeds TRIAGE-7)
-- [ ] AGENT-7 Per-token tool allowlist (part of AGENT-2 scopes)
+- [x] AGENT-7 Per-token tool allowlist (part of AGENT-2 scopes)
 
 ## Done 2026-10-17 (seventh pass): UI audit and documentation site
 
@@ -306,6 +311,7 @@ flowchart LR
 ```
 
 Fixed (UI-reachable):
+
 - [x] AUDIT-1 Agent access modal was imported but never rendered; Navbar, Dashboard and search entry points were hidden. Rewritten with MCP, REST, Skill (from `/api/agent/skill.md`) and Try it (explicit project, real-item warning, real result)
 - [x] AUDIT-2 Dashboard `onOpenBadges`/`onOpenGeneral` and search `onSelectMR`/`onSelectSettingsSection` were never passed; search forced the badges section
 - [x] AUDIT-3 MR view received `onUpdateLabels` and `onToggleState` but never called them; drawer went stale after list updates
@@ -322,12 +328,14 @@ Fixed (UI-reachable):
 - [x] AUDIT-14 `.dockerignore` excluded `skills/` (needed by `skill.md`); docs and tests now excluded instead
 
 Docs:
+
 - [x] DOCS-1 Eleventy 3 + Nunjucks site in `docs/` (own `package.json`): 18 pages, Mermaid, light/dark, mobile nav, pager, edit links, `DOCS_PATH_PREFIX` for Pages
 - [x] DOCS-2 README rewritten as a project landing page that links into the docs
 
 Verified: 66 tests; headless Chromium audit flow (agent modal, dashboard, search → MR drawer, MR labels/approve/close, work item label, release notes, tag compare, CI editor lint source); earlier UI and triage flows; curl for uploads (413 over 10 MB), skill.md, badge id validation, release notes, removed simulator (404); docs link check (0 broken), screenshots at desktop and 390 px.
 
 Follow-ups:
+
 - [x] AUDIT-15 Server list calls swallowed errors and returned `[]` → list reads throw; auto-fetch refreshes sources independently; App loads each source on its own and names the failed ones; group variables/badges failures no longer hide project rows; job trace no longer returns a placeholder log
 - [x] AUDIT-16 Masked variable values reached the browser → redacted in list, save response and SSE (`server/variables.ts`); `GET /api/variables/value` reads one on Reveal/Copy/Clone (no-store, journaled); export comments them out; PUT targets the environment scope
 - [x] AUDIT-17 Work item drawer description not refreshed after a subtask toggle → toggle/add return the updated item; failed toggle reverts; comments no longer reload on every item update
@@ -357,20 +365,21 @@ Verified: 79 tests (thresholds, calendar-day counting, warn-once, rule off); hea
 Not verified: live GitLab (`/personal_access_tokens/self` needs 16.0+, rotate 16.10+); the vault-save-failure rescue path.
 
 Follow-ups:
+
 - [ ] ENV-6 Rotate project and group access tokens (`POST /projects/:id/access_tokens/:token_id/rotate`) and update vault CI secrets that hold them
 - [ ] ENV-7 MCP tool `get_expiring_tokens` so agents can report expiring tokens
 - [ ] ENV-8 Expiry for tokens stored as vault entries (runner tokens, CI secrets) where GitLab exposes it
 
 ### Errors noted this pass
 
-| # | Error | Cause | Status |
-|---|---|---|---|
-| E1 | Browser check expected "5d left" for a token expiring 5 calendar days out, got 4 | `daysLeft` counted hours to 00:00 UTC on `expires_at`, not calendar days as GitLab shows them | Fixed: calendar days; `expires_at` today counts as expired |
-| E2 | Follow-up browser flow failed on 3 console errors | The flow's own probes of the removed `/api/auth/*` routes logged expected 404s | Fixed in the test: errors checked before the probes and cleared after |
-| E3 | AUDIT-15 test: `getMergeRequests` resolved instead of rejecting | The first pass removed `catch {}` blocks but missed a `catch (err) { console.error; return [] }` variant | Fixed; remaining catches reviewed (404 handling, lint fallback, GraphQL fallback are intended) |
-| E4 | `git merge` on WSL: `fatal: stash failed` | Auto-stash on the `/mnt/g` filesystem fails intermittently | Workaround: `-c merge.autoStash=false` and retry; merge succeeds |
-| E5 | Container logs the plain-HTTP warning with the default loopback port mapping | Inside the container the server listens on `0.0.0.0` | Open: suppress when `LAZYLAB_IN_CONTAINER` is set and the published port is loopback-only, or reword |
-| E6 | Tracker listed done work as open (GL-3..16, UI-1/2/3/5, BUILD-7, REL-1/2, SEC-4) | Earlier passes recorded fixes in their own sections only | Fixed: items ticked with a note where the result differs from the original plan |
+| #   | Error                                                                            | Cause                                                                                                    | Status                                                                                               |
+| --- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| E1  | Browser check expected "5d left" for a token expiring 5 calendar days out, got 4 | `daysLeft` counted hours to 00:00 UTC on `expires_at`, not calendar days as GitLab shows them            | Fixed: calendar days; `expires_at` today counts as expired                                           |
+| E2  | Follow-up browser flow failed on 3 console errors                                | The flow's own probes of the removed `/api/auth/*` routes logged expected 404s                           | Fixed in the test: errors checked before the probes and cleared after                                |
+| E3  | AUDIT-15 test: `getMergeRequests` resolved instead of rejecting                  | The first pass removed `catch {}` blocks but missed a `catch (err) { console.error; return [] }` variant | Fixed; remaining catches reviewed (404 handling, lint fallback, GraphQL fallback are intended)       |
+| E4  | `git merge` on WSL: `fatal: stash failed`                                        | Auto-stash on the `/mnt/g` filesystem fails intermittently                                               | Workaround: `-c merge.autoStash=false` and retry; merge succeeds                                     |
+| E5  | Container logs the plain-HTTP warning with the default loopback port mapping     | Inside the container the server listens on `0.0.0.0`                                                     | Open: suppress when `LAZYLAB_IN_CONTAINER` is set and the published port is loopback-only, or reword |
+| E6  | Tracker listed done work as open (GL-3..16, UI-1/2/3/5, BUILD-7, REL-1/2, SEC-4) | Earlier passes recorded fixes in their own sections only                                                 | Fixed: items ticked with a note where the result differs from the original plan                      |
 
 ## Done 2026-10-17 (ninth pass): `lazy` command line (CLI-1, CLI-2)
 
@@ -392,20 +401,21 @@ Verified: 88 tests (remote parsing, branch issue numbers, MR text, argument pars
 Not verified: live GitLab; macOS and Windows binaries; `lazy login` token prompt on a real TTY (tested with `--token`).
 
 Follow-ups:
+
 - [ ] CLI-5 `lazy open` (MR or pipeline of the current branch in the browser) and `lazy mr status`
 - [ ] CLI-6 Shell completions (bash, zsh, fish)
 - [ ] CLI-7 Release the binaries from CI for Linux, macOS and Windows (with BUILD-4)
 
 ### Errors noted this pass
 
-| # | Error | Cause | Status |
-|---|---|---|---|
-| E7 | `lazy push` on a branch created from `origin/main` ran a plain `git push`, which git refused (exit 128) | `branch.autoSetupMerge` makes the new branch track `origin/main`; any upstream was taken as "already pushed" | Fixed: `pushedRemote()` accepts only an upstream with the branch's own name; `mr create` uses the same check |
-| E8 | A demo "release-bot expires in 5 days" warning was sent while connected to a real (fake) GitLab | The expiry check at unlock ran before the profile was active and warned about demo sample tokens; warnings reach real push channels | Fixed: demo tokens are listed but never warned about; unit test uses a live-like stub |
-| E9 | `lazy ci watch 99999` printed "Not watched in lazylab" and then the 404 | The watch was added before checking that the pipeline exists | Fixed: `get_pipeline` first, then watch |
-| E10 | First end-to-end run created a branch from a local `main` that did not exist | Test script bug (`main` only existed on the remote) | Fixed in the script (`origin/main`) |
-| E11 | "Auto-fetch background error: Unable to connect" at the end of the run | The script stops the fake GitLab and lazylab together | Expected; not a product error |
-| E12 | Pipeline-finished notifications missing from the first run's check | Watches poll every 15 s and the script ended sooner | Script waits for one poll; notifications arrive |
+| #   | Error                                                                                                   | Cause                                                                                                                               | Status                                                                                                       |
+| --- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| E7  | `lazy push` on a branch created from `origin/main` ran a plain `git push`, which git refused (exit 128) | `branch.autoSetupMerge` makes the new branch track `origin/main`; any upstream was taken as "already pushed"                        | Fixed: `pushedRemote()` accepts only an upstream with the branch's own name; `mr create` uses the same check |
+| E8  | A demo "release-bot expires in 5 days" warning was sent while connected to a real (fake) GitLab         | The expiry check at unlock ran before the profile was active and warned about demo sample tokens; warnings reach real push channels | Fixed: demo tokens are listed but never warned about; unit test uses a live-like stub                        |
+| E9  | `lazy ci watch 99999` printed "Not watched in lazylab" and then the 404                                 | The watch was added before checking that the pipeline exists                                                                        | Fixed: `get_pipeline` first, then watch                                                                      |
+| E10 | First end-to-end run created a branch from a local `main` that did not exist                            | Test script bug (`main` only existed on the remote)                                                                                 | Fixed in the script (`origin/main`)                                                                          |
+| E11 | "Auto-fetch background error: Unable to connect" at the end of the run                                  | The script stops the fake GitLab and lazylab together                                                                               | Expected; not a product error                                                                                |
+| E12 | Pipeline-finished notifications missing from the first run's check                                      | Watches poll every 15 s and the script ended sooner                                                                                 | Script waits for one poll; notifications arrive                                                              |
 
 ## Done 2026-10-18 (tenth pass): local environment (ENV-1, ENV-2)
 
@@ -433,20 +443,67 @@ Verified: 104 tests (scope matching, precedence, specificity, vault fallback, na
 Not verified: live GitLab (`/projects/:id/groups`, hidden variables, pagination past 100, 403 on a parent group); Windows (`chmod`, temp dir, signals).
 
 Follow-ups:
+
 - [ ] ENV-9 `lazy env diff`: compare the local `.env` with what `env pull` would write (keys added, removed, changed; no values)
 - [ ] ENV-10 Expand `$NAME` references between variables the way GitLab does for non-raw variables
-- [ ] ENV-11 Per-token project allowlist for `get_env` (with AGENT-2)
+- [x] ENV-11 Per-token project allowlist for `get_env` (with AGENT-2)
 
 ### Errors noted this pass
 
-| # | Error | Cause | Status |
-|---|---|---|---|
-| E13 | A value with `$HOME` in single quotes came back expanded under `bun --env-file` | Bun's loader expands `$NAME` even in single quotes; Node, dotenv and Compose read single quotes literally | Kept single quotes (literal for most loaders); `env pull` names the keys with `$` and points to `lazy run` |
-| E14 | Double-quoted `\"` escapes came back with the backslash under Node `--env-file` | Node does not unescape `\"` | Double quotes are used only for values with `'` and no `"` or `\`; values with both quote kinds are named as not portable |
-| E15 | `resolveEnv` test failed: `SONAR` was null | Test bug: a later `--secret Sonar` spec replaced the earlier `SONAR=…` | Fixed in the test |
-| E16 | MCP test counted 18 listed tools against 19 defined | `get_env` is hidden from tokens without secret access | Test compares `listTools(true)` |
-| E17 | Second end-to-end run: "Already set up" | The first run's server kept the port: the trap killed the subshell, not `bun` | Script starts `bun` directly so `$!` is the server |
-| E18 | `pkill -f 'bun server.ts'` killed the calling shell (exit 144) | The pattern matched the shell's own command line | Use `pgrep -af 'server\.ts'` and kill by PID |
+| #   | Error                                                                           | Cause                                                                                                     | Status                                                                                                                    |
+| --- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| E13 | A value with `$HOME` in single quotes came back expanded under `bun --env-file` | Bun's loader expands `$NAME` even in single quotes; Node, dotenv and Compose read single quotes literally | Kept single quotes (literal for most loaders); `env pull` names the keys with `$` and points to `lazy run`                |
+| E14 | Double-quoted `\"` escapes came back with the backslash under Node `--env-file` | Node does not unescape `\"`                                                                               | Double quotes are used only for values with `'` and no `"` or `\`; values with both quote kinds are named as not portable |
+| E15 | `resolveEnv` test failed: `SONAR` was null                                      | Test bug: a later `--secret Sonar` spec replaced the earlier `SONAR=…`                                    | Fixed in the test                                                                                                         |
+| E16 | MCP test counted 18 listed tools against 19 defined                             | `get_env` is hidden from tokens without secret access                                                     | Test compares `listTools(true)`                                                                                           |
+| E17 | Second end-to-end run: "Already set up"                                         | The first run's server kept the port: the trap killed the subshell, not `bun`                             | Script starts `bun` directly so `$!` is the server                                                                        |
+| E18 | `pkill -f 'bun server.ts'` killed the calling shell (exit 144)                  | The pattern matched the shell's own command line                                                          | Use `pgrep -af 'server\.ts'` and kill by PID                                                                              |
+
+## Done 2026-10-20: documentation layout and navigation polish
+
+- [x] DOCS-2 Shared 1,360 px header/page grid, aligned navigation/article/contents columns, revised spacing and typography, light/dark surfaces, thin scrollbars, prominent source edit links and a responsive drawer. Build-time heading IDs/anchors, duplicate-heading suffixes, contents links, reading time and code toolbars remain in static HTML.
+- [x] DOCS-3 Locally bundled Hawk 0.43.7 and Pagefind 1.5.2 search, TypeFlow 0.34.1 intro/preview motion and Logcad 0.6.0 diagnostics. Search loads on demand, indexes article content rather than chrome/diagram source, works under a path prefix and restores focus after Escape. Build/index failures fail the documentation build. The docs CLI runs Eleventy under Bun; generated bundles are ignored and excluded from watch inputs.
+- [x] DOCS-4 Scroll-aware contents with its own active-link scrolling, a native disclosure below 1,200 px, drawer below 820 px, reading progress, copy controls, heading offsets, CSS section arrivals and supported browser view transitions. Reduced motion disables animation. Diagram rendering retains the existing pinned Mermaid CDN and now re-renders on theme changes.
+
+Verified: 133 tests, TypeScript and app build; 24-page docs builds at root and `/lazylab/`; no broken internal heading links; clean frozen-install docs builds in `oven/bun:1.3.11`, including a custom output directory with the index in the correct location. Chromium checks covered 320–1,920 px, no horizontal overflow, heading offsets, scrollspy, contents self-scrolling, copy/clipboard, repeated search shortcuts, theme persistence, mobile focus/Escape, disclosure state recovery and TypeFlow. Chromium, Firefox and WebKit passed prefixed search/results, edit URLs and mobile navigation with no page errors. Real Mermaid rendering/theme updates passed. Core text, muted text and accent contrast were checked in light/dark themes.
+
+Integration notes: the local TypeFlow checkout is 0.34.4 but the published package is 0.34.1, so the docs pin the published version. Do not copy unbundled source JS to the same paths as generated bundles: Eleventy refuses duplicate passthrough outputs. In Eleventy 3.1.2's `eleventy.after`, use normalized `directories.output`, not deprecated `dir.output`, to honour CLI output overrides when writing the Pagefind index. The shared KB was offline, so the output-directory gotcha is recorded here instead.
+Not verified: hosted GitLab Pages deployment or physical mobile devices. Diagram rendering still requires the existing Mermaid CDN; diagram source remains readable when it is unavailable.
+
+## Done 2026-10-20: acceptance-testing readiness
+
+Decision: open the current pre-1.0 workflow for acceptance testing before expanding the feature set. Agent briefing, handoffs and shared findings now support a complete trial; live GitLab results should determine the next work.
+
+- [x] BUILD-8 App verification job in GitLab CI: frozen dependency install, TypeScript, all tests, SPA build, CLI compilation and binary version check. Runs in branch, tag and MR pipelines; an open MR replaces its duplicate branch-push pipeline. App verification precedes documentation publishing. Successful app bundles are retained for one week.
+- [x] DOCS-1 Acceptance-testing guide with the issue-to-briefing-to-CI-to-handoff workflow, profile isolation, BugKB reuse and failure cases, known scale/permission limits, and a reproducible failure-report format. Linked from the README and docs navigation.
+
+Verified: parsed the CI YAML and ran the exact `app:check` script in an isolated copy of the repository inside `oven/bun:1.3.11`. Frozen install, lint, 133 tests, SPA build, CLI compilation and compiled binary version all passed. The docs build passed with the new guide. No live credentials or owner data were used.
+Not verified: execution on the hosted GitLab runner and its branch/MR event rules, live GitLab acceptance, Docker image builds in CI, cross-platform releases. BUILD-4 remains in progress for Docker coverage. The existing large frontend chunk warning remains tracked under BUILD-2.
+
+## Done 2026-10-20: optional BugKB integration
+
+- [x] AGENT-13 Independent BugKB HTTP adapter, enabled with `LAZYLAB_BUGKB_URL`. Uses the existing search, records and confirmation APIs, checks for hooks before writing, preserves duplicate refusal and server-controlled trust, bounds responses and deadlines, refuses redirects and never automatically retries writes. Recognizable credentials are redacted from searches and refused in findings.
+- [x] AGENT-14 MCP tools `search_bugkb`, `get_bugkb_entry`, `record_bugkb_finding` and `confirm_bugkb_finding`, plus `lazy kb search/show/add/confirm`. Writes are explicit, require live GitLab project attribution and checked evidence, and cannot inject trust fields or bypass duplicate detection. Demo profiles remain read-only toward the shared KB.
+- [x] AGENT-15 Briefings automatically search task title/labels and up to two CI error lines when configured. Results include tested environments, trust, fix excerpts, measurements and evidence, with `disabled` / `available` / `partial` / `unavailable` status. No automatic publication of handoffs or confirmation of search matches. Added the connection/workflow guide, configuration example and MCP/CLI docs.
+
+Verified: lint; 133 tests (15 new BugKB tests); app and docs builds. Tests cover redaction, protected fields, required evidence, performance measurements, filters, limits, timeouts, uncertain writes, missing hooks, duplicate refusal, confirmation bodies, partial/offline briefings and authenticated MCP/CLI round trips. A separate end-to-end run used the real BugKB hooks and migrations on PocketBase 0.40.4 with disposable Linux storage: CLI create persisted evidence and initial unverified trust; duplicate add was refused with candidate ID; a second-project confirmation promoted trust through the server; briefings found the entry and kept working after the KB stopped. Existing shared KB data was not modified.
+Not verified: the owner's shared KB deployment (offline at the default local endpoint), live GitLab attribution, Windows or Docker networking. Integration remains disabled until a reachable service URL is configured.
+
+Non-obvious integration finding: BugKB's create hook clears agent-supplied notes. Verification is therefore appended to the persisted fix and extracted separately for briefing display. Confirmations continue to use the server-managed notes. This was verified against real hooks; the shared KB was unavailable to record the gotcha there.
+
+## Done 2026-10-20: agent briefings and persistent handoffs
+
+- [x] AGENT-8 `get_task_briefing`: one read for a task's description, explicit acceptance checklist, recent user discussion, linked MRs (including other projects), bounded patches, failed-job excerpts and the latest three handoffs. Required task reads fail clearly; optional source failures and omissions are reported. Pipeline reads use the head pipeline's own project when available.
+- [x] AGENT-9 `save_handoff` / `list_handoffs`: append-only agent reports with server-recorded identity, decisions, attempted fixes, structured verification, blockers, next steps and optional branch/full SHA. Encrypted inside the vault; isolated by profile/project/task kind/iid, with a separate demo namespace. Latest 20 per task and 500 overall retained. MR briefings compare recorded and current head SHAs. Older vaults migrate on unlock; failed writes roll back in-memory handoff state.
+- [x] AGENT-10 `lazy brief issue|mr <iid>`, `lazy handoff list issue|mr <iid>` and `lazy handoff save issue|mr <iid> --file handoff.json`, with JSON and readable output. MCP startup instructions explain briefing and handoff use. Added the workflow guide and updated MCP, CLI, feature status, README and changelog.
+
+Verified: lint; 118 tests including 14 new agent workflow tests; SPA and docs builds. Coverage includes authenticated MCP/CLI round trips, fake GitLab relationship/diff/recent-note/failure reads, fork pipeline project IDs, partial failures and truncation, token attribution, input validation, profile isolation, retention, encrypted persistence across fresh processes, lock behaviour, legacy payloads, host-change cleanup and failed-write rollback. A production-server demo smoke run also passed locked MCP rejection, login, app serving, CLI save/brief/list and handoff persistence after server restart, using an isolated temporary vault.
+Not verified: live GitLab; Claude Code / Codex client sessions; Windows. This slice supplies context and continuity; the work queue and review inbox remain follow-ups.
+
+Follow-ups:
+
+- [ ] AGENT-11 Work queue with task assignment, progress, blockers, branch and reported results.
+- [ ] AGENT-12 Review inbox with the current diff, verification evidence and unresolved questions.
 
 ## Done 2026-10-18 (twelfth pass): brandkit extracted into its own repository
 
@@ -468,31 +525,32 @@ Verified: lint, 104 tests, SPA build (favicon and touch icon rewritten by Vite, 
 Not verified: README rendering on gitlab.com (`align` attributes and shields badges depend on GitLab's sanitiser); link previews on a real Pages URL.
 
 Follow-ups:
+
 - [ ] BRAND-5 Upload `brand/png/lazylab-mark-512.png` (115 KB) as the GitLab project avatar (Settings → General); manual
 - [ ] BRAND-6 Web app manifest (`name`, icons 192/512, `theme_color`) together with WATCH-6 (PWA)
-- [ ] SEC-9 note: the mark is inlined by Vite as a `data:` URL, so a future CSP needs `img-src 'self' data:`
+- [x] SEC-9 note: the mark is inlined by Vite as a `data:` URL, so a future CSP needs `img-src 'self' data:`
 
 ### Errors noted this pass
 
-| # | Error | Cause | Status |
-|---|---|---|---|
-| E19 | Eleventy failed on `reference/brand.md` front matter | An abstract containing `: ` is read as a YAML mapping | Reworded; quote abstracts that contain a colon |
-| E20 | `pkill -f "http.server 8097"` killed the calling shell again (exit 144) and skipped the README edit in the same call | Repeat of E18 | Re-ran the edit; stop servers by PID from `pgrep` |
-| E21 | 512 px mark PNG was 245 KB, over GitLab's 200 KB avatar limit; social PNG 722 KB | `canvas.toDataURL` uses fast PNG compression | PNGs now come from Chromium screenshots: 115 KB and 315 KB |
-| E22 | White on Ember 600 measured 3.6:1 | Below WCAG AA for small text | Documented as a fill behind white icons only; Ember 700 (5.2:1) is the text accent on light |
+| #   | Error                                                                                                                | Cause                                                 | Status                                                                                      |
+| --- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| E19 | Eleventy failed on `reference/brand.md` front matter                                                                 | An abstract containing `: ` is read as a YAML mapping | Reworded; quote abstracts that contain a colon                                              |
+| E20 | `pkill -f "http.server 8097"` killed the calling shell again (exit 144) and skipped the README edit in the same call | Repeat of E18                                         | Re-ran the edit; stop servers by PID from `pgrep`                                           |
+| E21 | 512 px mark PNG was 245 KB, over GitLab's 200 KB avatar limit; social PNG 722 KB                                     | `canvas.toDataURL` uses fast PNG compression          | PNGs now come from Chromium screenshots: 115 KB and 315 KB                                  |
+| E22 | White on Ember 600 measured 3.6:1                                                                                    | Below WCAG AA for small text                          | Documented as a fill behind white icons only; Ember 700 (5.2:1) is the text accent on light |
 
 ## Epic SEC: hardening follow-ups
 
-- [ ] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
+- [x] SEC-1 Unit tests for vault crypto (wrong password, tamper detection, password change) and `apiGuard` (bun test)
 - [ ] SEC-2 Step-up re-authentication (password prompt) before reveal, agent token creation and profile changes
-- [ ] SEC-3 Revoke a single device session (today only lock-all)
+- [x] SEC-3 Revoke a single device session (device list, last seen, revoke one or lock all)
 - [~] SEC-4 Variables view: stop returning masked values to the browser (done, AUDIT-16); "save to vault" action that creates a CI secret (open)
-- [ ] SEC-5 Vault backup/export (still encrypted) and a printable recovery key; today a forgotten password means data loss
-- [ ] SEC-6 Agent token scopes (read-only / write), expiry, last-used timestamp
+- [x] SEC-5 Encrypted vault backup/export, guarded restore and printable recovery key for password reset
+- [x] SEC-6 Agent token scopes (read-only / write), expiry, last-used timestamp
 - [ ] SEC-7 Audit trail for vault reads and pushes in the journal
-- [ ] SEC-8 Cache at rest: encrypt `labwi_cache.sqlite` with the DEK, or purge it on lock
-- [ ] SEC-9 Content-Security-Policy header (prod only; Vite dev injects inline scripts)
-- [ ] SEC-10 Prune the login-failure map (grows by IP without bound)
+- [ ] SEC-8 Cache at rest: encrypt `lazylab_cache.sqlite` with the DEK, or purge it on lock
+- [x] SEC-9 Content-Security-Policy header (prod only; Vite dev injects inline scripts)
+- [x] SEC-10 Prune the login-failure map (grows by IP without bound)
 - [ ] SEC-11 Optional TOTP second factor
 - [ ] SEC-12 Host header allowlist (DNS rebinding). Lower priority now that the API requires a session
 - [ ] SEC-13 Verify behind Tailscale Serve: Host / X-Forwarded-Proto handling and the `Secure` cookie flag
@@ -516,15 +574,22 @@ Follow-ups:
 - [x] GL-14 Milestone stats: compute from issues, or show "n/a"; no fake numbers
 - [x] GL-15 Return errors from list calls (typed error payload) instead of `[]`; show them in the UI
 - [x] GL-16 Agent API: `GET /:iid` fetches the single item directly; require `projectId` or a configured default project
+- [x] GL-19 Request scheduler: token bucket per plan, priority lanes, `RateLimit-*` aware slowdown, 429 / `Retry-After` pause, 15 s timeout, status in sync bar (P1, effort M, SCALE stage 2)
+- [x] GL-20 Auto-fetch single-flight, server-side minimum interval (30 s), persisted interval setting (P1, effort S, SCALE stage 2/3)
+- [x] GL-21 Agent REST requires `projectId` (or a per-token default); remove the `projects[0]` and 901 fallback (P1, effort S, SCALE stage 3)
+- [x] GL-22 `forRecentProjects` and other fan-outs return `errors[]`; UI shows "n of m projects loaded" and the 15-project scope (P2, effort S, SCALE stage 3; depends on GL-15)
 
 ## Epic CACHE: local storage layer
 
-- [ ] CACHE-1 Replace sql.js with `bun:sqlite` (both targets now run Bun): real WAL mode, no full-DB export per write
+- [x] CACHE-1 Replace sql.js with `bun:sqlite` (both targets now run Bun): real WAL mode, no full-DB export per write
 - [x] CACHE-2 Enforce TTL in `get()`; stale-while-revalidate for the UI
-- [ ] CACHE-3 Bound the journal: rotate or truncate the `.wal` file and prune `wal_logs` (keep N rows / N days)
+- [x] CACHE-3 Bound the journal: rotate or truncate the `.wal` file and prune `wal_logs` (keep N rows / N days)
 - [x] CACHE-4 Auto-fetch refreshes the project-scoped keys the UI actually uses
 - [ ] CACHE-5 Serve the last cached data when GitLab is unreachable, flagged as stale (offline mode)
-- [ ] CACHE-6 Rename `labwi_*` leftovers (cache files, `labwi_theme` localStorage key)
+- [x] CACHE-6 Rename `labwi_*` leftovers (cache files, `labwi_theme` localStorage key)
+- [ ] CACHE-7 Incremental sync: `last_activity_after` change detection, `updated_after` watermarks, refresh only changed projects, hourly milestones and labels (P1, effort M, SCALE stage 2; depends on GL-2, GL-19, CACHE-1)
+- [x] CACHE-8 Cache retention: evict non-member and expired rows, cap memory, purge on profile removal (P2, effort S, SCALE stage 3; depends on CACHE-1)
+- [ ] CACHE-9 Conditional requests with `If-None-Match` (verify 304 support first) (P3, effort S, SCALE stage 2; depends on GL-19)
 
 ## Epic UI: honest UI
 
@@ -544,12 +609,13 @@ Follow-ups:
 ## Epic BUILD: build, quality, release
 
 - [x] BUILD-1 `git init`, `main` + `develop` branches, first commit of the imported baseline
-- [ ] BUILD-2 Vite `manualChunks`: split `react`/`react-dom`, `lucide-react`, and the heavy views (pipeline editor, dashboard)
+- [x] BUILD-2 Vite 8 Rolldown `codeSplitting`: split React and icons, load pipeline editor and dashboard on demand
 - [~] BUILD-3 `bun test` setup: unit tests for `yamlParser`, `cacheDb`, response normalisers; route tests against the demo client
-- [~] BUILD-4 CI pipeline: lint, test, build, docker build (`.gitlab-ci.yml` exists with docs jobs only)
-- [ ] BUILD-5 Container `HEALTHCHECK` on `/api/status` (needs a lightweight health route that does not call GitLab)
+- [~] BUILD-4 CI pipeline: app lint, test, build and CLI compile added (BUILD-8), alongside docs jobs; Docker image build remains open
+- [x] BUILD-5 Container `HEALTHCHECK` on lightweight `/healthz`; works over HTTP and built-in HTTPS without GitLab requests
 - [ ] BUILD-6 Split `gitlabClient.ts` (3.4k lines): demo dataset into `server/demo/`, one module per GitLab resource
 - [x] BUILD-7 Single source for the agent skill text: serve `/api/agent/skill.md` from `skills/.claude/lazylab-agent/SKILL.md` and have `AgentSkillModal` fetch it
+- [x] BUILD-9 Tests: `session.ts` apiGuard and throttle, agent REST routes, autofetch config validation, request scheduler (P1, effort M, SCALE stage 3; depends on GL-19, GL-21)
 
 ## Epic INBOX: my work across projects and hosts
 
@@ -559,6 +625,7 @@ Follow-ups:
 - [ ] INBOX-4 Aggregate across every vault profile (work GitLab + gitlab.com), not only the active one
 - [ ] INBOX-5 "New since you last looked" markers, stored locally per item (`updated_at` vs last-seen)
 - [ ] INBOX-6 Standup summary: my events since yesterday (`/users/:id/events`) as copyable markdown
+- [ ] INBOX-8 Inbox from one GraphQL query with REST fallback (P2, effort M, SCALE stage 2)
 
 ## Epic WATCH: notifications and background watching
 
@@ -568,6 +635,10 @@ Follow-ups:
 - [x] WATCH-4 Auto-watch rules: pipelines of my MRs, MRs where I am reviewer (new push → re-review), runner offline
 - [ ] WATCH-5 GitLab webhook receiver `POST /hooks/gitlab` with a secret token, replacing polling when GitLab can reach the host
 - [ ] WATCH-6 PWA manifest + service worker so the laptop and phone can install lazylab and receive Web Push
+- [ ] WATCH-11 Scheduled-pipeline health: inactive schedules, failed last run, missed `next_run_at`; weekly scan into digest (P1, effort S, SCALE stage 1; depends on FLEET-5)
+- [ ] WATCH-12 Daily fleet digest: red default branches (new since yesterday first), with failure excerpt (P1, effort M, SCALE stage 1; depends on FLEET-5, TRIAGE-1)
+- [ ] WATCH-13 Per-channel push rate limit and digest mode (P2, effort S, SCALE stage 3; depends on WATCH-7)
+- [x] WATCH-14 Watch removal only on a confirmed API 404 (two checks); adaptive poll interval by pipeline age (P2, effort S, SCALE stage 2/3; depends on WATCH-10)
 
 ## Epic TRIAGE: CI failure triage
 
@@ -587,6 +658,7 @@ Follow-ups:
 - [ ] REPO-4 Start work on an issue: create `<iid>-<slug>` branch on GitLab, optional local fetch + checkout
 - [ ] REPO-5 Editor deep links (`vscode://file/…`, `cursor://`, JetBrains) for file paths in MR changes and job traces
 - [ ] REPO-6 Stale branch cleanup: merged branches on the remote and locally
+- [ ] REPO-7 `lazy sync`: fetch all local clones, fast-forward clean branches, report unpushed commits and dirty trees (P2, effort M, SCALE stage 1; depends on REPO-1)
 
 ## Epic CLI: `lazy` companion for the laptop and terminal
 
@@ -602,14 +674,16 @@ Follow-ups:
 - [ ] ENV-3 Secret fan-out and rotation: one vault secret pushed to N projects; updating it re-pushes every recorded target
 - [x] ENV-4 Token expiry tracking: PAT (`GET /personal_access_tokens/self`), project/group/deploy tokens; warn N days ahead via WATCH; rotate the PAT (`POST /personal_access_tokens/self/rotate`) and update the vault profile
 - [ ] ENV-5 Drift check: vault CI secrets vs variables present in GitLab (presence and flags, not values)
+- [ ] ENV-12 Credential expiry across all projects: project, group and deploy tokens, deploy keys, SSH keys, runner auth tokens; scan spread over 24 h (P1, effort S, SCALE stage 1; depends on FLEET-5, GL-19)
 
 ## Epic AGENT: agents as first-class clients
 
 - [x] AGENT-1 MCP server (streamable HTTP at `/mcp`, bearer auth) exposing inbox, work items, MRs, pipelines, failure excerpt and run-pipeline as tools
-- [~] AGENT-2 Token scopes: read-only / write, per-project allowlist (supersedes SEC-6). Started: `secrets` flag gates `get_env` (ENV-1c)
+- [x] AGENT-2 Token scopes: read-only / write, per-project allowlist, expiry, default project and last used (supersedes SEC-6); separate `secrets` flag gates `get_env`
 - [ ] AGENT-3 Approval queue: destructive or outward agent actions (merge, delete, push variable) wait for confirmation in the UI or a push notification
 - [ ] AGENT-4 Activity log per agent token
 - [~] AGENT-5 Generate the skill and MCP config snippet for Claude Code / Codex from the Vault → Agent tokens screen
+- [x] AGENT-16 Per-token daily cap on `run_pipeline` and `retry_job` (P2, effort S, SCALE stage 3; depends on AGENT-2)
 
 ## Epic REL: releases from Conventional Commits
 
@@ -617,6 +691,7 @@ Follow-ups:
 - [x] REL-2 Changelog grouped by type, editable before publishing
 - [ ] REL-3 One action: tag + release + notes on the chosen ref
 - [ ] REL-4 Release checks: pipeline green on the ref, milestone closed, no open MRs targeting the milestone
+- [ ] REL-5 "What needs releasing": repos with commits since their last tag and the suggested bump (P3, effort S, SCALE stage 1; depends on FLEET-5, REL-1)
 
 ## Epic FLEET: operations across many projects
 
@@ -624,6 +699,14 @@ Follow-ups:
 - [ ] FLEET-2 Settings baseline: check projects against a profile (protected default branch, approvals, squash, CI badge) with fix actions
 - [ ] FLEET-3 Project bootstrap: create a project with CI template, badges, variables and branch protection in one step
 - [ ] FLEET-4 Dependency MRs (Renovate/Dependabot) grouped across projects; bulk approve + merge when the pipeline is green
+- [ ] FLEET-5 Fleet registry: every member project cached with activity, visibility, archived, default branch, latest default-branch pipeline, size; keyset sweep daily (P1, effort M, SCALE stage 1/2; depends on GL-2, CACHE-7)
+- [ ] FLEET-6 Dead-repo archive: candidates by inactivity, no open MRs or schedules; bulk archive with undo (P2, effort M, SCALE stage 1; depends on FLEET-5, SAFE-1)
+- [ ] FLEET-7 Settings baseline v2: merge method, pipelines-must-succeed, delete source branch, auto-cancel, job token allowlist, artifact expiry, cleanup policy, shared runners, visibility, LICENSE/README (P2, effort M, SCALE stage 1; depends on FLEET-2, SAFE-1)
+- [ ] FLEET-8 Mirror and webhook health: push mirror errors, pull mirror lag, auto-disabled webhooks (P2, effort S, SCALE stage 1; depends on FLEET-5)
+- [ ] FLEET-9 CI include and image drift scan (read-only) across repos (P3, effort M, SCALE stage 1; depends on FLEET-5)
+- [ ] FLEET-10 Batch change campaigns: run a script or file template in N repos (local clones or commits API), open MRs, follow and merge as one batch (P2, effort L, SCALE stage 1; depends on SAFE-1, REPO-1, FLEET-4)
+- [ ] FLEET-11 Stale MR and issue sweep for items not owned by me (close with comment or nudge) (P3, effort S, SCALE stage 1; depends on SAFE-1)
+- [ ] FLEET-12 Access review: elevated members and invites without expiry across projects (P3, effort S, SCALE stage 1; depends on FLEET-5)
 
 ## Epic DEPLOY: environments
 
@@ -651,3 +734,88 @@ Follow-ups:
 ## Epic DEMO: demo mode decision
 
 - [ ] DEMO-1 Decide whether demo mode stays (onboarding / offline UI dev) or goes. If it stays, isolate it behind a `DemoGitLabClient` that implements the same interface, so live code paths stop branching on `isDemoMode`
+
+## Epic SAFE: safeguards for bulk and fleet writes
+
+Source: SCALE audit 2026-10-24 (`devtracker-audit-scale.md`).
+
+- [ ] SAFE-1 Bulk-action engine: plan, dry-run diff, confirm by count, budgeted execution, before/after journal, undo, stop on error threshold (P1, effort M, SCALE stage 3; depends on GL-19, CACHE-3)
+
+## Epic BACKUP: local repository backups
+
+Source: SCALE audit 2026-10-24 (`devtracker-audit-scale.md`).
+
+- [ ] BACKUP-1 Local mirror backups of every repo on a schedule, incremental, with size caps and a restore guide (P2, effort M, SCALE stage 1; depends on FLEET-5)
+
+## Epic QUOTA: storage and compute usage
+
+Source: SCALE audit 2026-10-24 (`devtracker-audit-scale.md`).
+
+- [ ] QUOTA-1 Storage and compute usage per project with trends; bulk artifact cleanup and `expire_in` advice (P3, effort M, SCALE stage 1; depends on FLEET-5, SAFE-1)
+
+## Epic NOTES: personal notes and tasks outside GitLab
+
+Source: BACKLOG intake 2026-10-23. Replaces local `notes.md` files: notes and tasks that live in lazylab, not in a project, and can later be promoted to a GitLab work item. Stored encrypted in the vault next to agent handoffs; GitLab stays the source of truth once a note is migrated.
+
+- [x] NOTES-1 Storage model in the vault: note or task, title, markdown body, status (`open`, `done`, `migrated`), tags, optional project link, timestamps; validated at the storage boundary with size and count limits; profile-independent
+- [x] NOTES-2 REST routes under `/api/notes`: list (filter by kind, status, tag, text), get, create, update, delete; session-guarded like the vault routes
+- [x] NOTES-3 Comments on a note: append, edit, delete; a running log of what was tried
+- [x] NOTES-4 Notes view in the UI: list with filters, markdown editor with preview (reuse `MarkdownEditor`), task checkbox, comments thread
+- [x] NOTES-5 Migrate to a work item: create the issue in a chosen project from title + body (+ comments as an appendix), then either mark the note `migrated` with the project and issue link, or delete it
+- [x] NOTES-6 Export all notes as a `.zip` of markdown files (YAML front matter: kind, status, tags, project, migrated link; comments appended); no new dependency
+- [ ] NOTES-7 File attachments: encrypted with the DEK, stored beside the vault, per-file and total size caps; included in the export
+- [x] NOTES-8 CLI `lazy note add|list|show|done` and MCP tools (`list_notes`, `add_note`) so agents can read and jot notes
+- [x] NOTES-9 Tests (validation, persistence across lock/unlock, migrate, export) and docs (guide page, feature status, changelog)
+- [ ] NOTES-10 Decide whether notes made with no GitLab profile stay in a separate demo list or share one list (ties in with DEMO-1)
+- [ ] NOTES-11 MCP `add_note_comment` so agents can log attempts on an existing note
+- [ ] NOTES-12 Bulk export or migrate filtered by tag
+- [ ] NOTES-13 Hide the project selector bar on the Notes view (it does not filter notes)
+
+Done 2026-10-24: `server/notes.ts` (model, validation, limits, exporter), `server/notesRouter.ts` (`/api/notes` behind `apiGuard`), `server/zip.ts` (store-only ZIP with CRC-32, no new dependency), vault `notes` payload with rollback on failed writes and migration of older vaults, `src/components/NotesView.tsx` (Plan → Notes), MCP `list_notes`/`get_note`/`add_note`/`set_note_status` (30 tools), `lazy note add|list|show|done|reopen`, guide `docs/src/guide/notes.md`. Notes are profile-independent and kept in `live` and `demo` namespaces. Migrate locks per note (409 on double submit) and reports the issue URL if the vault write fails after creation.
+
+Verified: lint; 155 tests (22 new in `tests/notes.test.ts`); SPA and docs builds; production-server smoke run on an isolated data dir (auth, CRUD, comments, export checked with `unzip`, no plaintext in `vault.json`, migrate, persistence across restart); headless Chromium walk-through of the view and migrate dialog.
+Not verified: migrate against live GitLab; python3/unzip presence in the CI image (those checks are optional in the test); Windows, mobile widths, light theme.
+NOTES-7 design: files at `LAZYLAB_DATA_DIR/notes-files/<uuid>.bin` sealed with the DEK (AES-256-GCM, AAD with note and file id), metadata on the note, raw-body upload route with 10 MB/file and 100 MB total caps, served as `attachment` with `nosniff`, included in the export, uploaded through project uploads on migrate.
+
+## Epic SCALE: automation audit for 300+ repositories
+
+Source: BACKLOG intake 2026-10-23. lazylab wraps GitLab rather than replacing it; this epic looks for the repetitive chores that hurt at 300+ repositories and that lazylab could automate, in three stages. Output: `devtracker-audit-scale.md`, whose accepted findings become tasks in the epics above.
+
+- [x] SCALE-1 Stage 1, usefulness to a solo developer: which daily and weekly GitLab chores across many repos are still manual; rank by time saved and fit with the "runs locally" test
+- [x] SCALE-2 Stage 2, performance and API budget: GitLab.com and self-managed rate limits, requests per view and per poll cycle at 300 projects, what the cache must hold, and where conditional requests, webhooks or GraphQL would cut calls
+- [x] SCALE-3 Stage 3, release readiness: missing tests, unsafe defaults and footgun safeguards (bulk actions, destructive agent actions, secret handling) that must land before a release
+- [x] SCALE-4 Fold accepted findings into the tracker as tasks with IDs and roadmap position (28 tasks added to GL, CACHE, INBOX, FLEET, WATCH, ENV, REPO, REL, AGENT, BUILD and the new SAFE, BACKUP, QUOTA epics)
+
+Raised by the audit to release blockers: SEC-1, SEC-5, SEC-6/AGENT-2 (read-only scope and expiry), CACHE-1, CACHE-3. Raised to P2: SEC-8, UI-4, WATCH-10 (superseded by GL-19 and WATCH-14).
+
+Proposed roadmap (not yet adopted; replaces the Roadmap in the product audit once accepted):
+
+1. **Release blockers:** GL-21, GL-20, GL-19, CACHE-1, CACHE-3, SEC-1, SEC-5, SEC-6/AGENT-2, BUILD-9
+2. **Scale foundation:** GL-2, CACHE-7, FLEET-5, INBOX-8, GL-22, CACHE-8, WATCH-14
+3. **Fleet visibility, read-only:** WATCH-12, WATCH-11, ENV-12, FLEET-8, REL-5, then WATCH-5
+4. **Safe fleet writes:** SAFE-1 and SEC-2 first, then FLEET-6, FLEET-7/FLEET-2, FLEET-1, FLEET-4, REPO-6, DEPLOY-3, REG-2, WATCH-13
+5. **Host-side automation:** BACKUP-1, REPO-1/2, REPO-7, FLEET-10, FLEET-9
+6. **Remaining epics:** NOTES, AGENT-3, QUOTA-1, FLEET-11/12, PAL, CLI-3
+
+## Parallel-work recovery, 2026-10-24
+
+Recovered Claude's four worktrees after its session limit, finished the feature queues, and combined them on `feature/recovered-review`. The original `feature/notes` checkout and `develop` remain unchanged; nothing was pushed. Task statuses in this checkout describe the combined review branch.
+
+| Lane | Preserved feature branch | Completed tasks | Latest feature/fix commit |
+|---|---|---|---|
+| API budget | `feature/api-budget` | GL-19, GL-20, GL-22, WATCH-10, WATCH-14 | `61014d8` |
+| Agent safety | `feature/agent-safety` | GL-21, AGENT-2/SEC-6, AGENT-7, ENV-11, AGENT-16 | `6086bb3` |
+| Security | `feature/security-hardening` | SEC-1, SEC-3, SEC-5, SEC-9, SEC-10 | `4465b23` |
+| Cache and build | `feature/cache-build` | CACHE-1, CACHE-3, CACHE-6, CACHE-8, BUILD-2, BUILD-5 | `8b23383` |
+
+BUILD-9 is also complete through the combined session, agent REST, auto-fetch validation and scheduler regression suites. Integration adds a backup/recovery test proving token scope, project restrictions, MCP tools and spent CI quota survive encrypted restore and process reload. Watch-manager tests now establish their own baseline because session tests can trigger background inbox auto-watches in the shared process.
+
+Review fixes: reject inherited request-budget names; preserve server retry deadlines longer than 15 minutes; reject queued requests after their deadline; prevent briefing fetches and derived context from crossing a token's project allowlist; count cached JSON in UTF-8 bytes.
+
+Verified: `bun run lint`; 321 tests across 27 files; SPA build without the 500 kB chunk warning; documentation build. Combined-branch Chromium checks cover lazy views, partial-list coverage/error details, recovery-key printing, encrypted restore and CSP blocking injected inline scripts. The combined Docker image builds and reaches healthy status over HTTP and built-in HTTPS; host CLI compilation passes. See `RECOVERY.md` for the review checkout and validation details.
+
+Not verified: live GitLab writes, hosted CI, Windows/native Linux/macOS execution, real notification delivery, Tailscale Serve. GL-2 pagination and optional SEC-12 Host allowlist remain open. Aggregate views explicitly disclose the first 50 member projects and recent-15 fan-out limit. The shared BugKB was offline with no launcher available; no external KB entry was written.
+
+## BACKLOG
+
+New free-form ideas go here; they are moved into an epic with task IDs when picked up.

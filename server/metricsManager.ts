@@ -1,3 +1,5 @@
+import { readRateLimitHeaders } from './requestScheduler.js';
+
 export interface ApiMetricBucket {
   timestamp: number;
   label: string; // e.g., "14:05"
@@ -122,32 +124,17 @@ class MetricsManager {
     const bucket = this.getCurrentBucket();
     bucket.apiHits++;
 
-    // Parse standard and GitLab rate limit headers if present
+    // Parse standard and GitLab rate limit headers if present. 0 is a real value (quota used up).
     if (headers) {
-      const limitH = headers.get('ratelimit-limit') || headers.get('x-ratelimit-limit');
-      const remainH = headers.get('ratelimit-remaining') || headers.get('x-ratelimit-remaining');
-      const resetH = headers.get('ratelimit-reset') || headers.get('x-ratelimit-reset');
-      const observedH = headers.get('ratelimit-observed') || headers.get('x-ratelimit-observed');
-
-      if (limitH) {
-        this.rateLimit.limit = parseInt(limitH, 10) || 2000;
-      }
-      if (remainH) {
-        this.rateLimit.remaining = parseInt(remainH, 10) || Math.max(0, this.rateLimit.limit - 1);
-      } else {
-        this.rateLimit.remaining = Math.max(0, this.rateLimit.remaining - 1);
-      }
-      if (observedH) {
-        this.rateLimit.observed = parseInt(observedH, 10);
-      } else {
-        this.rateLimit.observed = this.rateLimit.limit - this.rateLimit.remaining;
-      }
-      if (resetH) {
-        const val = parseInt(resetH, 10);
-        // Can be epoch in seconds or delta seconds
-        const resetTime = val > 1000000000 ? val * 1000 : Date.now() + val * 1000;
-        this.rateLimit.resetAt = resetTime;
-        this.rateLimit.resetSeconds = Math.max(0, Math.round((resetTime - Date.now()) / 1000));
+      const rl = readRateLimitHeaders(headers);
+      const observedH = headers.get('ratelimit-observed') ?? headers.get('x-ratelimit-observed');
+      if (rl.limit !== null && rl.limit > 0) this.rateLimit.limit = rl.limit;
+      this.rateLimit.remaining = rl.remaining !== null ? Math.max(0, rl.remaining) : Math.max(0, this.rateLimit.remaining - 1);
+      const observed = observedH !== null ? Number(observedH) : NaN;
+      this.rateLimit.observed = Number.isFinite(observed) ? observed : this.rateLimit.limit - this.rateLimit.remaining;
+      if (rl.resetAt !== null) {
+        this.rateLimit.resetAt = rl.resetAt;
+        this.rateLimit.resetSeconds = Math.max(0, Math.round((rl.resetAt - Date.now()) / 1000));
       }
     } else {
       // Fallback update

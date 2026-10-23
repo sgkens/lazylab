@@ -29,6 +29,7 @@ RUN bun install --frozen-lockfile --production
 
 COPY server.ts ./
 COPY server ./server
+COPY scripts/container-healthcheck.ts ./scripts/container-healthcheck.ts
 COPY skills ./skills
 COPY --from=build /app/dist ./dist
 
@@ -36,5 +37,8 @@ RUN mkdir -p /data && chown -R bun:bun /data
 USER bun
 VOLUME ["/data"]
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["bun", "scripts/container-healthcheck.ts"]
 
 CMD ["bun", "server.ts"]

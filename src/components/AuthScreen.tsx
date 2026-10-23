@@ -1,3 +1,4 @@
+import { RestoreBackup } from './VaultRecovery';
 import React, { useState } from 'react';
 import { AlertTriangle, KeyRound, Lock, LogIn, ShieldCheck } from 'lucide-react';
 import { sessionApi } from '../services/api';
@@ -22,6 +23,9 @@ const Field: React.FC<{ label: string; hint?: string; children: React.ReactNode 
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ state, onAuthenticated }) => {
   const isSetup = state.setupRequired;
+  const [recovery, setRecovery] = useState(false);
+  const [restore, setRestore] = useState(false);
+  const [recoveryKey, setRecoveryKey] = useState('');
   const [setupCode, setSetupCode] = useState('');
   const [username, setUsername] = useState(state.username || '');
   const [password, setPassword] = useState('');
@@ -37,13 +41,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ state, onAuthenticated }
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (isSetup && password !== confirm) {
+    if ((isSetup || recovery) && password !== confirm) {
       setError('Passwords do not match.');
       return;
     }
     setBusy(true);
     try {
-      if (isSetup) {
+      if (recovery) {
+        await sessionApi.recover(recoveryKey, password);
+      } else if (isSetup) {
         await sessionApi.setup({
           setupCode: setupCode.trim(),
           username: username.trim(),
@@ -97,7 +103,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ state, onAuthenticated }
           </Field>
         )}
 
-        <Field label="Username">
+        {!restore && !recovery && <Field label="Username">
           <input
             className={inputClass}
             value={username}
@@ -106,21 +112,24 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ state, onAuthenticated }
             autoFocus={!isSetup}
             required
           />
-        </Field>
+        </Field>}
 
-        <Field label="Password" hint={isSetup ? 'At least 12 characters. If you forget it, the vault cannot be recovered.' : undefined}>
+        {!restore && <Field label={recovery ? "New password" : "Password"} hint={isSetup || recovery ? 'At least 12 characters. Keep a recovery key in a safe place.' : undefined}>
           <input
             className={inputClass}
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            autoComplete={isSetup ? 'new-password' : 'current-password'}
-            minLength={isSetup ? 12 : undefined}
+            autoComplete={isSetup || recovery ? 'new-password' : 'current-password'}
+            minLength={isSetup || recovery ? 12 : undefined}
             required
           />
-        </Field>
+        </Field>}
 
-        {isSetup && (
+        {recovery && <Field label="Recovery key"><input className={inputClass} value={recoveryKey} onChange={e => setRecoveryKey(e.target.value)} autoComplete="off" required /></Field>}
+        {recovery && <Field label="Confirm new password"><input className={inputClass} type="password" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" required /></Field>}
+
+        {isSetup && !restore && (
           <>
             <Field label="Confirm password">
               <input className={inputClass} type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
@@ -143,14 +152,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ state, onAuthenticated }
 
         {error && <p className="text-xs text-red-400 bg-red-950/40 border border-red-900/60 rounded-lg p-2">{error}</p>}
 
-        <button
+        {restore && <RestoreBackup setupCode={setupCode} onRestored={onAuthenticated} />}
+        {!restore && <button
           type="submit"
           disabled={busy}
           className="w-full flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg py-2 transition-colors"
         >
           {isSetup ? <ShieldCheck className="w-4 h-4" /> : state.vaultUnlocked ? <LogIn className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-          {busy ? 'Working…' : isSetup ? 'Create account' : state.vaultUnlocked ? 'Sign in' : 'Unlock and sign in'}
-        </button>
+          {busy ? 'Working…' : recovery ? 'Reset password and sign in' : isSetup ? 'Create account' : state.vaultUnlocked ? 'Sign in' : 'Unlock and sign in'}
+        </button>}
+        <button type="button" className="text-xs text-orange-400" onClick={() => { setPassword(''); setConfirm(''); setError(null); if (isSetup) setRestore(!restore); else setRecovery(!recovery); }}>{isSetup ? restore ? 'Create a new vault instead' : 'Restore from a backup' : recovery ? 'Back to sign in' : 'Forgot password? Use the recovery key'}</button>
       </form>
     </div>
   );

@@ -41,11 +41,19 @@ Every button, menu and form in the UI was traced to a server route and a GitLab 
 | Feature | Status | Notes |
 |---|---|---|
 | Sign-in, vault, sessions, TLS | Verified locally | Tests plus end-to-end runs |
+| Agent token permissions and CI budgets | Verified locally | REST/MCP deny-path tests cover scopes, project and tool restrictions, expiry, shared persisted daily CI cap; live GitLab not yet checked |
+| Encrypted backup and recovery | Verified locally | Wrong keys, tamper, concurrent restore, rollback, session revocation and token/quota preservation; browser recovery and print checks |
+| Request scheduling and refresh | Verified locally | Single-flight sync, saved settings, lane budgets, 429 deadlines and queue expiry covered by tests |
+| Aggregate list coverage | Verified locally | Partial failures and recent-15 scope shown in the UI; first 50 member projects only until pagination lands |
+| Cache and container health | Verified locally | Bun SQLite WAL, bounded cache and journal, legacy migration and HTTP/HTTPS liveness probes |
 | Inbox | Demo only | User-scoped endpoints; not yet run against a live instance |
 | Watches, rules, push channels | Verified with a capture server | ntfy and webhook bodies checked; no real phone or Slack yet |
 | Failure excerpt | Unit tested on runner-shaped traces | Real runner section markers not yet checked |
 | Run pipeline, declared variables | Demo only | GraphQL `ciConfigVariables` availability varies by GitLab version |
 | MCP server | Verified with the official MCP client | Claude Code and Codex end to end not yet run |
+| Task briefings and persistent handoffs | Verified locally | Demo MCP/CLI runs, fake GitLab reads, encrypted restart persistence and profile isolation; not yet checked against live GitLab |
+| BugKB integration | Verified with real BugKB hooks in disposable storage | Authenticated MCP/CLI checks for search, explicit writes, duplicates, evidence, trust and offline fallback; GitLab attribution tested with a fake GitLab; shared deployment not yet checked |
+| Notes and tasks | Verified locally | Encrypted persistence across lock and restart, demo/live separation, migrate (both modes) against demo data and a fake GitLab, ZIP export checked with an independent reader, `unzip -t` and Python `zipfile`; not yet migrated against a live instance |
 | Work items, MRs, milestones, labels | Wired | List calls return the first 50 per project |
 | CI editor, lint | Wired | GitLab lint on request; local parser for the graph |
 | Variables, badges, Pages | Wired | Masked values are read one at a time on Reveal; Pages needs GitLab 16.8+ |

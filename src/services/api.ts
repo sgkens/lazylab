@@ -1,5 +1,6 @@
 import {
   AppStatus,
+  AggregateResponse,
   GitLabLabel,
   GitLabMergeRequest,
   GitLabPipeline,
@@ -26,11 +27,13 @@ import {
   GitLabVariable,
   GitLabBadge,
   GitLabPagesInfo,
-  MetricsSummary
+  MetricsSummary,
+  RequestBudget
 } from '../types/gitlab';
 import { Inbox } from '../types/inbox';
+import { Note, NoteFilter, NoteInput, NoteMigrateOptions, NoteNamespace } from '../types/notes';
 import { NotifyChannelInfo, NotifyChannelInput, NotifyRules, NotifyState, WatchKind, WatchView } from '../types/notify';
-import { DeviceSession, SessionState, TokenOverview, VaultEntryKind, VaultSummary } from '../types/vault';
+import { AgentTokenSettings, DeviceSession, SessionState, TokenOverview, VaultEntryKind, VaultSummary } from '../types/vault';
 
 const post = (body?: unknown): RequestInit => ({ method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 
@@ -52,11 +55,21 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     // The body stays reachable for responses that carry data on failure (token rotation).
     throw Object.assign(new Error(data.error || `HTTP error ${res.status}`), { data });
   }
+  const aggregateKind = endpoint.split('?')[0].slice(1);
+  if (['work_items', 'merge_requests', 'pipelines', 'milestones', 'labels', 'packages'].includes(aggregateKind) && (!options?.method || options.method === 'GET')) {
+    window.dispatchEvent(new CustomEvent('lazylab:aggregate', { detail: { kind: aggregateKind, coverage: data.coverage, errors: data.errors || [] } }));
+  }
   return data;
 }
 
 export const sessionApi = {
   state: () => request<SessionState>('/session/state'),
+  recoveryStatus: () => request<{ configured: boolean; createdAt: string | null }>('/session/recovery'),
+  createRecoveryKey: (currentPassword: string) => request<{ recoveryKey: string }>('/session/recovery', post({ currentPassword })),
+  removeRecoveryKey: (currentPassword: string) => request('/session/recovery/remove', post({ currentPassword })),
+  recover: (recoveryKey: string, newPassword: string) => request('/session/recover', post({ recoveryKey, newPassword })),
+  backup: (currentPassword: string) => request<{ backup: unknown }>('/session/backup', post({ currentPassword })),
+  restore: (payload: { backup: unknown; credential: { password?: string; recoveryKey?: string; newPassword?: string }; currentPassword?: string; setupCode?: string; replaceNewer?: boolean }) => request('/session/restore', post(payload)),
   setup: (payload: { setupCode: string; username: string; password: string; gitlabHost?: string; gitlabToken?: string }) =>
     request<{ success: boolean }>('/session/setup', post(payload)),
   login: (username: string, password: string) => request<{ success: boolean }>('/session/login', post({ username, password })),
@@ -64,7 +77,9 @@ export const sessionApi = {
   lock: () => request<{ success: boolean }>('/session/lock', post()),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ success: boolean }>('/session/password', post({ currentPassword, newPassword })),
-  devices: () => request<{ success: boolean; devices: DeviceSession[] }>('/session/devices')
+  devices: () => request<{ success: boolean; devices: DeviceSession[] }>('/session/devices'),
+  revokeDevice: (id: string) =>
+    request<{ success: boolean; self: boolean }>(`/session/devices/${encodeURIComponent(id)}`, { method: 'DELETE' })
 };
 
 export const vaultApi = {
@@ -87,8 +102,10 @@ export const vaultApi = {
     payload: { scope_type: 'project' | 'group'; scope_id: number; key: string; environment_scope?: string; masked?: boolean; protected?: boolean }
   ) => request<VaultSummary>(`/vault/entries/${id}/push`, post(payload)),
 
-  createAgentToken: (name: string, secrets = false) =>
-    request<{ success: boolean; token: string }>('/vault/agent-tokens', post({ name, secrets })),
+  createAgentToken: (name: string, settings: AgentTokenSettings) =>
+    request<{ success: boolean; token: string }>('/vault/agent-tokens', post({ name, ...settings })),
+  updateAgentToken: (id: string, settings: AgentTokenSettings) =>
+    request<{ success: boolean }>(`/vault/agent-tokens/${id}`, { method: 'PATCH', body: JSON.stringify(settings) }),
   deleteAgentToken: (id: string) => request<{ success: boolean }>(`/vault/agent-tokens/${id}`, { method: 'DELETE' }),
 
   tokenExpiry: (force = false) => request<{ success: boolean } & TokenOverview>(`/tokens/expiry${force ? '?force=true' : ''}`),
@@ -111,6 +128,18 @@ export const api = {
       body: JSON.stringify({ intervalSec })
     }),
 
+  updateWatchPoll: (intervalSec: number) =>
+    request<{ success: boolean; watchPollSec: number }>('/config/watch-poll', {
+      method: 'POST',
+      body: JSON.stringify({ intervalSec })
+    }),
+
+  updateRequestBudget: (budget: RequestBudget) =>
+    request<{ success: boolean; budget: RequestBudget }>('/config/request-budget', {
+      method: 'POST',
+      body: JSON.stringify(budget)
+    }),
+
   triggerSync: () => request<{ success: boolean; lastSyncTime: number; walStats: any }>('/sync/refresh', { method: 'POST' }),
 
   getProjects: (force = false) =>
@@ -122,7 +151,7 @@ export const api = {
     if (projectId) params.set('projectId', String(projectId));
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; milestones: GitLabMilestone[] }>(`/milestones${qs}`);
+    return request<AggregateResponse & { success: boolean; milestones: GitLabMilestone[] }>(`/milestones${qs}`);
   },
 
   createMilestone: (payload: { projectId: number; title: string; description?: string; due_date?: string; start_date?: string }) =>
@@ -138,7 +167,7 @@ export const api = {
     if (state !== 'all') params.set('state', state);
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; workItems: GitLabWorkItem[] }>(`/work_items${qs}`);
+    return request<AggregateResponse & { success: boolean; workItems: GitLabWorkItem[] }>(`/work_items${qs}`);
   },
 
   createWorkItem: (payload: {
@@ -209,7 +238,7 @@ export const api = {
     if (state !== 'all') params.set('state', state);
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; mergeRequests: GitLabMergeRequest[] }>(`/merge_requests${qs}`);
+    return request<AggregateResponse & { success: boolean; mergeRequests: GitLabMergeRequest[] }>(`/merge_requests${qs}`);
   },
 
   updateMergeRequest: (iid: number, payload: {
@@ -254,7 +283,7 @@ export const api = {
     if (projectId) params.set('projectId', String(projectId));
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; pipelines: GitLabPipeline[] }>(`/pipelines${qs}`);
+    return request<AggregateResponse & { success: boolean; pipelines: GitLabPipeline[] }>(`/pipelines${qs}`);
   },
 
   getPipelineJobs: (projectId: number, pipelineId: number) =>
@@ -362,7 +391,7 @@ export const api = {
     if (projectId) params.set('projectId', String(projectId));
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; labels: GitLabLabel[] }>(`/labels${qs}`);
+    return request<AggregateResponse & { success: boolean; labels: GitLabLabel[] }>(`/labels${qs}`);
   },
 
   createLabel: (projectId: number, name: string, color: string, description?: string) =>
@@ -386,7 +415,7 @@ export const api = {
     if (packageType && packageType !== 'all') params.set('packageType', packageType);
     if (force) params.set('force', 'true');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; packages: GitLabPackage[] }>(`/packages${qs}`);
+    return request<AggregateResponse & { success: boolean; packages: GitLabPackage[] }>(`/packages${qs}`);
   },
 
   getPackageDetails: (projectId: number, packageId: number) =>
@@ -612,4 +641,43 @@ export const notifyApi = {
   testChannel: (id: string) => request<{ success: boolean }>(`/notify/channels/${id}/test`, post()),
   markRead: () => request<{ success: boolean }>('/notify/notifications/read', post()),
   clearNotifications: () => request<{ success: boolean }>('/notify/notifications', { method: 'DELETE' })
+};
+
+type NoteResponse = { success: boolean; note: Note };
+
+export const notesApi = {
+  list: (filter: NoteFilter = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filter)) if (value) params.set(key, value);
+    const qs = params.toString();
+    return request<{ success: boolean; namespace: NoteNamespace; tags: string[]; notes: Note[] }>(`/notes${qs ? `?${qs}` : ''}`);
+  },
+  create: (input: NoteInput) => request<NoteResponse>('/notes', post(input)),
+  update: (id: string, patch: NoteInput) =>
+    request<NoteResponse>(`/notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  remove: (id: string) => request<{ success: boolean }>(`/notes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  addComment: (id: string, body: string) => request<NoteResponse>(`/notes/${encodeURIComponent(id)}/comments`, post({ body })),
+  updateComment: (id: string, commentId: string, body: string) =>
+    request<NoteResponse>(`/notes/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ body })
+    }),
+  deleteComment: (id: string, commentId: string) =>
+    request<NoteResponse>(`/notes/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`, { method: 'DELETE' }),
+  migrate: (id: string, options: NoteMigrateOptions) =>
+    request<{ success: boolean; work_item: { project_id: number; iid: number; web_url: string }; note: Note | null; deleted: boolean }>(
+      `/notes/${encodeURIComponent(id)}/migrate`,
+      post(options)
+    ),
+  /** Binary response, so it bypasses request(): returns the ZIP and the server's file name. */
+  exportZip: async (): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch('/api/notes/export');
+    if (res.status === 401) window.dispatchEvent(new CustomEvent('lazylab:unauthorized'));
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP error ${res.status}`);
+    }
+    const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+    return { blob: await res.blob(), filename: match?.[1] ?? 'lazylab-notes.zip' };
+  }
 };

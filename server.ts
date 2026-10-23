@@ -8,6 +8,7 @@ import { announceSetupIfNeeded, apiGuard, securityHeaders, sessionRouter } from 
 import { loadTlsMaterial, tlsEnabled } from './server/tls.js';
 import { vaultRouter } from './server/vaultRouter.js';
 import { notifyRouter } from './server/notifyRouter.js';
+import { createNotesRouter } from './server/notesRouter.js';
 import { createMcpRouter } from './server/mcp.js';
 import { getGitlabClient } from './server/apiRouter.js';
 
@@ -36,13 +37,21 @@ async function startServer() {
   app.disable('x-powered-by');
   app.set('trust proxy', trustProxy);
   app.use(securityHeaders);
+  // Restores carry an encrypted JSON file inside a JSON request.
+  app.use('/api/session/restore', express.json({ limit: '12mb' }));
   // Project avatars travel as base64 JSON (GitLab caps them at 200 KB).
   app.use(express.json({ limit: '1mb' }));
+
+  // Liveness only: available before setup and while locked; never contacts GitLab.
+  app.get('/healthz', (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({ status: 'ok' });
+  });
 
   app.use('/api/session', sessionRouter);
   app.use('/api', apiGuard);
   app.use('/api/vault', vaultRouter);
   app.use('/api/notify', notifyRouter);
+  app.use('/api/notes', createNotesRouter(getGitlabClient));
   app.use('/api', apiRouter);
   app.use('/mcp', createMcpRouter(getGitlabClient));
 

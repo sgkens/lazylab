@@ -13,14 +13,21 @@
  */
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { GitLabClient, GitLabRunner, JobFailure } from './gitlabClient.js';
+import { GitLabApiError, GitLabClient, GitLabRunner, JobFailure } from './gitlabClient.js';
 import { summarizeFailure } from './triage.js';
 import { Inbox } from './inbox.js';
 import { channelAccepts, deliver, LazyNotification, NotifyLevel } from './notify.js';
 import { vault, WatchRecord } from './vault.js';
+import { runInLane } from './requestScheduler.js';
+import { getSettings } from './settings.js';
 
-const POLL_INTERVAL_MS = 15_000;
+export const MIN_WATCH_POLL_SEC = 10;
+export const MAX_WATCH_POLL_SEC = 300;
 const HISTORY_LIMIT = 100;
+/** A watch is removed only after this many consecutive 404 answers from the GitLab API (WATCH-14). */
+export const NOT_FOUND_CHECKS = 2;
+/** Slowest interval the age backoff reaches, unless the base interval is slower still. */
+const MAX_ADAPTIVE_MS = 10 * 60_000;
 
 const TERMINAL = new Set(['success', 'failed', 'canceled', 'skipped', 'manual']);
 const ACTIVE_PIPELINE = new Set(['created', 'waiting_for_resource', 'preparing', 'pending', 'running', 'scheduled']);
@@ -29,6 +36,8 @@ const ACTIVE_PIPELINE = new Set(['created', 'waiting_for_resource', 'preparing',
 
 export interface Snapshot {
   status: string;
+  /** When the pipeline was created or the job started (ISO), for the age-based poll interval. */
+  startedAt?: string;
   /** Merge requests only. */
   pipelineId?: number;
   pipelineStatus?: string;
@@ -92,12 +101,46 @@ export function evaluateWatch(
   return { events, done: false };
 }
 
+/** Validates a watch poll interval from a request body: whole seconds within the allowed range. */
+export function parseWatchPollInterval(value: unknown): number {
+  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < MIN_WATCH_POLL_SEC || n > MAX_WATCH_POLL_SEC) {
+    throw new Error(`intervalSec must be a whole number from ${MIN_WATCH_POLL_SEC} to ${MAX_WATCH_POLL_SEC}`);
+  }
+  return n;
+}
+
+/**
+ * Poll interval for one watch (WATCH-14). A pipeline that started minutes ago is checked at the base
+ * interval; older ones are checked less often, since a 2-hour pipeline rarely finishes within 15 s of
+ * the last check. `ageMs` is the pipeline or job age, or for merge requests the time since the last
+ * observed change.
+ */
+export function adaptivePollMs(baseMs: number, ageMs: number): number {
+  const factor = ageMs < 10 * 60_000 ? 1 : ageMs < 30 * 60_000 ? 2 : ageMs < 2 * 3_600_000 ? 4 : 8;
+  return Math.min(baseMs * factor, Math.max(baseMs, MAX_ADAPTIVE_MS));
+}
+
+/** True only for a 404 answered by the GitLab API, not for any message that mentions "not found". */
+export const isConfirmedNotFound = (err: unknown) => err instanceof GitLabApiError && err.status === 404;
+
 // ---- manager ----------------------------------------------------------------
 
 export interface WatchView extends WatchRecord {
   status?: string;
   checkedAt?: number;
+  nextCheckAt?: number;
   error?: string;
+}
+
+interface WatchState extends Snapshot {
+  checkedAt: number;
+  error?: string;
+  /** Consecutive 404 answers; the watch is removed at NOT_FOUND_CHECKS. */
+  missingChecks?: number;
+  nextCheckAt?: number;
+  /** Last time the snapshot changed; the age reference for merge request watches. */
+  changedAt?: number;
 }
 
 export interface ChannelHealth {
@@ -109,7 +152,8 @@ class WatchManager extends EventEmitter {
   private getClient: (() => GitLabClient) | null = null;
   private timer: NodeJS.Timeout | null = null;
   private polling = false;
-  private snapshots = new Map<string, Snapshot & { checkedAt: number; error?: string }>();
+  private snapshots = new Map<string, WatchState>();
+  private pollMs = 15_000;
   private history: LazyNotification[] = [];
   private channelHealth = new Map<string, ChannelHealth>();
 
@@ -124,8 +168,35 @@ class WatchManager extends EventEmitter {
 
   start() {
     this.stop();
-    this.timer = setInterval(() => void this.pollAll(), POLL_INTERVAL_MS);
-    void this.pollAll();
+    try {
+      this.pollMs = parseWatchPollInterval(getSettings().watchPollSec) * 1000;
+    } catch {
+      this.pollMs = 15_000;
+    }
+    // Watch polls run on the watch lane of the request scheduler: below user clicks, above background sync.
+    // The timer ticks at the base interval; each watch is checked when its own adaptive interval is due.
+    const poll = () => void runInLane('watch', () => this.pollAll());
+    this.timer = setInterval(poll, this.pollMs);
+    poll();
+  }
+
+  /** Changes the base poll interval; restarts the timer when polling is running. Keeps watch state. */
+  setPollInterval(sec: number) {
+    this.pollMs = parseWatchPollInterval(sec) * 1000;
+    // Recompute due times so a faster setting takes effect for existing watches too.
+    const now = Date.now();
+    for (const w of vault.isUnlocked() ? this.activeWatches() : []) {
+      const state = this.snapshots.get(w.id);
+      if (state) state.nextCheckAt = Math.max(now, state.checkedAt + (state.error ? this.pollMs : adaptivePollMs(this.pollMs, this.ageMs(w, state, now))));
+    }
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = setInterval(() => void runInLane('watch', () => this.pollAll()), this.pollMs);
+    }
+  }
+
+  getPollIntervalSec() {
+    return this.pollMs / 1000;
   }
 
   /** Stops polling and forgets in-memory state (called on vault lock and profile switch). */
@@ -157,7 +228,7 @@ class WatchManager extends EventEmitter {
     if (!vault.isUnlocked()) return [];
     return this.activeWatches().map((w) => {
       const snap = this.snapshots.get(w.id);
-      return { ...w, status: snap?.status, checkedAt: snap?.checkedAt, error: snap?.error };
+      return { ...w, status: snap?.status, checkedAt: snap?.checkedAt, nextCheckAt: snap?.nextCheckAt, error: snap?.error };
     });
   }
 
@@ -211,13 +282,23 @@ class WatchManager extends EventEmitter {
 
   private async snapshot(w: WatchRecord): Promise<Snapshot> {
     const client = this.client();
-    if (w.kind === 'pipeline') return { status: (await client.getPipeline(w.project_id, w.target_id)).status };
+    if (w.kind === 'pipeline') {
+      const p = await client.getPipeline(w.project_id, w.target_id);
+      return { status: p.status, startedAt: p.created_at };
+    }
     if (w.kind === 'job') {
       const j = await client.getJob(w.project_id, w.target_id);
-      return { status: j.status, failureReason: j.status === 'failed' ? j.failure_reason : undefined };
+      return { status: j.status, failureReason: j.status === 'failed' ? j.failure_reason : undefined, startedAt: j.started_at };
     }
     const mr = await client.getMergeRequest(w.project_id, w.target_id);
     return { status: mr.state, pipelineId: mr.pipeline?.id, pipelineStatus: mr.pipeline?.status, conflicts: mr.has_conflicts };
+  }
+
+  /** Age reference for the adaptive interval: pipeline/job start, else the last change, else the watch creation. */
+  private ageMs(w: WatchRecord, state: { startedAt?: string; changedAt?: number }, now: number) {
+    const started = state.startedAt ? Date.parse(state.startedAt) : NaN;
+    const ref = Number.isFinite(started) ? started : state.changedAt ?? Date.parse(w.createdAt);
+    return Number.isFinite(ref) ? Math.max(0, now - ref) : 0;
   }
 
   private async pollOne(w: WatchRecord) {
@@ -226,16 +307,34 @@ class WatchManager extends EventEmitter {
     try {
       cur = await this.snapshot(w);
     } catch (err: any) {
-      if (/\b404\b|not found/i.test(err.message)) {
-        this.removeWatch(w.id);
-        this.notify({ level: 'info', title: 'Watch removed', body: `${w.label} no longer exists`, source: 'watch' });
+      const now = Date.now();
+      const base = prev ?? { status: 'unknown' };
+      if (isConfirmedNotFound(err)) {
+        // Lost access, a moved project or a proxy page must not delete a watch: only GitLab's own 404, twice in a row.
+        const missingChecks = (prev?.missingChecks ?? 0) + 1;
+        if (missingChecks >= NOT_FOUND_CHECKS) {
+          this.removeWatch(w.id);
+          this.notify({ level: 'info', title: 'Watch removed', body: `${w.label} no longer exists (GitLab answered 404 twice)`, source: 'watch' });
+          return;
+        }
+        this.snapshots.set(w.id, {
+          ...base,
+          checkedAt: now,
+          error: `GitLab answered 404; the watch is removed if the next check says the same`,
+          missingChecks,
+          nextCheckAt: now + this.pollMs
+        });
         return;
       }
-      this.snapshots.set(w.id, { ...(prev ?? { status: 'unknown' }), checkedAt: Date.now(), error: err.message });
+      this.snapshots.set(w.id, { ...base, checkedAt: now, error: err.message, missingChecks: 0, nextCheckAt: now + this.pollMs });
       return;
     }
     const { events, done } = evaluateWatch(w, prev, cur);
-    this.snapshots.set(w.id, { ...cur, checkedAt: Date.now() });
+    const now = Date.now();
+    const changed = !prev || prev.status !== cur.status || prev.pipelineId !== cur.pipelineId || prev.pipelineStatus !== cur.pipelineStatus || prev.conflicts !== cur.conflicts;
+    const changedAt = changed ? now : prev?.changedAt ?? now;
+    const nextCheckAt = now + adaptivePollMs(this.pollMs, this.ageMs(w, { startedAt: cur.startedAt, changedAt: w.kind === 'merge_request' ? changedAt : undefined }, now));
+    this.snapshots.set(w.id, { ...cur, checkedAt: now, changedAt, nextCheckAt, missingChecks: 0 });
     for (const e of events) {
       const triage = e.level === 'failure' ? await this.failureDetail(w, cur) : null;
       this.notify({
@@ -278,7 +377,12 @@ class WatchManager extends EventEmitter {
     if (this.polling || !vault.isUnlocked() || !this.getClient) return;
     this.polling = true;
     try {
-      for (const w of this.activeWatches()) await this.pollOne(w);
+      // A watch is due when its adaptive interval has passed; 1 s slack absorbs timer drift.
+      const now = Date.now();
+      for (const w of this.activeWatches()) {
+        const next = this.snapshots.get(w.id)?.nextCheckAt;
+        if (next === undefined || next <= now + 1000) await this.pollOne(w);
+      }
     } finally {
       this.polling = false;
     }

@@ -238,6 +238,27 @@ export interface MetricsSummary {
   }[];
 }
 
+export type BudgetPlan = 'free' | 'premium' | 'ultimate' | 'unlimited' | 'custom';
+
+export interface RequestBudget {
+  plan: BudgetPlan;
+  perHour: number;
+  perMinute: number;
+}
+
+export interface SchedulerStatus {
+  budget: RequestBudget;
+  tokens: { minute: number | null; hour: number | null };
+  queued: { interactive: number; watch: number; background: number };
+  inFlight: number;
+  pausedUntil: number | null;
+  slowedLanes: string[];
+  slowedUntil: number | null;
+  rateLimit: { limit: number | null; remaining: number | null; resetAt: number | null; observedAt: number | null };
+  stats: { sent: number; throttled429: number; timeouts: number; rejected: number };
+  message: string | null;
+}
+
 export interface AppStatus {
   host: string;
   hasToken: boolean;
@@ -245,6 +266,18 @@ export interface AppStatus {
   isDemo: boolean;
   user: GitLabUser | null;
   autoFetchIntervalSec: number;
+  watchPollSec?: number;
+  autoFetch?: {
+    intervalSec: number;
+    running: boolean;
+    lastStartedAt: number | null;
+    lastFinishedAt: number | null;
+    lastDurationMs: number | null;
+    skippedCycles: number;
+    nextRunAt: number | null;
+  };
+  /** GitLab request scheduler (GL-19). */
+  scheduler?: SchedulerStatus;
   lastSyncTime: number;
   walStats: WalStats;
   metrics?: MetricsSummary;
@@ -489,3 +522,9 @@ export interface GitLabPagesInfo {
   pipeline_id?: number;
 }
 
+
+/** Coverage of a bounded multi-project list; absent for a single-project read or demo data. */
+export interface AggregateResponse {
+  coverage?: { limit: number; attempted: number; loaded: number };
+  errors: { projectId: number; projectName: string; message: string }[];
+}

@@ -19,7 +19,7 @@ The code is only needed until the admin account exists. Only someone who can rea
 
 ### I forgot the password
 
-The password derives the key that encrypts the vault, so it cannot be reset or recovered. To start over, stop lazylab, move `vault.json` out of the [data directory](/configuration/#data-directory), and start it again: a new setup code is printed. GitLab profiles, secrets and agent tokens from the old vault are lost; the GitLab tokens themselves still work and can be added again.
+If you created a recovery key, choose **Forgot password? Use the recovery key** on the sign-in screen and set a new password. If you have a backup and know the password it was made with, restore it (see [Backup and recovery](/guide/vault/#backup-and-recovery)). Otherwise the password cannot be reset or recovered, because it derives the key that encrypts the vault. To start over, stop lazylab, move `vault.json` out of the [data directory](/configuration/#data-directory), and start it again: a new setup code is printed. GitLab profiles, secrets and agent tokens from the old vault are lost; the GitLab tokens themselves still work and can be added again.
 
 ### "Too many attempts. Retry in N s"
 
@@ -42,6 +42,10 @@ The request's `Origin` does not match the host it arrived on, which happens when
 ### A list is empty, or shows "Could not read …"
 
 lazylab reports failed GitLab reads instead of showing an empty list. The message names the project or endpoint. Common causes: the token lacks the `api` scope, you are not a maintainer of the project (needed for variables and access tokens), or the token has expired (**Vault → GitLab profiles** shows its expiry).
+
+### The sync bar says "GitLab rate limit" or "GitLab quota low"
+
+GitLab answered 429, or its `RateLimit-Remaining` header ran low. lazylab pauses background refresh until the time shown; clicks still go through when GitLab allows them. Other tools on the same GitLab account use the same limit. If this happens often, raise the background refresh interval or pick the right plan under **Settings → GitLab request budget**.
 
 ### Desktop notifications do not appear
 
@@ -104,7 +108,7 @@ GitLab never returns the value of a variable that is masked and hidden. Store th
 
 ### Can I delete the cache?
 
-Yes. `labwi_cache.sqlite` and `labwi_cache.wal` hold cached GitLab responses and the change journal. lazylab refetches from GitLab. Keep `vault.json`.
+Yes. `lazylab_cache.sqlite` (with its `-wal` and `-shm` files) and `lazylab_journal.jsonl` hold cached GitLab responses and the change journal. Older installs used `labwi_cache.*`; lazylab renames them on start. lazylab refetches from GitLab. Keep `vault.json`.
 
 ### What should I back up?
 

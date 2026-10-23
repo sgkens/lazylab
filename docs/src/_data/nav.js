@@ -5,6 +5,7 @@ export default [
     items: [
       { title: 'Overview', url: '/' },
       { title: 'Getting started', url: '/getting-started/' },
+      { title: 'Testing the pre-1.0 build', url: '/testing/' },
       { title: 'Configuration', url: '/configuration/' },
       { title: 'Remote access', url: '/remote-access/' },
       { title: 'Security model', url: '/security/' },
@@ -15,6 +16,7 @@ export default [
     title: 'Using lazylab',
     items: [
       { title: 'Inbox', url: '/guide/inbox/' },
+      { title: 'Notes and tasks', url: '/guide/notes/' },
       { title: 'Notifications and watches', url: '/guide/notifications/' },
       { title: 'CI failures and running pipelines', url: '/guide/ci/' },
       { title: 'Work items and merge requests', url: '/guide/planning/' },
@@ -28,6 +30,8 @@ export default [
     title: 'Agents',
     items: [
       { title: 'MCP server', url: '/agents/mcp/' },
+      { title: 'Task briefings and handoffs', url: '/agents/handoffs/' },
+      { title: 'Shared findings (BugKB)', url: '/agents/knowledge/' },
       { title: 'REST API', url: '/agents/rest/' },
       { title: 'Agent skills', url: '/agents/skills/' }
     ]

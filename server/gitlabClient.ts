@@ -1,7 +1,9 @@
+import { reportAggregateRead } from './aggregateReads.js';
 import { cacheDb } from './cacheDb.js';
 import { metricsManager } from './metricsManager.js';
 import { parseGitLabCiYaml } from './yamlParser.js';
 import { mapLimit } from './concurrency.js';
+import { RateLimitedError, requestScheduler } from './requestScheduler.js';
 import { extractFailure, FailureExcerpt } from './triage.js';
 import { buildReleaseNotes, CommitLike, ReleaseNotes } from './releaseNotes.js';
 import type { TrackedToken } from './tokenExpiry.js';
@@ -60,6 +62,17 @@ export interface GitLabNote {
     size?: number;
     type?: string;
   };
+}
+
+export interface GitLabDiff {
+  old_path: string;
+  new_path: string;
+  diff: string;
+  new_file?: boolean;
+  renamed_file?: boolean;
+  deleted_file?: boolean;
+  collapsed?: boolean;
+  too_large?: boolean;
 }
 
 export interface GitLabMilestone {
@@ -123,6 +136,7 @@ export interface GitLabMergeRequest {
   labels: string[];
   pipeline?: {
     id: number;
+    project_id?: number;
     status: 'success' | 'running' | 'failed' | 'pending' | 'canceled' | 'skipped' | 'manual';
     web_url: string;
     ref: string;
@@ -1730,6 +1744,7 @@ export function mapMergeRequest(m: any): GitLabMergeRequest {
     // List responses carry no pipeline; single-MR responses carry head_pipeline (preferred) and pipeline.
     pipeline: (m.head_pipeline || m.pipeline) ? {
       id: (m.head_pipeline || m.pipeline).id,
+      project_id: (m.head_pipeline || m.pipeline).project_id,
       status: (m.head_pipeline || m.pipeline).status,
       web_url: (m.head_pipeline || m.pipeline).web_url,
       ref: (m.head_pipeline || m.pipeline).ref,
@@ -1801,6 +1816,23 @@ export function mapWorkItem(item: any): GitLabWorkItem {
   };
 }
 
+/** A non-2xx answer from the GitLab API. `status` lets callers tell a real 404 from other failures. */
+export class GitLabApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly endpoint: string
+  ) {
+    super(message);
+    this.name = 'GitLabApiError';
+  }
+}
+
+interface SendOptions {
+  /** Defaults to requestScheduler.timeoutMs (15 s); covers the response body as well as the headers. */
+  timeoutMs?: number;
+}
+
 export class GitLabClient {
   private host: string;
   private token: string | null;
@@ -1820,7 +1852,55 @@ export class GitLabClient {
     return this.host;
   }
 
-  private async fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<{ data: T; etag?: string }> {
+  /**
+   * Sends one request through the shared request scheduler (GL-19): waits for a budget slot on the
+   * current lane, applies the timeout, records metrics and feeds RateLimit-* headers back. A GET that
+   * gets a 429 is retried once after the pause when the lane can wait that long. `read` consumes the
+   * body inside the slot and the timeout. Throws GitLabApiError for non-2xx answers.
+   */
+  private async send<R>(endpoint: string, url: string, init: RequestInit, read: (res: Response) => Promise<R>, opts: SendOptions = {}): Promise<R> {
+    const method = (init.method || 'GET').toUpperCase();
+    const timeoutMs = opts.timeoutMs ?? requestScheduler.timeoutMs;
+    const lane = requestScheduler.currentLane();
+    for (let attempt = 0; ; attempt++) {
+      const release = await requestScheduler.acquire(lane);
+      const timeout = AbortSignal.timeout(timeoutMs);
+      const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+      const start = performance.now();
+      try {
+        const res = await fetch(url, { ...init, signal });
+        metricsManager.recordApiHit(endpoint, res.status, performance.now() - start, res.headers);
+        const pauseUntil = requestScheduler.observe(res.status, res.headers);
+        if (res.ok) return await read(res);
+        const errText = await res.text().catch(() => '');
+        if (res.status === 429) {
+          if (method === 'GET' && attempt === 0 && pauseUntil !== null && requestScheduler.canWaitUntil(lane, pauseUntil)) continue;
+          throw new RateLimitedError(
+            `GitLab API Error (429): rate limit reached${pauseUntil ? `, paused until ${new Date(pauseUntil).toTimeString().slice(0, 8)}` : ''}`,
+            pauseUntil
+          );
+        }
+        let msg = `GitLab API Error (${res.status}): ${res.statusText}`;
+        try {
+          const parsed = JSON.parse(errText);
+          if (parsed.message || parsed.error) msg += ` - ${typeof (parsed.message || parsed.error) === 'string' ? parsed.message || parsed.error : JSON.stringify(parsed.message || parsed.error)}`;
+        } catch {
+          msg += ` - ${errText.slice(0, 150)}`;
+        }
+        throw new GitLabApiError(msg, res.status, endpoint);
+      } catch (err: any) {
+        if (timeout.aborted && (err?.name === 'TimeoutError' || err?.name === 'AbortError')) {
+          requestScheduler.noteTimeout();
+          throw new Error(`GitLab request timed out after ${Math.round(timeoutMs / 1000)} s: ${method} ${endpoint}`);
+        }
+        throw err;
+      } finally {
+        release();
+      }
+    }
+  }
+
+  private async fetchApi<T>(endpoint: string, options: RequestInit = {}, opts: SendOptions = {}): Promise<{ data: T; etag?: string }> {
     if (this.isDemoMode) {
       metricsManager.recordCacheHit(`demo:${endpoint}`);
       throw new Error('Cannot execute remote fetch in demo mode');
@@ -1831,26 +1911,13 @@ export class GitLabClient {
     headers.set('PRIVATE-TOKEN', this.token!);
     headers.set('Accept', 'application/json');
 
-    const start = performance.now();
-    const res = await fetch(url, { ...options, headers });
-    const durationMs = performance.now() - start;
-    metricsManager.recordApiHit(endpoint, res.status, durationMs, res.headers);
-
-    if (!res.ok) {
-      const errText = await res.text();
-      let msg = `GitLab API Error (${res.status}): ${res.statusText}`;
-      try {
-        const parsed = JSON.parse(errText);
-        if (parsed.message || parsed.error) msg += ` - ${parsed.message || parsed.error}`;
-      } catch {
-        msg += ` - ${errText.slice(0, 150)}`;
-      }
-      throw new Error(msg);
-    }
-
-    const etag = res.headers.get('ETag') || undefined;
-    const data = await res.json();
-    return { data, etag };
+    return this.send(endpoint, url, { ...options, headers }, async (res) => {
+      const etag = res.headers.get('ETag') || undefined;
+      // 204 No Content (DELETE and some POSTs) has no JSON body.
+      const text = await res.text();
+      const data = (text ? JSON.parse(text) : null) as T;
+      return { data, etag };
+    }, opts);
   }
 
   /** Read-only GET for modules outside this class (inbox, agents). Throws in demo mode. */
@@ -1871,6 +1938,16 @@ export class GitLabClient {
       (await fetchOne(project)).map((row) => ({ ...row, project_name: row.project_name ?? project.name }))
     );
     const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    reportAggregateRead({
+      limit: AGGREGATE_PROJECT_LIMIT,
+      attempted: projects.length,
+      loaded: results.length - failures.length,
+      errors: results.flatMap((r, i) => r.status === 'rejected' ? [{
+        projectId: projects[i].id,
+        projectName: projects[i].path_with_namespace || projects[i].name,
+        message: String(r.reason?.message ?? 'GitLab request failed'),
+      }] : []),
+    });
     if (failures.length > 0 && failures.length === results.length) throw failures[0].reason;
     return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
   }
@@ -2617,7 +2694,7 @@ export class GitLabClient {
   async getPipeline(projectId: number, pipelineId: number): Promise<GitLabPipeline> {
     if (this.isDemoMode) {
       const p = DEMO_PIPELINES.find((x) => x.id === pipelineId && x.project_id === projectId);
-      if (!p) throw new Error(`Pipeline ${pipelineId} not found`);
+      if (!p) throw new GitLabApiError(`Pipeline ${pipelineId} not found`, 404, `/projects/${projectId}/pipelines/${pipelineId}`);
       return p;
     }
     const { data: p } = await this.fetchApi<any>(`/projects/${projectId}/pipelines/${pipelineId}`);
@@ -2638,7 +2715,7 @@ export class GitLabClient {
   async getJob(projectId: number, jobId: number): Promise<GitLabJob & { failure_reason?: string }> {
     if (this.isDemoMode) {
       const job = Object.values(DEMO_JOBS).flat().find((j) => j.id === jobId);
-      if (!job) throw new Error(`Job ${jobId} not found`);
+      if (!job) throw new GitLabApiError(`Job ${jobId} not found`, 404, `/projects/${projectId}/jobs/${jobId}`);
       return job;
     }
     const { data: j } = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}`);
@@ -2670,11 +2747,42 @@ export class GitLabClient {
   async getMergeRequest(projectId: number, mrIid: number): Promise<GitLabMergeRequest> {
     if (this.isDemoMode) {
       const mr = DEMO_MRS.find((m) => m.project_id === projectId && m.iid === mrIid);
-      if (!mr) throw new Error(`Merge request !${mrIid} not found`);
+      if (!mr) throw new GitLabApiError(`Merge request !${mrIid} not found`, 404, `/projects/${projectId}/merge_requests/${mrIid}`);
       return mr;
     }
     const { data } = await this.fetchApi<any>(`/projects/${projectId}/merge_requests/${mrIid}`);
     return mapMergeRequest(data);
+  }
+
+  /** Bounded recent discussion for agent briefings; ordinary note views keep their existing order. */
+  async getBriefingNotes(projectId: number, kind: 'work_item' | 'merge_request', iid: number) {
+    const notes = this.isDemoMode
+      ? [...(DEMO_NOTES[`${kind === 'work_item' ? 'work_item' : 'mr'}:${projectId}:${iid}`] || [])]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      : await this.apiGet<GitLabNote[]>(`/projects/${projectId}/${kind === 'work_item' ? 'issues' : 'merge_requests'}/${iid}/notes?sort=desc&order_by=created_at&per_page=100`);
+    const comments = notes.filter((n) => !n.system);
+    return { notes: comments.slice(0, 20).reverse(), has_more: comments.length > 20 || notes.length >= 100 };
+  }
+
+  /** GitLab's relationship endpoint, rather than guessing from titles or branch names in live mode. */
+  async getIssueMergeRequests(projectId: number, issueIid: number): Promise<GitLabMergeRequest[]> {
+    if (this.isDemoMode) {
+      const reference = new RegExp(`(?:^|[\\s(])#${issueIid}(?!\\d)`);
+      return DEMO_MRS.filter((m) => m.project_id === projectId &&
+        (reference.test(m.description || '') || m.source_branch.startsWith(`${issueIid}-`)));
+    }
+    const data = await this.apiGet<any[]>(`/projects/${projectId}/issues/${issueIid}/related_merge_requests?per_page=100`);
+    return data.map(mapMergeRequest);
+  }
+
+  async getMergeRequestDiffs(projectId: number, mrIid: number): Promise<GitLabDiff[]> {
+    if (this.isDemoMode) {
+      // Demo data has file statistics but no patch bodies; never invent code to fill the gap.
+      return (await this.getMergeRequest(projectId, mrIid)).diff_stats?.map((s) => ({
+        old_path: s.file, new_path: s.file, diff: '', collapsed: true
+      })) ?? [];
+    }
+    return this.apiGet<GitLabDiff[]>(`/projects/${projectId}/merge_requests/${mrIid}/diffs?per_page=11`);
   }
 
   async getPipelineJobs(projectId: number, pipelineId: number, force = false): Promise<{ stages: string[]; jobs: GitLabJob[] }> {
@@ -3259,11 +3367,18 @@ Execution finished in 38s
 
     const jobInfo = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}`);
     // Raw log endpoint
-    const traceRes = await fetch(`${this.host}/api/v4/projects/${projectId}/jobs/${jobId}/trace`, {
-      headers: this.token ? { 'PRIVATE-TOKEN': this.token } : {}
+    const traceEndpoint = `/projects/${projectId}/jobs/${jobId}/trace`;
+    let rawText = await this.send(
+      traceEndpoint,
+      `${this.host}/api/v4${traceEndpoint}`,
+      { headers: { 'PRIVATE-TOKEN': this.token! } },
+      (res) => res.text(),
+      // Logs can be megabytes; allow longer than a JSON call.
+      { timeoutMs: 60_000 }
+    ).catch((err) => {
+      if (err instanceof GitLabApiError) throw new GitLabApiError(`GitLab API Error (${err.status}): could not read the log of job ${jobId}`, err.status, traceEndpoint);
+      throw err;
     });
-    if (!traceRes.ok) throw new Error(`GitLab API Error (${traceRes.status}): could not read the log of job ${jobId}`);
-    let rawText = await traceRes.text();
     // Keep the tail of very large logs: the failure is at the end and the UI cannot render megabytes.
     if (rawText.length > MAX_TRACE_CHARS) rawText = rawText.slice(-MAX_TRACE_CHARS);
     return {
@@ -3292,7 +3407,7 @@ Execution finished in 38s
     }
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(data)], { type: contentType || 'application/octet-stream' }), filename);
-    const { data: up } = await this.fetchApi<any>(`/projects/${projectId}/uploads`, { method: 'POST', body: form });
+    const { data: up } = await this.fetchApi<any>(`/projects/${projectId}/uploads`, { method: 'POST', body: form }, { timeoutMs: 60_000 });
     cacheDb.logWal('UPLOAD', String(projectId), 'uploads', `Uploaded ${filename} (${data.length} bytes)`);
     return { markdown: up.markdown, url: up.full_path || up.url };
   }
@@ -3366,16 +3481,19 @@ Execution finished in 38s
     }
     try {
       const { data: project } = await this.fetchApi<any>(`/projects/${projectId}`);
-      const res = await fetch(`${this.host}/api/graphql`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-        body: JSON.stringify({
-          query: 'query($p: ID!, $r: String!) { project(fullPath: $p) { ciConfigVariables(ref: $r) { key value valueOptions description } } }',
-          variables: { p: project.path_with_namespace, r: ref }
-        })
-      });
-      if (!res.ok) return [];
-      const body: any = await res.json();
+      const body: any = await this.send(
+        '/graphql',
+        `${this.host}/api/graphql`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+          body: JSON.stringify({
+            query: 'query($p: ID!, $r: String!) { project(fullPath: $p) { ciConfigVariables(ref: $r) { key value valueOptions description } } }',
+            variables: { p: project.path_with_namespace, r: ref }
+          })
+        },
+        (res) => res.json()
+      );
       const vars: any[] = body?.data?.project?.ciConfigVariables || [];
       return vars.map((v) => ({
         key: v.key,

@@ -3,17 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
 import { AuthScreen } from './components/AuthScreen';
 import { VaultView, VaultSection } from './components/VaultView';
 import { NotificationCenter } from './components/NotificationCenter';
 import { WatchContext } from './components/WatchButton';
 import { NotifyState, WatchKind, LazyNotification } from './types/notify';
 import { InboxView } from './components/InboxView';
+import { NotesView } from './components/NotesView';
 import { Inbox } from './types/inbox';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { ProjectSelector } from './components/ProjectSelector';
-import { DashboardView } from './components/DashboardView';
 import { WorkItemsView } from './components/WorkItemsView';
 import { MergeRequestsView } from './components/MergeRequestsView';
 import { PipelinesView } from './components/PipelinesView';
@@ -28,7 +28,6 @@ import { JobTraceModal } from './components/JobTraceModal';
 import { RunPipelineModal } from './components/RunPipelineModal';
 import { PackagesView } from './components/PackagesView';
 import { ReleasesTagsView } from './components/ReleasesTagsView';
-import { PipelineEditorView } from './components/PipelineEditorView';
 import { VariablesView } from './components/VariablesView';
 import { ProjectSettingsView } from './components/ProjectSettingsView';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
@@ -36,9 +35,11 @@ import { SyncProgressBar } from './components/SyncProgressBar';
 import { AgentSkillModal } from './components/AgentSkillModal';
 import { api, notifyApi, sessionApi } from './services/api';
 import { reportError } from './utils/reportError';
+import { readStoredTheme, storeTheme, type Theme } from './utils/theme';
 import { SessionState } from './types/vault';
 import {
   AppStatus,
+  AggregateResponse,
   GitLabLabel,
   GitLabMergeRequest,
   GitLabMilestone,
@@ -48,6 +49,9 @@ import {
   GitLabWorkItem,
   WorkItemType
 } from './types/gitlab';
+
+const DashboardView = lazy(() => import('./components/DashboardView').then((module) => ({ default: module.DashboardView })));
+const PipelineEditorView = lazy(() => import('./components/PipelineEditorView').then((module) => ({ default: module.PipelineEditorView })));
 
 /** Session gate: shows setup/login until the server reports an authenticated session. */
 export default function App() {
@@ -92,6 +96,18 @@ export default function App() {
 
 function Workspace({ username, onSignedOut }: { username: string | null; onSignedOut: () => void }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('inbox');
+  const [aggregateReads, setAggregateReads] = useState<Record<string, AggregateResponse>>({});
+  useEffect(() => {
+    const update = (event: Event) => {
+      const { kind, ...report } = (event as CustomEvent<AggregateResponse & { kind: string }>).detail;
+      setAggregateReads((previous) => ({ ...previous, [kind]: report }));
+    };
+    window.addEventListener('lazylab:aggregate', update);
+    return () => window.removeEventListener('lazylab:aggregate', update);
+  }, []);
+  const coverageKinds = activeTab === 'dashboard' ? ['work_items', 'merge_requests', 'pipelines', 'milestones'] : [activeTab];
+  const coverageReports = coverageKinds.filter((kind) => aggregateReads[kind]?.coverage);
+
   const [inbox, setInbox] = useState<Inbox | null>(null);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [notifyState, setNotifyState] = useState<NotifyState | null>(null);
@@ -102,9 +118,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   const [searchQuery, setSearchQuery] = useState('');
 
   // Matte Black Dark Mode vs Light Mode
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('labwi_theme') as 'dark' | 'light') || 'dark';
-  });
+  const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
 
   // Domain entities
   const [workItems, setWorkItems] = useState<GitLabWorkItem[]>([]);
@@ -157,7 +171,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
-    localStorage.setItem('labwi_theme', next);
+    storeTheme(next);
   };
 
   useEffect(() => {
@@ -321,6 +335,14 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
   useEffect(() => {
     loadTabData(activeTab, selectedProjectId, false);
   }, [activeTab, selectedProjectId]);
+
+  // While the request scheduler holds requests back, refresh the status so the sync bar notice clears on time.
+  const throttleMessage = status?.scheduler?.message ?? null;
+  useEffect(() => {
+    if (!throttleMessage) return;
+    const t = setTimeout(() => api.getStatus().then(setStatus).catch(() => {}), 15_000);
+    return () => clearTimeout(t);
+  }, [throttleMessage, status]);
 
   // Subscribe to real-time events via SSE
   useEffect(() => {
@@ -848,6 +870,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         isSyncing={isSyncing}
         lastSyncTime={status?.lastSyncTime}
         walEntriesCount={status?.walStats?.walEntriesCount}
+        throttleMessage={throttleMessage}
       />
 
       {/* Multi-Project & Search Toolbar */}
@@ -863,12 +886,28 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         }}
       />
 
+      {coverageReports.length > 0 && (
+        <div className="shrink-0 border-b border-zinc-800 px-6 py-2 text-xs text-zinc-400" role="status">
+          {coverageReports.map((kind) => {
+            const { coverage, errors } = aggregateReads[kind];
+            return <div key={kind}>
+              <span className={errors.length ? 'text-amber-400' : ''}>{kind.replaceAll('_', ' ')}: {coverage!.loaded} of {coverage!.attempted} projects loaded</span>
+              <span> · covers up to the {coverage!.limit} most recently active member projects</span>
+              {errors.length > 0 && <details className="mt-1 text-amber-400"><summary>{errors.length} project {errors.length === 1 ? 'read' : 'reads'} failed</summary><ul>{errors.map((error) => <li key={error.projectId}>{error.projectName}: {error.message}</li>)}</ul></details>}
+            </div>;
+          })}
+        </div>
+      )}
+
       {/* Main Content Workspace View */}
       <WatchContext.Provider value={watchContext}>
       <main className="flex-1 flex overflow-hidden">
+        <Suspense fallback={<div role="status" className="flex-1 flex items-center justify-center text-sm text-zinc-500">Loading view…</div>}>
         {activeTab === 'inbox' && (
           <InboxView inbox={inbox} projects={projects} loading={inboxLoading} onRefresh={() => loadInbox(true)} />
         )}
+
+        {activeTab === 'notes' && <NotesView projects={projects} showToast={showToast} />}
 
         {activeTab === 'dashboard' && (
           <DashboardView
@@ -1025,6 +1064,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
             onCreateLabel={handleCreateLabel}
           />
         )}
+        </Suspense>
       </main>
       </WatchContext.Provider>
 
