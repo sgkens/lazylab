@@ -245,6 +245,15 @@ export interface AppStatus {
   isDemo: boolean;
   user: GitLabUser | null;
   autoFetchIntervalSec: number;
+  autoFetch?: {
+    intervalSec: number;
+    running: boolean;
+    lastStartedAt: number | null;
+    lastFinishedAt: number | null;
+    lastDurationMs: number | null;
+    skippedCycles: number;
+    nextRunAt: number | null;
+  };
   lastSyncTime: number;
   walStats: WalStats;
   metrics?: MetricsSummary;

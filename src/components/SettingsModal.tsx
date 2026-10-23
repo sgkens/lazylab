@@ -15,10 +15,10 @@ interface SettingsModalProps {
 
 const INTERVALS = [
   { label: 'Off', val: 0 },
-  { label: '15s', val: 15 },
   { label: '30s', val: 30 },
   { label: '60s', val: 60 },
-  { label: '120s', val: 120 }
+  { label: '2m', val: 120 },
+  { label: '5m', val: 300 }
 ];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -133,6 +133,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <p className="text-[11px] text-slate-500 mt-1">
               Refreshes projects, work items, merge requests, pipelines, runners and the inbox, and checks watches.
+              The server allows 30 seconds at minimum, starts the next refresh only after the previous one finished,
+              and keeps the setting across restarts.
             </p>
           </div>
         </div>

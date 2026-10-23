@@ -41,6 +41,7 @@ cp .env.example .env
 |---|---|---|
 | `vault.json` | Everything in the vault | Yes, AES-256-GCM |
 | `labwi_cache.sqlite`, `labwi_cache.wal` | Cached GitLab responses and a change journal | No |
+| `settings.json` | Non-secret server settings: background refresh interval | No |
 | `tls/` | Self-signed certificate and key, when generated | No (key file mode 0600) |
 
 Back up `vault.json` and remember the password. The cache can be deleted at any time; lazylab refetches from GitLab.
@@ -50,3 +51,7 @@ Back up `vault.json` and remember the password. The cache can be deleted at any 
 - **Vault → Notifications:** push channels and notification rules.
 - **Settings modal (gear icon):** background refresh interval, **Refresh now**, and the active GitLab connection. Hosts and tokens are managed in **Vault → GitLab profiles**; the modal links there.
 - **Vault → Account:** change password, signed-in devices.
+
+### Background refresh
+
+The interval is Off or 30 to 3,600 seconds; `POST /api/config/autofetch` rejects other values with 400. It is saved in `settings.json` and survives restarts. Only one refresh runs at a time: the next one is scheduled when the previous one finishes, and **Refresh now** during a running refresh waits for that refresh instead of starting a second one. `GET /api/status` reports the loop under `autoFetch` (`running`, `lastDurationMs`, `nextRunAt`, `skippedCycles`).
