@@ -31,6 +31,7 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Fixed
 
+- A vault file with a modified payload no longer leaves the vault half unlocked (key in memory, no data); a sign-in with a username of equal length but different UTF-8 byte length returns 401 instead of 500; a failed write during a password change no longer leaves the old password unusable until restart.
 - CI/CD variables are read from every page; only the first 20 were read before.
 - Demo group variables were shown for every group.
 - No expiry warnings for demo sample tokens.
