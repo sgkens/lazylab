@@ -6,7 +6,7 @@
  * - Mutating cookie-authenticated requests must carry an Origin whose hostname matches the request host.
  * - /api/agent/* additionally accepts `Authorization: Bearer llab_...` tokens issued from the vault.
  */
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { NextFunction, Request, Response, Router } from 'express';
 import { vault } from './vault.js';
 
@@ -16,6 +16,8 @@ const ABSOLUTE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_PASSWORD_LENGTH = 12;
 
 interface Session {
+  /** Public handle for listing and revoking; the cookie value (map key) is never sent back. */
+  id: string;
   username: string;
   createdAt: number;
   lastSeen: number;
@@ -144,13 +146,20 @@ function clearSessionCookie(res: Response) {
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
 }
 
+const isExpired = (s: Session, now: number) => now - s.lastSeen > IDLE_TTL_MS || now - s.createdAt > ABSOLUTE_TTL_MS;
+
+/** Drops sessions past their idle or absolute lifetime, so listings show only live devices. */
+function pruneSessions(now = Date.now()) {
+  for (const [sid, s] of sessions) if (isExpired(s, now)) sessions.delete(sid);
+}
+
 function getSession(req: Request): { sid: string; session: Session } | null {
   const sid = readCookie(req, COOKIE_NAME);
   if (!sid) return null;
   const session = sessions.get(sid);
   if (!session) return null;
   const now = Date.now();
-  if (now - session.lastSeen > IDLE_TTL_MS || now - session.createdAt > ABSOLUTE_TTL_MS || !vault.isUnlocked()) {
+  if (isExpired(session, now) || !vault.isUnlocked()) {
     sessions.delete(sid);
     return null;
   }
@@ -159,8 +168,10 @@ function getSession(req: Request): { sid: string; session: Session } | null {
 }
 
 function createSession(req: Request, res: Response, username: string) {
+  pruneSessions();
   const sid = randomBytes(32).toString('base64url');
   sessions.set(sid, {
+    id: randomUUID(),
     username,
     createdAt: Date.now(),
     lastSeen: Date.now(),
@@ -345,9 +356,11 @@ sessionRouter.post('/password', async (req, res) => {
 sessionRouter.get('/devices', (req, res) => {
   const current = getSession(req);
   if (!current) return res.status(401).json({ success: false, error: 'Not authenticated' });
+  pruneSessions();
   res.json({
     success: true,
     devices: [...sessions.entries()].map(([sid, s]) => ({
+      id: s.id,
       current: sid === current.sid,
       ip: s.ip,
       userAgent: s.userAgent,
@@ -355,4 +368,16 @@ sessionRouter.get('/devices', (req, res) => {
       lastSeen: s.lastSeen
     }))
   });
+});
+
+/** Signs out one device. Revoking the current device also clears its cookie. */
+sessionRouter.delete('/devices/:id', (req, res) => {
+  const current = getSession(req);
+  if (!current) return res.status(401).json({ success: false, error: 'Not authenticated' });
+  const target = [...sessions.entries()].find(([, s]) => s.id === req.params.id);
+  if (!target) return res.status(404).json({ success: false, error: 'Device session not found' });
+  sessions.delete(target[0]);
+  const self = target[0] === current.sid;
+  if (self) clearSessionCookie(res);
+  res.json({ success: true, self });
 });

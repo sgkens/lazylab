@@ -40,7 +40,7 @@ flowchart LR
 - Session cookies are `HttpOnly` and `SameSite=Strict`. They also get `Secure` when the request arrived over HTTPS, directly or through a trusted proxy.
 - Sessions expire after 12 hours idle or 7 days in total.
 - Every write must carry an `Origin` (or `Referer`) whose hostname matches the request host or `LAZYLAB_PUBLIC_HOSTS`. This blocks cross-site request forgery.
-- **Vault → Account** lists signed-in devices.
+- **Vault → Account** lists signed-in devices with IP address, browser, sign-in time and last activity. **Revoke** signs one device out; it has to sign in again with the password. The vault stays unlocked and other devices are not affected. Expired sessions are not listed.
 
 ## Agent tokens
 

@@ -332,3 +332,63 @@ describe('password change', () => {
     expect(await vault.verifyAndUnlock(USER, PASSWORD)).toBe(true);
   });
 });
+
+describe('device sessions', () => {
+  const devicesOf = async (c: Client) => (await (await c.call('GET', '/api/session/devices')).json()).devices as any[];
+
+  test('lists devices by public id, never by cookie value', async () => {
+    const a = await loggedIn();
+    const devices = await devicesOf(a);
+    const sid = a.cookie!.split('=')[1];
+    expect(JSON.stringify(devices)).not.toContain(sid);
+    const mine = devices.find((d) => d.current);
+    expect(mine).toMatchObject({ ip: a.ip, current: true });
+    expect(typeof mine.id).toBe('string');
+    expect(mine.createdAt).toBeLessThanOrEqual(mine.lastSeen);
+  });
+
+  test('revokes another device without touching the current one', async () => {
+    const a = await loggedIn();
+    const b = await loggedIn();
+    const target = (await devicesOf(a)).find((d) => d.ip === b.ip);
+    const res = await a.call('DELETE', `/api/session/devices/${target.id}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true, self: false });
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect((await b.call('GET', '/api/ping')).status).toBe(401);
+    expect((await a.call('GET', '/api/ping')).status).toBe(200);
+    expect((await devicesOf(a)).some((d) => d.id === target.id)).toBe(false);
+    expect(vault.isUnlocked()).toBe(true);
+  });
+
+  test('revoking the current device clears its cookie', async () => {
+    const a = await loggedIn();
+    const cookie = a.cookie;
+    const mine = (await devicesOf(a)).find((d) => d.current);
+    const res = await a.call('DELETE', `/api/session/devices/${mine.id}`);
+    expect(await res.json()).toMatchObject({ success: true, self: true });
+    expect(a.cookie).toBeNull();
+    a.cookie = cookie;
+    expect((await a.call('GET', '/api/ping')).status).toBe(401);
+  });
+
+  test('rejects unknown ids, anonymous callers and cross-origin requests', async () => {
+    const a = await loggedIn();
+    const b = await loggedIn();
+    const target = (await devicesOf(a)).find((d) => d.ip === b.ip);
+    expect((await a.call('DELETE', '/api/session/devices/does-not-exist')).status).toBe(404);
+    expect((await client().call('DELETE', `/api/session/devices/${target.id}`)).status).toBe(401);
+    expect((await a.call('DELETE', `/api/session/devices/${target.id}`, { origin: 'https://evil.example' })).status).toBe(403);
+    expect((await b.call('GET', '/api/ping')).status).toBe(200);
+  });
+
+  test('expired sessions are not listed', async () => {
+    const old = await loggedIn();
+    const start = Date.now();
+    setSystemTime(new Date(start + 13 * HOUR));
+    const fresh = await loggedIn();
+    const devices = await devicesOf(fresh);
+    expect(devices.some((d) => d.ip === old.ip)).toBe(false);
+    expect(devices.some((d) => d.ip === fresh.ip && d.current)).toBe(true);
+  });
+});

@@ -65,7 +65,9 @@ export const sessionApi = {
   lock: () => request<{ success: boolean }>('/session/lock', post()),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ success: boolean }>('/session/password', post({ currentPassword, newPassword })),
-  devices: () => request<{ success: boolean; devices: DeviceSession[] }>('/session/devices')
+  devices: () => request<{ success: boolean; devices: DeviceSession[] }>('/session/devices'),
+  revokeDevice: (id: string) =>
+    request<{ success: boolean; self: boolean }>(`/session/devices/${encodeURIComponent(id)}`, { method: 'DELETE' })
 };
 
 export const vaultApi = {

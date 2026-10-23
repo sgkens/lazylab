@@ -8,6 +8,7 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Added
 
+- **Revoke one device** (SEC-3): **Vault → Account → Signed-in devices** shows each session's IP, browser, sign-in time and last activity, with **Revoke** to sign out that device only (`DELETE /api/session/devices/:id`). Locking the vault still signs out every device.
 - **Notes and tasks:** a Notes view for personal notes and tasks outside GitLab, with tags, Markdown bodies, a done checkbox, filters and a comment log, encrypted in the vault with a separate demo list. **Migrate to GitLab** creates an issue from the note and its comments, then marks the note migrated or deletes it. **Export .zip** downloads every note as Markdown with YAML front matter (no new dependency). `lazy note add/list/show/done/reopen` and the MCP tools `list_notes`, `get_note`, `add_note` and `set_note_status` use the same storage.
 - **Docs polish:** aligned header and content columns, responsive scroll-aware contents, build-time heading links, prominent source edit links, reading progress, copy controls, thin scrollbars and reduced-motion-aware transitions. Locally bundled Hawk/Pagefind search uses the TypeFlow animation driver and Logcad diagnostics.
 - **Testing readiness:** GitLab CI checks types, tests, the app build and CLI compilation before docs publishing; branch pushes with an open MR use the MR pipeline. Added a live acceptance-testing guide with known limits and failure-reporting instructions.

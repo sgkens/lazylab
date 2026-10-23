@@ -11,6 +11,7 @@ import {
   KeyRound,
   Laptop,
   Lock,
+  LogOut,
   Plus,
   RefreshCw,
   RotateCw,
@@ -986,24 +987,45 @@ const AccountSection: React.FC<{ run: Run; onLocked: () => void }> = ({ run, onL
   const [devices, setDevices] = useState<DeviceSession[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  const loadDevices = () => sessionApi.devices().then((r) => setDevices(r.devices)).catch(() => setDevices([]));
+
   useEffect(() => {
-    sessionApi.devices().then((r) => setDevices(r.devices)).catch(() => setDevices([]));
+    loadDevices();
   }, []);
+
+  const revoke = async (d: DeviceSession) => {
+    const what = d.current ? 'Sign out this device?' : `Sign out ${d.ip || 'this device'}? It has to sign in again with the password.`;
+    if (!confirm(what)) return;
+    let self = false;
+    const ok = await run(async () => {
+      self = (await sessionApi.revokeDevice(d.id)).self;
+    }, d.current ? undefined : 'Device signed out');
+    if (!ok) return;
+    if (self) onLocked();
+    else loadDevices();
+  };
 
   return (
     <>
       <Card title="Signed-in devices" description="Sessions are held in memory. Restarting the server or locking the vault signs every device out.">
         <ul className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg">
-          {devices.map((d, i) => (
-            <li key={i} className="flex items-center gap-3 px-3 py-2 text-xs">
-              <Laptop className="w-4 h-4 text-zinc-500" />
+          {devices.map((d) => (
+            <li key={d.id} className="flex items-center gap-3 px-3 py-2 text-xs">
+              <Laptop className="w-4 h-4 text-zinc-500 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-zinc-200 truncate">
-                  {d.ip} {d.current && <span className="text-emerald-400">(this device)</span>}
+                  {d.ip || 'unknown address'} {d.current && <span className="text-emerald-400">(this device)</span>}
                 </div>
-                <div className="text-[11px] text-zinc-500 truncate">{d.userAgent}</div>
+                <div className="text-[11px] text-zinc-500 truncate" title={d.userAgent}>
+                  {d.userAgent || 'unknown browser'}
+                </div>
+                <div className="text-[11px] text-zinc-500">
+                  signed in {fmtDate(d.createdAt)} · last seen {fmtDate(d.lastSeen)}
+                </div>
               </div>
-              <span className="text-[11px] text-zinc-500">last seen {fmtDate(d.lastSeen)}</span>
+              <button className={btnDanger} onClick={() => revoke(d)} title={d.current ? 'Sign out this device' : 'Sign out this device session'}>
+                <LogOut className="w-3.5 h-3.5" /> {d.current ? 'Sign out' : 'Revoke'}
+              </button>
             </li>
           ))}
         </ul>

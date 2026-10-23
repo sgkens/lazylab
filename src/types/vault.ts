@@ -76,6 +76,8 @@ export interface VaultSummary {
 }
 
 export interface DeviceSession {
+  /** Public handle used to revoke the session; not the cookie value. */
+  id: string;
   current: boolean;
   ip: string;
   userAgent: string;
