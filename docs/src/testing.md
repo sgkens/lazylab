@@ -36,6 +36,9 @@ Connect your coding agent through [MCP](/agents/mcp/) and configure the [CLI](/c
 | Brief an agent | Request `get_task_briefing` for a real issue and an MR | Descriptions, acceptance checks, discussion, patches and pipeline state match GitLab; missing sources and clipping are explicit |
 | Change sessions | Save a handoff with decisions, attempted fixes, actual checks and next steps, then start a fresh agent session | The new session receives the checkpoint without needing the old conversation |
 | Check freshness | Save an MR handoff with its full head SHA, then push another commit | The next MR briefing marks that handoff as no longer matching the current head |
+| Restrict an agent | Give a read token access to one disposable project; attempt a write and a read from another project | Writes and out-of-scope reads fail before reaching GitLab; MCP lists only allowed tools |
+| Bound CI attempts | Give a write token a daily cap of two; run a pipeline through REST and retry a failed job through MCP | Both attempts share the same persisted counter; a third attempt fails locally |
+| Recover the vault | Export an encrypted backup and print a recovery key; restart and reset the password using the key | Profiles, notes and token restrictions remain available; existing device sessions are revoked |
 | Follow CI | Push a branch, follow its pipeline and inspect a failed job | Status and the failure excerpt match GitLab; the watch notifies you when the pipeline finishes |
 | Exercise notifications | Send a watch result to a configured browser or phone channel | The real receiving device gets the expected status and project link |
 | Switch profiles | Read identically numbered tasks on two GitLab profiles | Task handoffs stay with their original profile |
@@ -49,7 +52,7 @@ Use the same issue or MR reference when saving and resuming a handoff. A handoff
 
 - Most list views read the first 50 entries per project; cross-project aggregation uses the 15 most recently active member projects. Large installations can therefore have missing items.
 - The inbox aggregates the active GitLab profile. It does not yet combine every configured host.
-- Agent tokens act as the owner on the active profile; project and tool allowlists remain planned. Secret reads are separately gated by the token's secret-access flag.
+- Agent tokens act as the owner on the active profile, constrained by read/write scope, project and MCP tool allowlists, expiry and a shared daily CI cap. Secret reads additionally require the secret-access flag. Existing tokens retain legacy permissions until edited.
 - Briefings intentionally bound discussion, related MRs, patches and failure excerpts. Read their `errors` and `omissions` fields before treating them as complete context.
 - CLI environment handling, notifications on real devices, live GitLab version differences, Windows and Docker networking still need broader acceptance testing.
 - CI does not yet build the Docker image or release a platform matrix of CLI binaries.

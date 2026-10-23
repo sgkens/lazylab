@@ -816,6 +816,14 @@ Verified: `bun run lint`; 321 tests across 27 files; SPA build without the 500 k
 
 Not verified: live GitLab writes, hosted CI, Windows/native Linux/macOS execution, real notification delivery, Tailscale Serve. GL-2 pagination and optional SEC-12 Host allowlist remain open. Aggregate views explicitly disclose the first 50 member projects and recent-15 fan-out limit. The shared BugKB was offline with no launcher available; no external KB entry was written.
 
+## Acceptance follow-up, 2026-10-24
+
+Merged the recovered branch into `develop` as `e8909e8`. Live tests used a private disposable GitLab.com project: explicit-project and read-only denials, allowed issue/MR creation and updates, MCP tool restrictions, pipeline execution, failed-job retry, shared daily CI cap, and encrypted profile recovery across restart all passed. The disposable project was submitted for deletion afterwards.
+
+Native Windows with a temporary Bun 1.3.11 runtime passed 321 tests, lint, SPA/CLI builds, the CLI executable and production HTTP/SPA/CSP smoke. Windows reports DOS attributes rather than POSIX mode 0600, so only those mode assertions are platform-specific; encryption and persistence checks still run. After the live rate-limit fix, the 17-test agent REST suite also passes on Windows. Linux/WSL passes 322 tests, lint and SPA/CLI builds.
+
+Live GitLab throttling exposed agent routes returning HTTP 500 or false 404 for a scheduler pause. They now preserve HTTP 429 with `Retry-After`/`retryAt`, covered across reads, writes and pipeline creation (`08bf5dd`). Windows permission assertions were corrected in `83f3a01`. The BugKB was offline; these verified findings are retained in `ACCEPTANCE.md`. Tailscale Serve, macOS and actual phone/chat notification delivery remain open.
+
 ## BACKLOG
 
 New free-form ideas go here; they are moved into an epic with task IDs when picked up.
