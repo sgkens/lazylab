@@ -40,6 +40,11 @@ async function startServer() {
   // Project avatars travel as base64 JSON (GitLab caps them at 200 KB).
   app.use(express.json({ limit: '1mb' }));
 
+  // Liveness only: available before setup and while locked; never contacts GitLab.
+  app.get('/healthz', (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({ status: 'ok' });
+  });
+
   app.use('/api/session', sessionRouter);
   app.use('/api', apiGuard);
   app.use('/api/vault', vaultRouter);

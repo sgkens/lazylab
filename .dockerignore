@@ -11,3 +11,6 @@ tests
 devtracker-pending.md
 dist-cli
 brand
+
+# Local agent worktrees and their dependencies are not build inputs.
+.claude

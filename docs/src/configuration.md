@@ -66,3 +66,9 @@ When the member project list is refreshed, expired rows of projects no longer in
 - **Vault → Notifications:** push channels and notification rules.
 - **Settings modal (gear icon):** background refresh interval, **Refresh now**, and the active GitLab connection. Hosts and tokens are managed in **Vault → GitLab profiles**; the modal links there.
 - **Vault → Account:** change password, signed-in devices.
+
+## Container health
+
+`GET /healthz` returns HTTP 200 with `{"status":"ok"}` when the server can answer requests. It works before setup and while the vault is locked, exposes no vault or session data, and makes no GitLab requests. It is a liveness probe; it does not verify GitLab connectivity or vault readiness.
+
+The Docker image probes this route every 30 seconds, with a 5-second timeout, a 20-second startup allowance and three failed attempts before marking the container unhealthy. The probe follows `HOST`, `PORT` and built-in TLS settings, including the generated self-signed certificate. Container health alone does not restart a container.
