@@ -2683,7 +2683,7 @@ export class GitLabClient {
   async getPipeline(projectId: number, pipelineId: number): Promise<GitLabPipeline> {
     if (this.isDemoMode) {
       const p = DEMO_PIPELINES.find((x) => x.id === pipelineId && x.project_id === projectId);
-      if (!p) throw new Error(`Pipeline ${pipelineId} not found`);
+      if (!p) throw new GitLabApiError(`Pipeline ${pipelineId} not found`, 404, `/projects/${projectId}/pipelines/${pipelineId}`);
       return p;
     }
     const { data: p } = await this.fetchApi<any>(`/projects/${projectId}/pipelines/${pipelineId}`);
@@ -2704,7 +2704,7 @@ export class GitLabClient {
   async getJob(projectId: number, jobId: number): Promise<GitLabJob & { failure_reason?: string }> {
     if (this.isDemoMode) {
       const job = Object.values(DEMO_JOBS).flat().find((j) => j.id === jobId);
-      if (!job) throw new Error(`Job ${jobId} not found`);
+      if (!job) throw new GitLabApiError(`Job ${jobId} not found`, 404, `/projects/${projectId}/jobs/${jobId}`);
       return job;
     }
     const { data: j } = await this.fetchApi<any>(`/projects/${projectId}/jobs/${jobId}`);
@@ -2736,7 +2736,7 @@ export class GitLabClient {
   async getMergeRequest(projectId: number, mrIid: number): Promise<GitLabMergeRequest> {
     if (this.isDemoMode) {
       const mr = DEMO_MRS.find((m) => m.project_id === projectId && m.iid === mrIid);
-      if (!mr) throw new Error(`Merge request !${mrIid} not found`);
+      if (!mr) throw new GitLabApiError(`Merge request !${mrIid} not found`, 404, `/projects/${projectId}/merge_requests/${mrIid}`);
       return mr;
     }
     const { data } = await this.fetchApi<any>(`/projects/${projectId}/merge_requests/${mrIid}`);

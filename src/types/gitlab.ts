@@ -266,6 +266,7 @@ export interface AppStatus {
   isDemo: boolean;
   user: GitLabUser | null;
   autoFetchIntervalSec: number;
+  watchPollSec?: number;
   autoFetch?: {
     intervalSec: number;
     running: boolean;

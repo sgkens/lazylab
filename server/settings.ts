@@ -7,12 +7,15 @@ import { DEFAULT_BUDGET, RequestBudget } from './requestScheduler.js';
 export interface ServerSettings {
   /** Seconds between auto-fetch cycles; 0 turns auto-fetch off. */
   autoFetchIntervalSec: number;
+  /** Base seconds between watch checks; older pipelines are checked less often (WATCH-10, WATCH-14). */
+  watchPollSec: number;
   /** GitLab request budget for the request scheduler (GL-19). */
   requestBudget: RequestBudget;
 }
 
 export const defaultSettings = (): ServerSettings => ({
   autoFetchIntervalSec: 30,
+  watchPollSec: 15,
   requestBudget: { ...DEFAULT_BUDGET }
 });
 

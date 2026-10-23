@@ -8,7 +8,7 @@ import { TokenExpiryMonitor } from './tokenExpiry.js';
 import { metricsManager } from './metricsManager.js';
 import { vault } from './vault.js';
 import { getInbox } from './inbox.js';
-import { watchManager } from './watch.js';
+import { watchManager, parseWatchPollInterval } from './watch.js';
 import { extractFailure, parseRunPipelineInput } from './triage.js';
 import { AutoFetchLoop, parseAutoFetchInterval } from './autoFetch.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -191,6 +191,7 @@ apiRouter.get('/status', async (_req: Request, res: Response) => {
       isDemo: gitlabClient.isDemo(),
       user,
       autoFetchIntervalSec: autoFetch.getInterval(),
+      watchPollSec: watchManager.getPollIntervalSec(),
       autoFetch: autoFetch.getStatus(),
       scheduler: requestScheduler.getStatus(),
       lastSyncTime,
@@ -216,6 +217,22 @@ apiRouter.post('/config/autofetch', (req: Request, res: Response) => {
   }
   autoFetch.setInterval(intervalSec);
   res.json({ success: true, autoFetchIntervalSec: autoFetch.getInterval() });
+});
+
+apiRouter.post('/config/watch-poll', (req: Request, res: Response) => {
+  let intervalSec: number;
+  try {
+    intervalSec = parseWatchPollInterval(req.body?.intervalSec);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  try {
+    updateSettings({ watchPollSec: intervalSec });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: `Could not save the watch interval: ${err.message}` });
+  }
+  watchManager.setPollInterval(intervalSec);
+  res.json({ success: true, watchPollSec: intervalSec });
 });
 
 apiRouter.get('/config/request-budget', (_req: Request, res: Response) => {

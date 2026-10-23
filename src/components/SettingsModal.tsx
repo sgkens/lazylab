@@ -37,6 +37,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onOpenProfiles
 }) => {
   const [intervalSec, setIntervalSec] = useState<number>(status?.autoFetchIntervalSec ?? 30);
+  const [watchPollSec, setWatchPollSec] = useState(status?.watchPollSec ?? 15);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [budget, setBudget] = useState<RequestBudget>(status?.scheduler?.budget ?? { plan: 'free', perHour: 4000, perMinute: 80 });
 
@@ -48,7 +49,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (isOpen && status?.scheduler) setBudget(status.scheduler.budget);
   }, [isOpen, status?.scheduler?.budget.plan, status?.scheduler?.budget.perHour, status?.scheduler?.budget.perMinute]);
 
+  useEffect(() => {
+    if (isOpen) setWatchPollSec(status?.watchPollSec ?? 15);
+  }, [isOpen, status?.watchPollSec]);
+
   if (!isOpen) return null;
+
+  const handleWatchInterval = async (value: number) => {
+    const previous = watchPollSec;
+    setWatchPollSec(value);
+    try {
+      await api.updateWatchPoll(value);
+      onStatusUpdated();
+    } catch (err) {
+      setWatchPollSec(previous);
+      reportError('Could not change the watch interval', err);
+    }
+  };
 
   const handleUpdateInterval = async (val: number) => {
     const previous = intervalSec;
@@ -162,6 +179,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               The server allows 30 seconds at minimum, starts the next refresh only after the previous one finished,
               and keeps the setting across restarts.
             </p>
+          </div>
+
+          <div className="pt-3 border-t border-slate-800">
+            <label htmlFor="watch-poll" className="block text-slate-400 font-medium mb-1.5">Watch check interval</label>
+            <select id="watch-poll" value={watchPollSec} onChange={(e) => handleWatchInterval(Number(e.target.value))}
+              className="bg-slate-950 text-slate-300 border border-slate-800 rounded px-3 py-1.5">
+              {[...new Set([10, 15, 30, 60, 120, 300, watchPollSec])].sort((a, b) => a - b).map((sec) => <option key={sec} value={sec}>{sec} seconds</option>)}
+            </select>
+            <p className="text-[11px] text-slate-500 mt-1">Older pipelines and unchanged merge requests are checked less often, up to 10 minutes. The setting survives restarts.</p>
           </div>
 
           {/* Request budget (GL-19) */}

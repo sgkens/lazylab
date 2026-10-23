@@ -113,6 +113,12 @@ export const api = {
       body: JSON.stringify({ intervalSec })
     }),
 
+  updateWatchPoll: (intervalSec: number) =>
+    request<{ success: boolean; watchPollSec: number }>('/config/watch-poll', {
+      method: 'POST',
+      body: JSON.stringify({ intervalSec })
+    }),
+
   updateRequestBudget: (budget: RequestBudget) =>
     request<{ success: boolean; budget: RequestBudget }>('/config/request-budget', {
       method: 'POST',

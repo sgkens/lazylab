@@ -41,7 +41,7 @@ cp .env.example .env
 |---|---|---|
 | `vault.json` | Everything in the vault | Yes, AES-256-GCM |
 | `labwi_cache.sqlite`, `labwi_cache.wal` | Cached GitLab responses and a change journal | No |
-| `settings.json` | Non-secret server settings: background refresh interval, request budget | No |
+| `settings.json` | Non-secret server settings: background refresh interval, watch interval, request budget | No |
 | `tls/` | Self-signed certificate and key, when generated | No (key file mode 0600) |
 
 Back up `vault.json` and remember the password. The cache can be deleted at any time; lazylab refetches from GitLab.
@@ -84,3 +84,12 @@ How the scheduler spends the budget:
 - **429:** every lane pauses until `Retry-After` (or `RateLimit-Reset`, or 60 s), with growing backoff on repeated 429s. A read that hit the 429 is retried once after the pause. A request that cannot start within its wait limit (30 s for clicks, 2 min for watches, 5 min for background) fails with a rate-limit error instead of hanging.
 - **Timeout:** 15 s per request, including the response body; job logs and uploads get 60 s.
 - **Status:** the sync bar shows "GitLab rate limit: paused until HH:MM" or "GitLab quota low" while requests are held back. `GET /api/status` has the full state under `scheduler` (budget, tokens, queue per lane, last `RateLimit-*` values, counts of 429s and timeouts).
+
+### Watch polling
+
+Settings → **Watch check interval** sets the base interval from 10 to 300 whole seconds (default 15).
+`POST /api/config/watch-poll` accepts `{ "intervalSec": 30 }`, rejects invalid values with 400, and saves `watchPollSec` in `settings.json`. `GET /api/status` reports `watchPollSec`; watch views include `nextCheckAt`.
+
+Pipeline creation time and job start time determine backoff: under 10 minutes uses the base interval, 10–30 minutes doubles it, 30 minutes–2 hours quadruples it, and older runs use eight times the base, capped at 10 minutes. Merge requests use time since their last observed change. Failures retry at the base interval and also obey the shared request scheduler's quota limits.
+
+Only two consecutive `GitLabApiError` responses with HTTP status 404 remove a missing watch. A successful check or another error resets that count. Permission failures, timeouts, rate limits and error messages containing “not found” retain the watch.
