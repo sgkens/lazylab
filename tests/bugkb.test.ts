@@ -236,7 +236,7 @@ describe('MCP and CLI knowledge workflow', () => {
   const records = new Map<string, any>();
   beforeAll(async () => {
     if (!vault.isInitialized()) await vault.initialize('tester', 'correct horse battery');
-    token = vault.createAgentToken('knowledge-test').token;
+    token = vault.createAgentToken('knowledge-test', { scope: 'write' }).token;
     kb = serve(async (req, u) => {
       if (u.pathname.endsWith('/info')) return Response.json({ hooks: 1 });
       if (u.pathname.endsWith('/search')) return Response.json({ items: [...records.values()] });

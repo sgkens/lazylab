@@ -13,7 +13,7 @@ beforeAll(async () => {
   if (!vault.isInitialized()) await vault.initialize('tester', 'correct horse battery');
   // Imported after the vault is unlocked so the router's unlock hook (auto-fetch timers) does not fire here.
   const { apiRouter } = await import('../server/apiRouter.ts');
-  token = vault.createAgentToken('rest-test').token;
+  token = vault.createAgentToken('rest-test', { scope: 'write' }).token;
   const app = express();
   app.use(express.json());
   app.use('/api', apiGuard);

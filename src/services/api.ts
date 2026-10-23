@@ -31,7 +31,7 @@ import {
 import { Inbox } from '../types/inbox';
 import { Note, NoteFilter, NoteInput, NoteMigrateOptions, NoteNamespace } from '../types/notes';
 import { NotifyChannelInfo, NotifyChannelInput, NotifyRules, NotifyState, WatchKind, WatchView } from '../types/notify';
-import { DeviceSession, SessionState, TokenOverview, VaultEntryKind, VaultSummary } from '../types/vault';
+import { AgentTokenSettings, DeviceSession, SessionState, TokenOverview, VaultEntryKind, VaultSummary } from '../types/vault';
 
 const post = (body?: unknown): RequestInit => ({ method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 
@@ -88,8 +88,10 @@ export const vaultApi = {
     payload: { scope_type: 'project' | 'group'; scope_id: number; key: string; environment_scope?: string; masked?: boolean; protected?: boolean }
   ) => request<VaultSummary>(`/vault/entries/${id}/push`, post(payload)),
 
-  createAgentToken: (name: string, secrets = false) =>
-    request<{ success: boolean; token: string }>('/vault/agent-tokens', post({ name, secrets })),
+  createAgentToken: (name: string, settings: AgentTokenSettings) =>
+    request<{ success: boolean; token: string }>('/vault/agent-tokens', post({ name, ...settings })),
+  updateAgentToken: (id: string, settings: AgentTokenSettings) =>
+    request<{ success: boolean }>(`/vault/agent-tokens/${id}`, { method: 'PATCH', body: JSON.stringify(settings) }),
   deleteAgentToken: (id: string) => request<{ success: boolean }>(`/vault/agent-tokens/${id}`, { method: 'DELETE' }),
 
   tokenExpiry: (force = false) => request<{ success: boolean } & TokenOverview>(`/tokens/expiry${force ? '?force=true' : ''}`),

@@ -46,7 +46,25 @@ flowchart LR
 - A token authenticates `/api/agent/*` and `/mcp`. It does not open the vault or the browser UI.
 - `/mcp` also rejects requests whose `Origin` header names a different host. This prevents DNS rebinding.
 - Revoking a token takes effect on its next request.
-- Tokens act as the GitLab profile that is active at the time. The one per-token right is **Can read secrets**, set at creation: only such tokens can call `get_env`, which returns CI/CD variable values and named vault secrets (for `lazy env pull` and `lazy run`). Give agents tokens without it. Each `get_env` call is written to the journal with the token name. Other scopes are planned.
+- Tokens act as the GitLab profile that is active at the time, limited by the token's permissions below.
+
+### Token permissions
+
+Each token carries these settings, chosen at creation and changeable later with **Edit**. They apply to both `/api/agent/*` and `/mcp`.
+
+| Setting | Values | Effect |
+|---|---|---|
+| Scope | **Read only** (default for new tokens) or **Read and write** | Read only may read GitLab and change lazylab's own state: watches, handoffs and notes. Read and write may also create and change issues and merge requests, comment, run pipelines, retry jobs and record BugKB findings. Denied REST calls get `403`; MCP hides the tools and refuses calls with a tool error |
+| Allowed projects | Numeric project ids, or empty for every project | Calls on any other project get `403` (REST) or a tool error (MCP), whether the project is given as an id or a path. Inbox, project and watch lists leave other projects out |
+| Default project | One allowed project, or none | Used by REST calls that omit `projectId`. MCP tools always name the project |
+| Expiry | 7, 30 (default in the UI), 90 or 365 days, or none | After it, the token gets `401 Agent token expired at …` |
+| Can read secrets | Off (default) or on | Only such tokens can call `get_env`, which returns CI/CD variable values and named vault secrets (for `lazy env pull` and `lazy run`). Give agents tokens without it. Each `get_env` call is written to the journal with the token name |
+
+The list shows each token's scope, projects, expiry and when it was last used. The last-used time is saved at most once a minute per token, so it can lag by up to a minute, and by more after a restart.
+
+### Tokens created before scopes
+
+Tokens stored before these settings existed keep the access they had: **Read and write**, every project, no expiry. They show a **legacy: review** badge. Edit each one to narrow it, or revoke it and create a new one. Nothing changes for an agent until you do.
 
 ## What is not encrypted
 

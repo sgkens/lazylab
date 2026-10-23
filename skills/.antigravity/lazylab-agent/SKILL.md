@@ -18,10 +18,11 @@ If the `lazylab` MCP server is connected (tools such as `get_inbox`, `get_pipeli
   - `LAZYLAB_TOKEN`: an agent token (`llab_…`) created in lazylab under Vault → Agent tokens. If it is missing, ask the user to create one. Never print it.
 - Every request sends `Authorization: Bearer $LAZYLAB_TOKEN`.
 - Status codes:
-  - `401` means the token is invalid or revoked.
+  - `401` means the token is invalid, revoked or expired. Ask the user for a new token.
+  - `403` means the token may not do this: it is read only, or the project is outside its allowed projects. Tell the user; do not retry or try another project.
   - `400` with `projectId is required` means the call did not name a project; add `projectId` and retry once.
   - `423` means the vault is locked (server restarted and nobody has signed in yet). Ask the user to sign in to lazylab in a browser; do not retry in a loop.
-- Every work item, merge request, pipeline and job call needs `projectId` (the numeric GitLab project id). Without it the server answers `400`; it never guesses a project. Take the id from the inbox (`project_id`) or ask the user.
+- Every work item, merge request, pipeline and job call needs `projectId` (the numeric GitLab project id). Without it the server uses the token's default project if the user set one, and otherwise answers `400`; it never guesses a project. Take the id from the inbox (`project_id`) or ask the user.
 - If the response's work items look like sample data (project `gitlab-orchestrator`, user `alex.dev`), lazylab is in demo mode: writes go to in-memory data and are lost on restart. Tell the user before writing.
 
 ## Writing rules

@@ -31,8 +31,9 @@ export function acceptanceCriteria(description: string): { text: string; complet
 }
 
 /** One compact, read-only snapshot. Optional source failures are explicit, never empty-success fallbacks. */
-export async function buildTaskBriefing(client: GitLabClient, task: TaskRef, handoffs: AgentHandoff[], kb = new BugKbClient()) {
+export async function buildTaskBriefing(client: GitLabClient, task: TaskRef, handoffs: AgentHandoff[], kb = new BugKbClient(), allowsProject: (id: number) => boolean = () => true) {
   validateTask(task);
+  if (!allowsProject(task.project_id)) throw new Error('This agent token may not access the task project');
   const primary = task.kind === 'work_item'
     ? await client.getWorkItem(task.project_id, task.iid)
     : await client.getMergeRequest(task.project_id, task.iid);
@@ -72,7 +73,9 @@ export async function buildTaskBriefing(client: GitLabClient, task: TaskRef, han
     const linked = await optional('related_merge_requests', () => client.getIssueMergeRequests(task.project_id, task.iid));
     if (linked && linked.length > 3) omissions.push('related_merge_requests: first 3, open and recently updated first');
     if (linked && linked.length >= 100) omissions.push('related_merge_requests: GitLab list limited to first 100');
-    const chosen = (linked ?? []).sort((a, b) => Number(b.state === 'opened') - Number(a.state === 'opened') || b.updated_at.localeCompare(a.updated_at)).slice(0, 3);
+    const allowed = (linked ?? []).filter((m) => allowsProject(m.project_id));
+    if (allowed.length < (linked?.length ?? 0)) omissions.push('related_merge_requests: projects outside this token’s access omitted');
+    const chosen = allowed.sort((a, b) => Number(b.state === 'opened') - Number(a.state === 'opened') || b.updated_at.localeCompare(a.updated_at)).slice(0, 3);
     const fetched = await mapLimit(chosen, 3, (m) => optional(`merge_request.${m.project_id}!${m.iid}`, () => client.getMergeRequest(m.project_id, m.iid)));
     mrs = fetched.flatMap((r) => r.status === 'fulfilled' && r.value ? [r.value] : []);
   }
@@ -81,9 +84,11 @@ export async function buildTaskBriefing(client: GitLabClient, task: TaskRef, han
   for (const mr of mrs) {
     const source = `merge_request.${mr.project_id}!${mr.iid}`;
     const pipelineProject = mr.pipeline?.project_id ?? mr.project_id;
+    const pipelineAllowed = allowsProject(pipelineProject);
+    if (!pipelineAllowed && mr.pipeline) omissions.push(`${source}.pipeline: outside this token’s project access`);
     const [diffs, jobs] = await Promise.all([
       optional(`${source}.diffs`, () => client.getMergeRequestDiffs(mr.project_id, mr.iid)),
-      mr.pipeline ? optional(`${source}.jobs`, () => client.getPipelineJobs(pipelineProject, mr.pipeline!.id, true)) : null
+      mr.pipeline && pipelineAllowed ? optional(`${source}.jobs`, () => client.getPipelineJobs(pipelineProject, mr.pipeline!.id, true)) : null
     ]);
     if (diffs && diffs.length > 10) omissions.push(`${source}.diffs: first 10 files only; GitLab may also limit diffs`);
     const failed = jobs?.jobs.filter((j) => j.status === 'failed' && !j.allow_failure) ?? [];
@@ -101,7 +106,7 @@ export async function buildTaskBriefing(client: GitLabClient, task: TaskRef, han
     mergeRequests.push({
       ...record(mr, source), source_branch: mr.source_branch, target_branch: mr.target_branch,
       head_sha: mr.sha ?? mr.pipeline?.sha ?? null, has_conflicts: mr.has_conflicts,
-      merge_status: mr.detailed_merge_status || mr.merge_status, pipeline: mr.pipeline ?? null,
+      merge_status: mr.detailed_merge_status || mr.merge_status, pipeline: pipelineAllowed ? mr.pipeline ?? null : null,
       diffs: patches,
       failures: jobs ? failures.flatMap((r) => {
         if (r.status !== 'fulfilled' || !r.value) return [];

@@ -9,12 +9,13 @@ Every request sends `Authorization: Bearer $LAZYLAB_TOKEN`, a token from **Vault
 
 | Status | Meaning |
 |---|---|
-| `401` | Missing, invalid or revoked token |
+| `401` | Missing, invalid, revoked or expired token |
 | `423` | The vault is locked; sign in to lazylab in a browser |
 | `400` | A required field is missing or invalid, for example `projectId` |
+| `403` | The token is read only and the call writes, or the project is not in the token's allowed projects |
 | `404` | The item does not exist on the active GitLab profile |
 
-Every work item, merge request, pipeline and job route needs `projectId`, the numeric GitLab project id, in the query string for reads and in the body (or query string) for writes. Without it the server answers `400 projectId is required`; it does not guess a project. The inbox and watches routes are not tied to one project.
+Every work item, merge request, pipeline and job route needs `projectId`, the numeric GitLab project id, in the query string for reads and in the body (or query string) for writes. Without it the server uses the token's default project, if one is set in **Vault → Agent tokens**, and otherwise answers `400 projectId is required`; it does not guess a project. The inbox and watches routes are not tied to one project; for a token with allowed projects they leave other projects out. A **Read only** token may call the `GET` routes and `POST /api/agent/watches`; other writes get `403`. See [Token permissions](/security/#token-permissions).
 
 ## Endpoints
 

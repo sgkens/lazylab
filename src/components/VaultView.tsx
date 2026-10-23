@@ -23,7 +23,7 @@ import {
 import { notifyApi, sessionApi, vaultApi } from '../services/api';
 import { NotifyChannelInput, NotifyChannelType, NotifyRules, NotifyState } from '../types/notify';
 import { GitLabProject } from '../types/gitlab';
-import { AgentTokenInfo, DeviceSession, TokenOverview, TrackedToken, VaultEntry, VaultEntryKind, VaultProfile } from '../types/vault';
+import { AgentScope, AgentTokenInfo, AgentTokenSettings, DeviceSession, TokenOverview, TrackedToken, VaultEntry, VaultEntryKind, VaultProfile } from '../types/vault';
 import { reportError } from '../utils/reportError';
 
 interface VaultViewProps {
@@ -226,7 +226,7 @@ export const VaultView: React.FC<VaultViewProps> = ({ projects, onProfileChanged
             showToast={showToast}
           />
         )}
-        {section === 'agent' && <AgentSection tokens={agentTokens} run={run} showToast={showToast} />}
+        {section === 'agent' && <AgentSection tokens={agentTokens} projects={projects} run={run} showToast={showToast} />}
         {section === 'notify' && <NotifySection run={run} showToast={showToast} />}
         {section === 'account' && <AccountSection run={run} onLocked={onLocked} />}
       </div>
@@ -888,15 +888,234 @@ const AgentSetupSnippets: React.FC<{ token: string; showToast: (m: string) => vo
   );
 };
 
-const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m: string) => void }> = ({ tokens, run, showToast }) => {
+const EXPIRY_CHOICES: { value: string; label: string }[] = [
+  { value: '30', label: '30 days' },
+  { value: '90', label: '90 days' },
+  { value: '7', label: '7 days' },
+  { value: '365', label: '1 year' },
+  { value: 'never', label: 'No expiry' }
+];
+
+const daysUntil = (iso: string | null) => (iso ? Math.ceil((Date.parse(iso) - Date.now()) / 86_400_000) : null);
+
+/** "901, 902" → [901, 902]; null when any part is not a positive integer. */
+function parseProjectIds(text: string): number[] | null {
+  const parts = text.split(/[\s,]+/).filter(Boolean);
+  if (!parts.every((p) => /^\d+$/.test(p) && Number.isSafeInteger(Number(p)) && Number(p) > 0)) return null;
+  return [...new Set(parts.map(Number))];
+}
+
+interface TokenFormState {
+  scope: AgentScope;
+  secrets: boolean;
+  projectsText: string;
+  defaultProjectId: string;
+  /** Days as a string, 'never', or 'keep' (edit only). */
+  expiry: string;
+}
+
+const formFromToken = (t?: AgentTokenInfo): TokenFormState => ({
+  scope: t?.scope ?? 'read',
+  secrets: t?.secrets ?? false,
+  projectsText: t?.projects?.join(', ') ?? '',
+  defaultProjectId: t?.defaultProjectId ? String(t.defaultProjectId) : '',
+  expiry: t ? 'keep' : '30'
+});
+
+/** Form state → API settings; throws a readable message for bad input. */
+function settingsFromForm(f: TokenFormState): AgentTokenSettings {
+  const projects = f.projectsText.trim() ? parseProjectIds(f.projectsText) : [];
+  if (projects === null) throw new Error('Allowed projects must be numeric project ids separated by commas');
+  const settings: AgentTokenSettings = {
+    scope: f.scope,
+    secrets: f.secrets,
+    projects: projects.length ? projects : null,
+    defaultProjectId: f.defaultProjectId ? Number(f.defaultProjectId) : null
+  };
+  if (f.expiry !== 'keep') settings.expiresInDays = f.expiry === 'never' ? null : Number(f.expiry);
+  return settings;
+}
+
+const AgentTokenFields: React.FC<{ form: TokenFormState; setForm: (f: TokenFormState) => void; projects: GitLabProject[]; editing: boolean; idPrefix: string }> = ({
+  form,
+  setForm,
+  projects,
+  editing,
+  idPrefix
+}) => {
+  const allowed = parseProjectIds(form.projectsText) ?? [];
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  const defaultChoices = allowed.length ? allowed : projects.map((p) => p.id);
+  return (
+    <div className="space-y-2.5 text-[11px] text-zinc-400">
+      <fieldset className="flex flex-wrap gap-x-4 gap-y-1">
+        <legend className="sr-only">Scope</legend>
+        <label className="flex items-start gap-1.5">
+          <input type="radio" className="mt-0.5" name={`${idPrefix}-scope`} checked={form.scope === 'read'} onChange={() => setForm({ ...form, scope: 'read' })} />
+          <span>
+            <span className="text-zinc-200">Read only</span>: read GitLab, add watches, handoffs and notes
+          </span>
+        </label>
+        <label className="flex items-start gap-1.5">
+          <input type="radio" className="mt-0.5" name={`${idPrefix}-scope`} checked={form.scope === 'write'} onChange={() => setForm({ ...form, scope: 'write' })} />
+          <span>
+            <span className="text-zinc-200">Read and write</span>: also create and change issues and MRs, comment, run pipelines, retry jobs
+          </span>
+        </label>
+      </fieldset>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="space-y-1" htmlFor={`${idPrefix}-projects`}>
+          <span>Allowed projects (ids, comma separated; empty means every project)</span>
+          <input
+            id={`${idPrefix}-projects`}
+            className={inputClass}
+            placeholder="all projects"
+            value={form.projectsText}
+            onChange={(e) => setForm({ ...form, projectsText: e.target.value })}
+          />
+        </label>
+        <label className="space-y-1" htmlFor={`${idPrefix}-add-project`}>
+          <span>Add a project</span>
+          <select
+            id={`${idPrefix}-add-project`}
+            className={inputClass}
+            value=""
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              if (id && !allowed.includes(id)) setForm({ ...form, projectsText: [...allowed, id].join(', ') });
+            }}
+          >
+            <option value="">choose…</option>
+            {projects
+              .filter((p) => !allowed.includes(p.id))
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.path_with_namespace} ({p.id})
+                </option>
+              ))}
+          </select>
+        </label>
+      </div>
+      {allowed.length > 0 && (
+        <p className="font-mono text-zinc-500">{allowed.map((id) => byId.get(id)?.path_with_namespace ?? `#${id}`).join(' · ')}</p>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="space-y-1" htmlFor={`${idPrefix}-default`}>
+          <span>Default project for REST calls without projectId</span>
+          <select
+            id={`${idPrefix}-default`}
+            className={inputClass}
+            value={form.defaultProjectId}
+            onChange={(e) => setForm({ ...form, defaultProjectId: e.target.value })}
+          >
+            <option value="">none: projectId required</option>
+            {form.defaultProjectId && !defaultChoices.includes(Number(form.defaultProjectId)) && (
+              <option value={form.defaultProjectId}>#{form.defaultProjectId} (not allowed)</option>
+            )}
+            {defaultChoices.map((id) => (
+              <option key={id} value={id}>
+                {byId.get(id)?.path_with_namespace ?? `#${id}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1" htmlFor={`${idPrefix}-expiry`}>
+          <span>Expires</span>
+          <select id={`${idPrefix}-expiry`} className={inputClass} value={form.expiry} onChange={(e) => setForm({ ...form, expiry: e.target.value })}>
+            {editing && <option value="keep">keep current</option>}
+            {EXPIRY_CHOICES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {editing && c.value !== 'never' ? `${c.label} from now` : c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <label className="flex items-start gap-2">
+        <input type="checkbox" className="mt-0.5" checked={form.secrets} onChange={(e) => setForm({ ...form, secrets: e.target.checked })} />
+        <span>
+          Can read secrets: CI variable values and vault secrets, for <code className="font-mono">lazy env pull</code> and{' '}
+          <code className="font-mono">lazy run</code>. Leave it off for tokens given to agents.
+        </span>
+      </label>
+    </div>
+  );
+};
+
+const badge = 'px-1.5 py-0.5 rounded border text-[10px] font-medium';
+
+const AgentTokenRow: React.FC<{ t: AgentTokenInfo; projects: GitLabProject[]; run: Run }> = ({ t, projects, run }) => {
+  const [form, setForm] = useState<TokenFormState | null>(null);
+  const byId = new Map(projects.map((p) => [p.id, p.path_with_namespace]));
+  const projectText = t.projects ? t.projects.map((id) => byId.get(id) ?? `#${id}`).join(', ') : 'all projects';
+  return (
+    <li className="px-3 py-2 space-y-2">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-zinc-100">
+            {t.name}
+            <span
+              className={`${badge} ${t.scope === 'write' ? 'border-orange-800/60 bg-orange-950/30 text-orange-300' : 'border-zinc-700 bg-zinc-900 text-zinc-300'}`}
+            >
+              {t.scope === 'write' ? 'read and write' : 'read only'}
+            </span>
+            {t.secrets && <span className={`${badge} border-amber-800/60 bg-amber-950/30 text-amber-300`}>reads secrets</span>}
+            <ExpiryBadge days={daysUntil(t.expiresAt)} />
+            {t.legacy && (
+              <span className={`${badge} border-zinc-700 bg-zinc-900 text-zinc-400`} title="Created before token scopes: kept full access. Edit to narrow it.">
+                legacy: review
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] text-zinc-500 truncate" title={projectText}>
+            Projects: {projectText}
+            {t.defaultProjectId ? ` · default ${byId.get(t.defaultProjectId) ?? `#${t.defaultProjectId}`}` : ''}
+          </div>
+          <div className="text-[11px] text-zinc-500 font-mono">
+            {t.prefix}… · created {fmtDate(t.createdAt)} · last used {t.lastUsedAt ? fmtDate(t.lastUsedAt) : 'never'}
+            {t.expiresAt ? ` · expires ${fmtDate(t.expiresAt)}` : ''}
+          </div>
+        </div>
+        <button className={btnGhost} onClick={() => setForm(form ? null : formFromToken(t))}>
+          {form ? 'Cancel' : 'Edit'}
+        </button>
+        <button className={btnDanger} onClick={() => confirm(`Revoke ${t.name}?`) && run(() => vaultApi.deleteAgentToken(t.id), 'Token revoked')}>
+          Revoke
+        </button>
+      </div>
+      {form && (
+        <form
+          className="space-y-2 border-t border-zinc-800 pt-2"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (await run(async () => vaultApi.updateAgentToken(t.id, settingsFromForm(form)), 'Token updated')) setForm(null);
+          }}
+        >
+          <AgentTokenFields form={form} setForm={setForm} projects={projects} editing idPrefix={`edit-${t.id}`} />
+          <button className={btnPrimary}>Save</button>
+        </form>
+      )}
+    </li>
+  );
+};
+
+const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; projects: GitLabProject[]; run: Run; showToast: (m: string) => void }> = ({
+  tokens,
+  projects,
+  run,
+  showToast
+}) => {
   const [name, setName] = useState('');
-  const [secrets, setSecrets] = useState(false);
+  const [form, setForm] = useState<TokenFormState>(formFromToken());
   const [created, setCreated] = useState<string | null>(null);
 
   return (
     <Card
       title="Agent tokens"
-      description="Bearer tokens for the MCP server at /mcp and for /api/agent/* (Claude Code, Codex, Antigravity, scripts). Shown once at creation; only a hash is stored."
+      description="Bearer tokens for the MCP server at /mcp and for /api/agent/* (Claude Code, Codex, Antigravity, scripts). Shown once at creation; only a hash is stored. Each token has a scope, optional allowed projects and an expiry."
     >
       {created && (
         <div className="p-3 bg-emerald-950/30 border border-emerald-800/60 rounded-lg space-y-2">
@@ -925,24 +1144,7 @@ const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m
       ) : (
         <ul className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg">
           {tokens.map((t) => (
-            <li key={t.id} className="flex items-center gap-3 px-3 py-2">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-semibold text-zinc-100">
-                  {t.name}
-                  {t.secrets && (
-                    <span className="ml-2 px-1.5 py-0.5 rounded border border-amber-800/60 bg-amber-950/30 text-[10px] font-medium text-amber-300">
-                      reads secrets
-                    </span>
-                  )}
-                </div>
-                <div className="text-[11px] text-zinc-500 font-mono">
-                  {t.prefix}… · created {fmtDate(t.createdAt)}
-                </div>
-              </div>
-              <button className={btnDanger} onClick={() => confirm(`Revoke ${t.name}?`) && run(() => vaultApi.deleteAgentToken(t.id), 'Token revoked')}>
-                Revoke
-              </button>
-            </li>
+            <AgentTokenRow key={t.id} t={t} projects={projects} run={run} />
           ))}
         </ul>
       )}
@@ -952,10 +1154,10 @@ const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m
         onSubmit={async (e) => {
           e.preventDefault();
           let token = '';
-          if (await run(async () => (token = (await vaultApi.createAgentToken(name, secrets)).token))) {
+          if (await run(async () => (token = (await vaultApi.createAgentToken(name, settingsFromForm(form))).token))) {
             setCreated(token);
             setName('');
-            setSecrets(false);
+            setForm(formFromToken());
           }
         }}
       >
@@ -965,13 +1167,7 @@ const AgentSection: React.FC<{ tokens: AgentTokenInfo[]; run: Run; showToast: (m
             <Plus className="w-3.5 h-3.5" /> Create
           </button>
         </div>
-        <label className="flex items-start gap-2 text-[11px] text-zinc-400">
-          <input type="checkbox" className="mt-0.5" checked={secrets} onChange={(e) => setSecrets(e.target.checked)} />
-          <span>
-            Can read secrets: CI variable values and vault secrets, for <code className="font-mono">lazy env pull</code> and{' '}
-            <code className="font-mono">lazy run</code>. Leave it off for tokens given to agents.
-          </span>
-        </label>
+        <AgentTokenFields form={form} setForm={setForm} projects={projects} editing={false} idPrefix="new-token" />
       </form>
     </Card>
   );

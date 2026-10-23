@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'crypto';
 import { AgentHandoff, HANDOFFS_PER_TASK, HANDOFFS_TOTAL, parseHandoff, sameTask, TaskRef, validateTask } from './handoffs.js';
+import { AgentPolicy, AgentTokenFields, checkDefaultProject, isExpired, normalizeAgentToken } from './agentPolicy.js';
 import { matchesFilter, Note, NOTE_LIMITS, NoteComment, NoteFilter, NoteMigration, NoteNamespace, parseCommentBody, parseNoteInput } from './notes.js';
 
 const VAULT_VERSION = 1;
@@ -67,15 +68,22 @@ export interface VaultEntry {
   updatedAt: string;
 }
 
-export interface AgentToken {
+/** Access fields (scope, projects, default project, expiry, secrets) are described in server/agentPolicy.ts. */
+export interface AgentToken extends AgentTokenFields {
   id: string;
   name: string;
   prefix: string;
   hash: string;
-  /** May read CI variable values and vault secrets (get_env, for `lazy env pull` and `lazy run`). */
-  secrets?: boolean;
   createdAt: string;
+  /** Last successful authentication; persisted at most once a minute per token. */
+  lastUsedAt?: string | null;
 }
+
+export type AgentTokenView = Omit<AgentToken, 'hash'> & AgentPolicy & { lastUsedAt: string | null; expired: boolean; legacy: boolean };
+
+export type AgentAuthResult = { ok: true; token: AgentPolicy } | { ok: false; reason: 'invalid' | 'expired'; expiresAt?: string };
+
+const LAST_USED_PERSIST_MS = 60_000;
 
 // ---- notifications (server/watch.ts owns the behaviour; the vault only stores it) ----
 
@@ -588,12 +596,20 @@ class Vault extends EventEmitter {
 
   // ---- agent API tokens ---------------------------------------------------
 
-  listAgentTokens() {
-    return this.requireOpen().agentTokens.map(({ hash, ...rest }) => rest);
+  private lastUsedPersisted = new Map<string, number>();
+
+  private viewAgentToken(t: AgentToken): AgentTokenView {
+    const { hash, ...rest } = t;
+    const policy = normalizeAgentToken(t);
+    return { ...rest, ...policy, lastUsedAt: t.lastUsedAt ?? null, expired: isExpired(policy.expiresAt), legacy: t.scope === undefined };
   }
 
-  /** Returns the plaintext token once; only its SHA-256 is stored. */
-  createAgentToken(name: string, opts: { secrets?: boolean } = {}): { token: string; record: Omit<AgentToken, 'hash'> } {
+  listAgentTokens(): AgentTokenView[] {
+    return this.requireOpen().agentTokens.map((t) => this.viewAgentToken(t));
+  }
+
+  /** Returns the plaintext token once; only its SHA-256 is stored. `settings` comes from parseAgentTokenSettings. */
+  createAgentToken(name: string, settings: AgentTokenFields = {}): { token: string; record: AgentTokenView } {
     const p = this.requireOpen();
     const token = `llab_${randomBytes(32).toString('base64url')}`;
     const record: AgentToken = {
@@ -601,25 +617,82 @@ class Vault extends EventEmitter {
       name,
       prefix: token.slice(0, 9),
       hash: hashAgentToken(token),
-      secrets: Boolean(opts.secrets),
+      scope: settings.scope ?? 'read',
+      secrets: Boolean(settings.secrets),
+      projects: settings.projects ?? null,
+      defaultProjectId: settings.defaultProjectId ?? null,
+      expiresAt: settings.expiresAt ?? null,
+      lastUsedAt: null,
       createdAt: new Date().toISOString()
     };
+    checkDefaultProject(record);
     p.agentTokens.push(record);
     this.persist();
-    const { hash, ...rest } = record;
-    return { token, record: rest };
+    return { token, record: this.viewAgentToken(record) };
+  }
+
+  /** Changes a token's access. A legacy token edited here gets explicit fields and stops being legacy. */
+  updateAgentToken(id: string, settings: AgentTokenFields): AgentTokenView {
+    const p = this.requireOpen();
+    const t = p.agentTokens.find((x) => x.id === id);
+    if (!t) throw new Error('Agent token not found');
+    const current = normalizeAgentToken(t);
+    const next: AgentToken = {
+      ...t,
+      scope: settings.scope ?? current.scope,
+      secrets: settings.secrets ?? current.secrets,
+      projects: settings.projects !== undefined ? settings.projects : current.projects,
+      defaultProjectId: settings.defaultProjectId !== undefined ? settings.defaultProjectId : current.defaultProjectId,
+      expiresAt: settings.expiresAt !== undefined ? settings.expiresAt : current.expiresAt
+    };
+    checkDefaultProject(next);
+    const index = p.agentTokens.indexOf(t);
+    p.agentTokens[index] = next;
+    try {
+      this.persist();
+    } catch (err) {
+      p.agentTokens[index] = t;
+      throw err;
+    }
+    return this.viewAgentToken(next);
   }
 
   deleteAgentToken(id: string) {
     const p = this.requireOpen();
     p.agentTokens = p.agentTokens.filter((t) => t.id !== id);
+    this.lastUsedPersisted.delete(id);
     this.persist();
   }
 
-  verifyAgentToken(token: string): AgentToken | null {
+  private findAgentToken(token: string): AgentToken | null {
     if (!this.payload) return null;
     const hash = Buffer.from(hashAgentToken(token), 'hex');
     return this.payload.agentTokens.find((t) => timingSafeEqual(Buffer.from(t.hash, 'hex'), hash)) ?? null;
+  }
+
+  /** The stored record of a valid, unexpired token, or null. Does not record use; see authenticateAgentToken. */
+  verifyAgentToken(token: string): AgentToken | null {
+    const t = this.findAgentToken(token);
+    return t && !isExpired(t.expiresAt) ? t : null;
+  }
+
+  /** Checks a bearer token, records its use, and returns its effective policy. */
+  authenticateAgentToken(token: string): AgentAuthResult {
+    const t = this.findAgentToken(token);
+    if (!t) return { ok: false, reason: 'invalid' };
+    if (isExpired(t.expiresAt)) return { ok: false, reason: 'expired', expiresAt: t.expiresAt ?? undefined };
+    const now = Date.now();
+    t.lastUsedAt = new Date(now).toISOString();
+    // Every MCP call authenticates; rewriting the vault file each time is not worth a precise timestamp.
+    if (now - (this.lastUsedPersisted.get(t.id) ?? 0) >= LAST_USED_PERSIST_MS) {
+      this.lastUsedPersisted.set(t.id, now);
+      try {
+        this.persist();
+      } catch (err: any) {
+        console.warn('Could not record agent token use:', err?.message || err);
+      }
+    }
+    return { ok: true, token: normalizeAgentToken(t) };
   }
 }
 

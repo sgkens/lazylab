@@ -71,6 +71,8 @@ Every tool that takes `project` accepts a numeric id or a full path such as `gro
 
 Read-only tools carry `readOnlyHint`, so clients can allow them without asking each time. Results are compact JSON that keeps only the fields an agent uses.
 
+`tools/list` shows only the tools the token may call. A **Read only** token gets the read-only tools plus `watch`, `save_handoff`, `add_note` and `set_note_status`, which change only lazylab's own state. A token with allowed projects gets a tool error for any other project, and `get_inbox`, `list_projects` and `list_watches` leave other projects out. See [Token permissions](/security/#token-permissions).
+
 On connect, the server sends short instructions:
 
 - start with `get_inbox`;
@@ -101,7 +103,7 @@ you:    (phone notification when it finishes)
 |---|---|
 | Transport | Streamable HTTP, stateless: every request is a `POST /mcp` with one JSON-RPC message (or a batch for 2025-03-26 clients) and gets a JSON response |
 | Protocol versions | 2025-06-18, 2025-03-26, 2024-11-05 |
-| Auth | `Authorization: Bearer llab_…` (agent token); browser cookies are not accepted |
+| Auth | `Authorization: Bearer llab_…` (agent token); browser cookies are not accepted. An expired token gets `401` |
 | Origin | A request with an `Origin` header naming another host gets `403` |
 | Locked vault | `503` with a message; sign in to lazylab in a browser |
 | `GET` / `DELETE /mcp` | `405`: no server-initiated stream and no sessions |

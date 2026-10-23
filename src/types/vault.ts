@@ -59,13 +59,36 @@ export interface VaultEntry {
   updatedAt: string;
 }
 
+export type AgentScope = 'read' | 'write';
+
+/** Agent token as listed by the vault (no hash). Policy fields are server/agentPolicy.ts. */
 export interface AgentTokenInfo {
   id: string;
   name: string;
   prefix: string;
+  /** read: read GitLab and local writes (watches, handoffs, notes); write: also GitLab writes and CI runs. */
+  scope: AgentScope;
   /** May read CI variable values and vault secrets (lazy env pull, lazy run). */
-  secrets?: boolean;
+  secrets: boolean;
+  /** Allowed GitLab project ids; null means every project. */
+  projects: number[] | null;
+  defaultProjectId: number | null;
+  expiresAt: string | null;
+  expired: boolean;
+  lastUsedAt: string | null;
+  /** Created before scopes existed; kept write access to every project. */
+  legacy: boolean;
   createdAt: string;
+}
+
+/** Create or edit payload; absent fields are left unchanged on edit. */
+export interface AgentTokenSettings {
+  scope?: AgentScope;
+  secrets?: boolean;
+  projects?: number[] | null;
+  defaultProjectId?: number | null;
+  /** 1..3650, or null for no expiry. */
+  expiresInDays?: number | null;
 }
 
 export interface VaultSummary {
