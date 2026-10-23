@@ -195,16 +195,15 @@ export class VaultLockedError extends Error {
   }
 }
 
-class Vault extends EventEmitter {
-  private filePath = path.resolve(
-    process.env.LAZYLAB_DATA_DIR || path.join(process.cwd(), '.data'),
-    'vault.json'
-  );
+const defaultVaultPath = () => path.resolve(process.env.LAZYLAB_DATA_DIR || path.join(process.cwd(), '.data'), 'vault.json');
+
+/** Exported for tests, which open isolated vault files; the server uses the `vault` singleton. */
+export class Vault extends EventEmitter {
   private file: VaultFile | null = null;
   private dek: Buffer | null = null;
   private payload: VaultPayload | null = null;
 
-  constructor() {
+  constructor(private readonly filePath: string = defaultVaultPath()) {
     super();
     this.loadFile();
   }
