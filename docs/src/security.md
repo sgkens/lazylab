@@ -9,6 +9,8 @@ abstract: lazylab has one admin account, keeps every secret in a password-encryp
 - Creating it needs the setup code printed to the server log, so only someone with console or `docker logs` access can claim a new instance.
 - Passwords must be at least 12 characters.
 - After 4 failed sign-ins from one IP, each further attempt waits 2 s, 4 s, 8 s and so on, up to 15 minutes.
+- A wrong current password in **Change password** counts as a failed sign-in.
+- An IP is forgotten after an hour without failures. At most 10,000 IPs are tracked; beyond that the one with the oldest failure is dropped.
 
 ## The vault
 

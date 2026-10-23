@@ -40,19 +40,87 @@ export function announceSetupIfNeeded() {
 }
 
 // ---- login throttling -------------------------------------------------------
-const failures = new Map<string, { count: number; until: number }>();
+/**
+ * Failed sign-in counter per client address, with exponential back-off.
+ * Bounded: an entry is dropped once its address has been quiet for `resetAfterMs` (its back-off has long ended),
+ * and when more than `maxEntries` addresses are tracked the least recently failing ones are evicted.
+ */
+export class LoginThrottle {
+  private failures = new Map<string, { count: number; until: number; last: number }>();
+  private lastSweep = 0;
 
-function throttleDelayMs(ip: string): number {
-  const f = failures.get(ip);
-  return f && f.until > Date.now() ? f.until - Date.now() : 0;
+  constructor(
+    private readonly opts: { freeAttempts: number; maxDelayMs: number; resetAfterMs: number; maxEntries: number; now?: () => number } = {
+      freeAttempts: 4,
+      maxDelayMs: 15 * 60 * 1000,
+      resetAfterMs: 60 * 60 * 1000,
+      maxEntries: 10_000
+    }
+  ) {}
+
+  private now() {
+    return (this.opts.now ?? Date.now)();
+  }
+
+  get size() {
+    return this.failures.size;
+  }
+
+  /** Milliseconds the address must wait before its next attempt; 0 when it may try now. */
+  delayMs(ip: string): number {
+    const f = this.failures.get(ip);
+    if (!f) return 0;
+    const now = this.now();
+    if (now - f.last > this.opts.resetAfterMs) {
+      this.failures.delete(ip);
+      return 0;
+    }
+    return f.until > now ? f.until - now : 0;
+  }
+
+  recordFailure(ip: string) {
+    const now = this.now();
+    const prev = this.failures.get(ip);
+    const f = prev && now - prev.last <= this.opts.resetAfterMs ? prev : { count: 0, until: 0, last: now };
+    f.count += 1;
+    f.last = now;
+    // First `freeAttempts` failures are free; then 2s, 4s, 8s ... capped at maxDelayMs.
+    if (f.count > this.opts.freeAttempts) {
+      f.until = now + Math.min(2 ** Math.min(f.count - this.opts.freeAttempts, 30) * 1000, this.opts.maxDelayMs);
+    }
+    // Re-insert so Map order stays "least recently failed first" for eviction.
+    this.failures.delete(ip);
+    this.failures.set(ip, f);
+    this.prune(now);
+  }
+
+  clear(ip: string) {
+    this.failures.delete(ip);
+  }
+
+  private prune(now: number) {
+    if (this.failures.size > this.opts.maxEntries || now - this.lastSweep > 60_000) {
+      this.lastSweep = now;
+      for (const [ip, f] of this.failures) {
+        if (now - f.last > this.opts.resetAfterMs) this.failures.delete(ip);
+      }
+    }
+    for (const ip of this.failures.keys()) {
+      if (this.failures.size <= this.opts.maxEntries) break;
+      this.failures.delete(ip);
+    }
+  }
 }
 
-function recordFailure(ip: string) {
-  const f = failures.get(ip) ?? { count: 0, until: 0 };
-  f.count += 1;
-  // First 4 failures are free; then 2s, 4s, 8s ... capped at 15 minutes.
-  if (f.count > 4) f.until = Date.now() + Math.min(2 ** (f.count - 4) * 1000, 15 * 60 * 1000);
-  failures.set(ip, f);
+const throttle = new LoginThrottle();
+
+/** Sends 429 with Retry-After and returns true when the address is in back-off. */
+function rejectIfThrottled(req: Request, res: Response): boolean {
+  const wait = throttle.delayMs(req.ip || '');
+  if (wait <= 0) return false;
+  res.setHeader('Retry-After', String(Math.ceil(wait / 1000)));
+  res.status(429).json({ success: false, error: `Too many attempts. Retry in ${Math.ceil(wait / 1000)}s.` });
+  return true;
 }
 
 // ---- cookie helpers ---------------------------------------------------------
@@ -186,14 +254,10 @@ sessionRouter.get('/state', (req, res) => {
 sessionRouter.post('/setup', async (req, res) => {
   try {
     if (vault.isInitialized()) return res.status(409).json({ success: false, error: 'Already set up' });
-    const wait = throttleDelayMs(req.ip || '');
-    if (wait > 0) {
-      res.setHeader('Retry-After', String(Math.ceil(wait / 1000)));
-      return res.status(429).json({ success: false, error: `Too many attempts. Retry in ${Math.ceil(wait / 1000)}s.` });
-    }
+    if (rejectIfThrottled(req, res)) return;
     const { setupCode: code, username, password, gitlabHost, gitlabToken } = req.body || {};
     if (!setupCode || String(code || '').trim().toUpperCase() !== setupCode) {
-      recordFailure(req.ip || '');
+      throttle.recordFailure(req.ip || '');
       return res.status(403).json({ success: false, error: 'Invalid setup code (see the server log)' });
     }
     if (!username || typeof username !== 'string' || username.trim().length < 3) {
@@ -224,11 +288,7 @@ sessionRouter.post('/setup', async (req, res) => {
 
 sessionRouter.post('/login', async (req, res) => {
   const ip = req.ip || '';
-  const wait = throttleDelayMs(ip);
-  if (wait > 0) {
-    res.setHeader('Retry-After', String(Math.ceil(wait / 1000)));
-    return res.status(429).json({ success: false, error: `Too many attempts. Retry in ${Math.ceil(wait / 1000)}s.` });
-  }
+  if (rejectIfThrottled(req, res)) return;
   const { username, password } = req.body || {};
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ success: false, error: 'username and password are required' });
@@ -236,10 +296,10 @@ sessionRouter.post('/login', async (req, res) => {
   try {
     const ok = await vault.verifyAndUnlock(username.trim(), password);
     if (!ok) {
-      recordFailure(ip);
+      throttle.recordFailure(ip);
       return res.status(401).json({ success: false, error: 'Invalid username or password' });
     }
-    failures.delete(ip);
+    throttle.clear(ip);
     createSession(req, res, username.trim());
     res.json({ success: true });
   } catch (err: any) {
@@ -264,13 +324,18 @@ sessionRouter.post('/lock', (req, res) => {
 
 sessionRouter.post('/password', async (req, res) => {
   if (!getSession(req)) return res.status(401).json({ success: false, error: 'Not authenticated' });
+  // A stolen session must not become an unthrottled password oracle.
+  if (rejectIfThrottled(req, res)) return;
   const { currentPassword, newPassword } = req.body || {};
   if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
     return res.status(400).json({ success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
   }
   try {
     const ok = await vault.changePassword(String(currentPassword || ''), newPassword);
-    if (!ok) return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+    if (!ok) {
+      throttle.recordFailure(req.ip || '');
+      return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+    }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

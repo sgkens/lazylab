@@ -2,7 +2,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import express from 'express';
 import type { Server } from 'http';
-import { apiGuard, sessionRouter } from '../server/session.ts';
+import { apiGuard, LoginThrottle, sessionRouter } from '../server/session.ts';
 import { vault } from '../server/vault.ts';
 
 const USER = 'tester';
@@ -255,5 +255,80 @@ describe('login', () => {
   test('setup is refused once the vault exists', async () => {
     const res = await client().call('POST', '/api/session/setup', { body: { setupCode: 'X', username: 'abc', password: 'x'.repeat(12) } });
     expect(res.status).toBe(409);
+  });
+});
+
+describe('LoginThrottle', () => {
+  const make = (maxEntries = 100) => {
+    let now = 1_000_000;
+    const t = new LoginThrottle({ freeAttempts: 4, maxDelayMs: 15 * 60 * 1000, resetAfterMs: HOUR, maxEntries, now: () => now });
+    return { t, advance: (ms: number) => (now += ms) };
+  };
+
+  test('backs off exponentially after the free attempts, capped at 15 minutes', () => {
+    const { t } = make();
+    for (let i = 0; i < 4; i++) t.recordFailure('a');
+    expect(t.delayMs('a')).toBe(0);
+    t.recordFailure('a');
+    expect(t.delayMs('a')).toBe(2000);
+    t.recordFailure('a');
+    expect(t.delayMs('a')).toBe(4000);
+    for (let i = 0; i < 100; i++) t.recordFailure('a');
+    expect(t.delayMs('a')).toBe(15 * 60 * 1000);
+  });
+
+  test('forgets an address after an hour without failures', () => {
+    const { t, advance } = make();
+    for (let i = 0; i < 20; i++) t.recordFailure('a');
+    advance(HOUR + 1);
+    expect(t.delayMs('a')).toBe(0);
+    expect(t.size).toBe(0);
+    // The count starts again from zero: the next failure is free.
+    t.recordFailure('a');
+    expect(t.delayMs('a')).toBe(0);
+  });
+
+  test('sweeps quiet addresses when recording a new failure', () => {
+    const { t, advance } = make();
+    for (let i = 0; i < 50; i++) t.recordFailure(`old-${i}`);
+    advance(HOUR + 61_000);
+    t.recordFailure('new');
+    expect(t.size).toBe(1);
+  });
+
+  test('never tracks more than maxEntries addresses, evicting the least recently failing', () => {
+    const { t, advance } = make(10);
+    for (let i = 0; i < 5; i++) t.recordFailure('attacker');
+    for (let i = 0; i < 25; i++) {
+      advance(10);
+      t.recordFailure(`spray-${i}`);
+      // Keep the attacker the most recent so it survives eviction.
+      t.recordFailure('attacker');
+    }
+    expect(t.size).toBe(10);
+    expect(t.delayMs('attacker')).toBeGreaterThan(0);
+    expect(t.delayMs('spray-0')).toBe(0);
+  });
+
+  test('clear resets one address only', () => {
+    const { t } = make();
+    for (let i = 0; i < 6; i++) { t.recordFailure('a'); t.recordFailure('b'); }
+    t.clear('a');
+    expect(t.delayMs('a')).toBe(0);
+    expect(t.delayMs('b')).toBeGreaterThan(0);
+  });
+});
+
+describe('password change', () => {
+  test('wrong current passwords count towards the sign-in throttle', async () => {
+    const c = await loggedIn();
+    for (let i = 0; i < 5; i++) {
+      const res = await c.call('POST', '/api/session/password', { body: { currentPassword: 'wrong-password', newPassword: 'another-long-password' } });
+      expect(res.status).toBe(401);
+    }
+    const blocked = await c.call('POST', '/api/session/password', { body: { currentPassword: PASSWORD, newPassword: 'another-long-password' } });
+    expect(blocked.status).toBe(429);
+    // The password is unchanged.
+    expect(await vault.verifyAndUnlock(USER, PASSWORD)).toBe(true);
   });
 });
