@@ -26,7 +26,8 @@ import {
   GitLabVariable,
   GitLabBadge,
   GitLabPagesInfo,
-  MetricsSummary
+  MetricsSummary,
+  RequestBudget
 } from '../types/gitlab';
 import { Inbox } from '../types/inbox';
 import { Note, NoteFilter, NoteInput, NoteMigrateOptions, NoteNamespace } from '../types/notes';
@@ -110,6 +111,12 @@ export const api = {
     request<{ success: boolean; autoFetchIntervalSec: number }>('/config/autofetch', {
       method: 'POST',
       body: JSON.stringify({ intervalSec })
+    }),
+
+  updateRequestBudget: (budget: RequestBudget) =>
+    request<{ success: boolean; budget: RequestBudget }>('/config/request-budget', {
+      method: 'POST',
+      body: JSON.stringify(budget)
     }),
 
   triggerSync: () => request<{ success: boolean; lastSyncTime: number; walStats: any }>('/sync/refresh', { method: 'POST' }),

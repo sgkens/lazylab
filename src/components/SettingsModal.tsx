@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Settings, Globe, RefreshCw, KeyRound } from 'lucide-react';
-import { AppStatus } from '../types/gitlab';
+import { Settings, Globe, RefreshCw, KeyRound, Gauge } from 'lucide-react';
+import { AppStatus, BudgetPlan, RequestBudget } from '../types/gitlab';
 import { api } from '../services/api';
 import { reportError } from '../utils/reportError';
 
@@ -21,6 +21,14 @@ const INTERVALS = [
   { label: '5m', val: 300 }
 ];
 
+const PLANS: { val: BudgetPlan; label: string; hint: string }[] = [
+  { val: 'free', label: 'GitLab.com Free', hint: '4,000/h, 80/min' },
+  { val: 'premium', label: 'Premium', hint: '12,000/h, 1,000/min' },
+  { val: 'ultimate', label: 'Ultimate', hint: '20,000/h, 1,600/min' },
+  { val: 'unlimited', label: 'No cap', hint: 'self-managed without limits' },
+  { val: 'custom', label: 'Custom', hint: '' }
+];
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -30,10 +38,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [intervalSec, setIntervalSec] = useState<number>(status?.autoFetchIntervalSec ?? 30);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [budget, setBudget] = useState<RequestBudget>(status?.scheduler?.budget ?? { plan: 'free', perHour: 4000, perMinute: 80 });
 
   useEffect(() => {
     if (isOpen && status) setIntervalSec(status.autoFetchIntervalSec);
   }, [isOpen, status?.autoFetchIntervalSec]);
+
+  useEffect(() => {
+    if (isOpen && status?.scheduler) setBudget(status.scheduler.budget);
+  }, [isOpen, status?.scheduler?.budget.plan, status?.scheduler?.budget.perHour, status?.scheduler?.budget.perMinute]);
 
   if (!isOpen) return null;
 
@@ -46,6 +59,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch (err) {
       setIntervalSec(previous);
       reportError('Could not change the refresh interval', err);
+    }
+  };
+
+  const saveBudget = async (next: RequestBudget) => {
+    const previous = budget;
+    setBudget(next);
+    try {
+      const res = await api.updateRequestBudget(next);
+      setBudget(res.budget);
+      onStatusUpdated();
+    } catch (err) {
+      setBudget(previous);
+      reportError('Could not change the request budget', err);
     }
   };
 
@@ -135,6 +161,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               Refreshes projects, work items, merge requests, pipelines, runners and the inbox, and checks watches.
               The server allows 30 seconds at minimum, starts the next refresh only after the previous one finished,
               and keeps the setting across restarts.
+            </p>
+          </div>
+
+          {/* Request budget (GL-19) */}
+          <div className="pt-3 border-t border-slate-800">
+            <label htmlFor="budget-plan" className="block text-slate-400 font-medium mb-1.5 flex items-center gap-1.5">
+              <Gauge className="w-3.5 h-3.5 text-slate-500" />
+              <span>GitLab request budget</span>
+            </label>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                id="budget-plan"
+                value={budget.plan}
+                onChange={(e) => {
+                  const plan = e.target.value as BudgetPlan;
+                  void saveBudget({ ...budget, plan });
+                }}
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200"
+              >
+                {PLANS.map((p) => (
+                  <option key={p.val} value={p.val}>
+                    {p.hint ? `${p.label} (${p.hint})` : p.label}
+                  </option>
+                ))}
+              </select>
+              {budget.plan === 'custom' && (
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const f = new FormData(e.currentTarget);
+                    void saveBudget({ plan: 'custom', perHour: Number(f.get('perHour')), perMinute: Number(f.get('perMinute')) });
+                  }}
+                >
+                  <input name="perHour" type="number" min={0} defaultValue={budget.perHour} aria-label="Requests per hour" className="w-24 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200 font-mono" />
+                  <span className="text-slate-500">/h</span>
+                  <input name="perMinute" type="number" min={0} defaultValue={budget.perMinute} aria-label="Requests per minute" className="w-20 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200 font-mono" />
+                  <span className="text-slate-500">/min</span>
+                  <button type="submit" className="px-2.5 py-1.5 rounded bg-slate-800 text-slate-200 hover:bg-slate-700">Save</button>
+                </form>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1">
+              GitLab counts requests per user across every token and tool, so the presets leave about 20% for glab and other
+              clients. Clicks go first, then watches, then background refresh; 0 means no cap.
+              {status?.scheduler?.message ? ` Now: ${status.scheduler.message}.` : ''}
             </p>
           </div>
         </div>

@@ -2,14 +2,18 @@
 // They are read before the vault is unlocked and hold nothing sensitive, so they live outside it.
 import fs from 'fs';
 import path from 'path';
+import { DEFAULT_BUDGET, RequestBudget } from './requestScheduler.js';
 
 export interface ServerSettings {
   /** Seconds between auto-fetch cycles; 0 turns auto-fetch off. */
   autoFetchIntervalSec: number;
+  /** GitLab request budget for the request scheduler (GL-19). */
+  requestBudget: RequestBudget;
 }
 
 export const defaultSettings = (): ServerSettings => ({
-  autoFetchIntervalSec: 30
+  autoFetchIntervalSec: 30,
+  requestBudget: { ...DEFAULT_BUDGET }
 });
 
 const settingsPath = () =>

@@ -18,6 +18,7 @@ import { summarizeFailure } from './triage.js';
 import { Inbox } from './inbox.js';
 import { channelAccepts, deliver, LazyNotification, NotifyLevel } from './notify.js';
 import { vault, WatchRecord } from './vault.js';
+import { runInLane } from './requestScheduler.js';
 
 const POLL_INTERVAL_MS = 15_000;
 const HISTORY_LIMIT = 100;
@@ -124,8 +125,10 @@ class WatchManager extends EventEmitter {
 
   start() {
     this.stop();
-    this.timer = setInterval(() => void this.pollAll(), POLL_INTERVAL_MS);
-    void this.pollAll();
+    // Watch polls run on the watch lane of the request scheduler: below user clicks, above background sync.
+    const poll = () => void runInLane('watch', () => this.pollAll());
+    this.timer = setInterval(poll, POLL_INTERVAL_MS);
+    poll();
   }
 
   /** Stops polling and forgets in-memory state (called on vault lock and profile switch). */

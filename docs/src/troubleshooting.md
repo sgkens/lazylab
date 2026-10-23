@@ -43,6 +43,10 @@ The request's `Origin` does not match the host it arrived on, which happens when
 
 lazylab reports failed GitLab reads instead of showing an empty list. The message names the project or endpoint. Common causes: the token lacks the `api` scope, you are not a maintainer of the project (needed for variables and access tokens), or the token has expired (**Vault → GitLab profiles** shows its expiry).
 
+### The sync bar says "GitLab rate limit" or "GitLab quota low"
+
+GitLab answered 429, or its `RateLimit-Remaining` header ran low. lazylab pauses background refresh until the time shown; clicks still go through when GitLab allows them. Other tools on the same GitLab account use the same limit. If this happens often, raise the background refresh interval or pick the right plan under **Settings → GitLab request budget**.
+
 ### Desktop notifications do not appear
 
 Browsers allow them only over HTTPS or on `localhost`. Use [Remote access](/remote-access/) to serve lazylab over HTTPS, then click **Enable desktop notifications** in the bell menu.

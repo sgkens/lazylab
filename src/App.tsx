@@ -323,6 +323,14 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
     loadTabData(activeTab, selectedProjectId, false);
   }, [activeTab, selectedProjectId]);
 
+  // While the request scheduler holds requests back, refresh the status so the sync bar notice clears on time.
+  const throttleMessage = status?.scheduler?.message ?? null;
+  useEffect(() => {
+    if (!throttleMessage) return;
+    const t = setTimeout(() => api.getStatus().then(setStatus).catch(() => {}), 15_000);
+    return () => clearTimeout(t);
+  }, [throttleMessage, status]);
+
   // Subscribe to real-time events via SSE
   useEffect(() => {
     const unsubscribe = api.subscribeEvents((event, data) => {
@@ -849,6 +857,7 @@ function Workspace({ username, onSignedOut }: { username: string | null; onSigne
         isSyncing={isSyncing}
         lastSyncTime={status?.lastSyncTime}
         walEntriesCount={status?.walStats?.walEntriesCount}
+        throttleMessage={throttleMessage}
       />
 
       {/* Multi-Project & Search Toolbar */}

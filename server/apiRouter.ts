@@ -12,6 +12,7 @@ import { watchManager } from './watch.js';
 import { extractFailure, parseRunPipelineInput } from './triage.js';
 import { AutoFetchLoop, parseAutoFetchInterval } from './autoFetch.js';
 import { getSettings, updateSettings } from './settings.js';
+import { parseBudget, requestScheduler, runInLane } from './requestScheduler.js';
 
 export const apiRouter = Router();
 
@@ -77,7 +78,14 @@ async function autoFetchCycle() {
 }
 
 // Background auto-fetch (GL-20): single-flight, next cycle scheduled after the previous one ends.
-const autoFetch = new AutoFetchLoop(autoFetchCycle, getSettings().autoFetchIntervalSec);
+const autoFetch = new AutoFetchLoop(() => runInLane('background', autoFetchCycle), getSettings().autoFetchIntervalSec);
+
+// Request budget (GL-19). A hand-edited or outdated settings file falls back to the default budget.
+try {
+  requestScheduler.setBudget(parseBudget(getSettings().requestBudget));
+} catch (err: any) {
+  console.warn(`Ignoring the saved request budget: ${err.message}`);
+}
 const runAutoFetch = (opts?: { rerun?: boolean }) => autoFetch.run(opts);
 
 // Initialize SQLite cache. Auto-fetch starts only once the vault is unlocked.
@@ -102,6 +110,8 @@ vault.on('unlocked', async () => {
 vault.on('profile-changed', async () => {
   await cacheReady;
   rebuildClientFromVault();
+  // Rate-limit state (pause, remaining) belongs to the previous account.
+  requestScheduler.resetRemoteState();
   // Rule baselines belong to the previous GitLab host; watches are filtered by profile.
   watchManager.start();
   cacheDb.clear();
@@ -182,6 +192,7 @@ apiRouter.get('/status', async (_req: Request, res: Response) => {
       user,
       autoFetchIntervalSec: autoFetch.getInterval(),
       autoFetch: autoFetch.getStatus(),
+      scheduler: requestScheduler.getStatus(),
       lastSyncTime,
       walStats,
       metrics
@@ -205,6 +216,26 @@ apiRouter.post('/config/autofetch', (req: Request, res: Response) => {
   }
   autoFetch.setInterval(intervalSec);
   res.json({ success: true, autoFetchIntervalSec: autoFetch.getInterval() });
+});
+
+apiRouter.get('/config/request-budget', (_req: Request, res: Response) => {
+  res.json({ success: true, budget: requestScheduler.getBudget(), scheduler: requestScheduler.getStatus() });
+});
+
+apiRouter.post('/config/request-budget', (req: Request, res: Response) => {
+  let budget;
+  try {
+    budget = parseBudget(req.body);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  try {
+    updateSettings({ requestBudget: budget });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: `Could not save the request budget: ${err.message}` });
+  }
+  requestScheduler.setBudget(budget);
+  res.json({ success: true, budget });
 });
 
 apiRouter.post('/sync/refresh', async (_req: Request, res: Response) => {
