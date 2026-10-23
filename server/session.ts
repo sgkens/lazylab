@@ -237,6 +237,23 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  if (process.env.NODE_ENV === 'production') {
+    // React sets style attributes; fonts and GitLab avatars/badges are external.
+    // Scripts and API connections remain restricted to the app's own origin.
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data: https: http:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "frame-src 'none'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'self'",
+    ].join('; '));
+  }
   next();
 }
 

@@ -8,6 +8,8 @@ Version in `package.json`: 0.1.0. No release has been tagged yet.
 
 ### Added
 
+- **Production CSP:** restrict scripts and API connections to the app origin, block framing and embedded objects, and preserve inlined logos, GitLab images, React styles and the configured Google Fonts stylesheet. Development keeps Vite and HMR working.
+
 - **Vault recovery:** download encrypted backups, restore after checking credentials and confirming older or different vaults, and create a printable recovery key that resets a forgotten password. Recovery and restore revoke existing sessions; replaced vaults are retained as encrypted files.
 
 - **Revoke one device** (SEC-3): **Vault → Account → Signed-in devices** shows each session's IP, browser, sign-in time and last activity, with **Revoke** to sign out that device only (`DELETE /api/session/devices/:id`). Locking the vault still signs out every device.

@@ -63,3 +63,9 @@ flowchart LR
 ## Sharing with other people
 
 lazylab is built for one person. Anyone you give the password or an agent token to acts with your GitLab token.
+
+## Browser content policy
+
+Production responses send a Content-Security-Policy. Scripts and API connections are restricted to the app origin; inline scripts, eval, embedded frames and objects are blocked. Inline style attributes remain allowed for React's dynamic colours and dimensions. Images allow the app origin, data URLs and HTTP/HTTPS GitLab avatars, badges and Markdown images. The Google Fonts stylesheet and font host used by the app are permitted explicitly.
+
+The policy is omitted outside `NODE_ENV=production`, since Vite injects development scripts and uses a WebSocket connection for hot reload. The policy supplements the session and Origin guards; it does not replace them.
