@@ -1,10 +1,10 @@
 # Recovered parallel work
 
-Claude's four interrupted lanes are complete and combined on a locally verified review branch; nothing was pushed or merged into `develop`.
+Claude's four interrupted lanes were combined on a verified review branch, then merged into `develop` as `e8909e8`; follow-up live and Windows acceptance results are in `ACCEPTANCE.md`.
 
 ## Checkout
 
-Review branch: `feature/recovered-review`. Its worktree is `.claude/worktrees/recovered-review` beneath the original lazylab checkout. Base: `a765dc3` on `feature/notes`. The original checkout remains on `feature/notes`, with its tracker unchanged. All four feature branches remain available independently.
+Review branch: `feature/recovered-review`. Its worktree is `.claude/worktrees/recovered-review` beneath the original lazylab checkout. Base: `a765dc3` on `feature/notes`. The primary checkout now follows `develop` with the updated tracker. All four feature branches remain available independently.
 
 Task checkboxes in the review checkout describe the combined branch.
 
@@ -49,4 +49,4 @@ The shared BugKB was offline with no launcher, so no external entry was written.
 
 Optional GL-2 pagination and SEC-12 Host-header allowlist remain open. Aggregate views disclose the first 50 member projects and recent-15 fan-out scope. Browser backup uploads accept files up to 8 MiB.
 
-Live GitLab writes, hosted CI, real notification delivery, Tailscale Serve and native Windows/macOS execution remain unverified. No release was published.
+This recovery checkpoint initially lacked live GitLab and native Windows evidence; those checks are now recorded in `ACCEPTANCE.md`. Hosted CI results are reported after publication. Real notification delivery, Tailscale Serve and macOS remain unverified. No release was published.
